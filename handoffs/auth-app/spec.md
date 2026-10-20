@@ -74,11 +74,13 @@ only it has "Try it" and the trace.
 
 ### 4.1 Data
 
-One table `auth-app-<stage>`, string `pk`/`sk`, on-demand. One item type:
+One table `auth-app-<stage>`, string `pk`/`sk`, on-demand. Two item types, written
+together in one transaction:
 
 | `pk` | `sk` | Attributes |
 |---|---|---|
 | `U#<username>` | `META` | userId (ULID), email, passwordHash, createdAt |
+| `I#<userId>` | `META` | username (lookup for the session's `sub`) |
 
 `subjectId` sent to auth-gate is `userId`. Passwords are hashed with Node's built-in
 `crypto.scrypt` (no native dependency on Lambda).
