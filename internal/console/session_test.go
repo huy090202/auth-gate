@@ -182,6 +182,12 @@ func TestDisabledAdminEndsSessionAtOnce(t *testing.T) {
 	if err := g.st.SetDisabled(ctx, &master, "huy", &at); err != nil {
 		t.Fatal(err)
 	}
+	// A session opened after the disable carries the new epoch, so only the disabled flag can refuse it.
+	disabled, err := g.st.GetAdmin(ctx, "huy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.expect(t, "/full", g.open(t, disabled, StageFull), 401, "unauthorized")
 	if err := g.st.SetDisabled(ctx, &master, "huy", nil); err != nil {
 		t.Fatal(err)
 	}
