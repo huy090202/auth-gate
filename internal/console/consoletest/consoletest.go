@@ -105,7 +105,7 @@ func New(t *testing.T) *Harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clients := &client.Service{Store: client.NewDynamoStore(db, agTable)}
+	clients := &client.Service{Store: client.NewDynamoStore(db, agTable), Now: clock.Now}
 	svc := &service.Service{
 		Clients:    clients,
 		Factors:    factor.NewDynamoStore(db, agTable),
@@ -140,9 +140,11 @@ func New(t *testing.T) *Harness {
 		},
 	}
 	h.Deps = console.Deps{
-		// Dev keys the auth rate limit by socket address; httptest has no CloudFront.
+		// Not Dev, so tests run what production runs. Requests without a CloudFront
+		// viewer address share one rate-limit bucket, which a single host behaves
+		// the same under.
 		Config: console.Config{
-			Table: conTable, AuthGateBaseURL: ag.URL, AuthGateClientID: c.ID, Dev: true,
+			Table: conTable, AuthGateBaseURL: ag.URL, AuthGateClientID: c.ID,
 		},
 		DB:       db,
 		Limiter:  &ratelimit.Limiter{DB: db, Table: conTable, TTL: time.Hour, Now: clock.Now},

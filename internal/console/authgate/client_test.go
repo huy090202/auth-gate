@@ -85,6 +85,11 @@ func TestServerErrorAndOwnKey401AreUnavailable(t *testing.T) {
 			}
 		}
 	}
+	// A 4xx that is not AuthGate's (a CDN or WAF page) has no error code.
+	html := newStub(t, http.StatusForbidden, "<html>blocked</html>")
+	if _, err := html.client().Factors(ctx, "u1"); !isUnavailable(err) {
+		t.Fatalf("foreign 403 = %v, want ErrUnavailable", err)
+	}
 	// A dead server is unavailable too.
 	s := newStub(t, 200, `{}`)
 	c := s.client()
@@ -126,5 +131,26 @@ func TestPassThroughCodes(t *testing.T) {
 				t.Fatalf("unexpected extra %+v", e.Extra)
 			}
 		})
+	}
+}
+
+func TestRedirectDoesNotCarryKey(t *testing.T) {
+	var seen string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get("x-internal-access-key")
+	}))
+	defer target.Close()
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL+r.URL.Path)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer front.Close()
+	// HTTP is nil, so the client builds its own, which must not follow redirects.
+	c := &authgate.Client{BaseURL: front.URL, ClientKey: clientKey, AdminKey: adminKey}
+	if _, err := c.Factors(context.Background(), "u1"); !isUnavailable(err) {
+		t.Fatalf("redirect = %v, want ErrUnavailable", err)
+	}
+	if seen != "" {
+		t.Fatal("the redirect target received the key")
 	}
 }

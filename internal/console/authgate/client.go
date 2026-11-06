@@ -82,12 +82,21 @@ func rolePath(base, path string) string {
 	}
 }
 
-func (c *Client) http() *http.Client {
-	if c.HTTP != nil {
-		return c.HTTP
+// noRedirect returns a copy of hc (or a default client) that never follows a
+// redirect: Go would forward the key header to the target. A 3xx then reaches do
+// as an unexpected status.
+func noRedirect(hc *http.Client) *http.Client {
+	var cp http.Client
+	if hc != nil {
+		cp = *hc
+	} else {
+		cp.Timeout = 10 * time.Second
 	}
-	return &http.Client{Timeout: 10 * time.Second}
+	cp.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &cp
 }
+
+func (c *Client) http() *http.Client { return noRedirect(c.HTTP) }
 
 // do sends one request and returns the 2xx body. See ErrUnavailable and Error
 // for how failures come back.
@@ -132,6 +141,11 @@ func (c *Client) do(ctx context.Context, method, path, key string, body any) (js
 		if len(fields) > 0 {
 			e.Extra = fields
 		}
+	}
+	// Redirects and answers without an AuthGate error code come from something
+	// in front of it (a CDN or WAF), not from AuthGate.
+	if e.Code == "" {
+		return nil, fmt.Errorf("%w: status %d", ErrUnavailable, resp.StatusCode)
 	}
 	if n, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && n > 0 {
 		e.RetryAfter = n

@@ -35,7 +35,8 @@ type Verifier struct {
 
 	mu      sync.Mutex
 	jwks    map[string]any
-	fetched time.Time
+	fetched time.Time // last successful fetch
+	lastTry time.Time // last attempt, successful or not
 }
 
 func (v *Verifier) now() time.Time {
@@ -50,19 +51,22 @@ func (v *Verifier) Verify(ctx context.Context, tok, subject, purpose string) (to
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	if v.jwks == nil || v.now().Sub(v.fetched) >= jwksTTL {
+	if v.jwks == nil || (v.now().Sub(v.fetched) >= jwksTTL && v.mayTry()) {
 		// A failed refetch with a cache keeps the cache; without one it is fatal.
 		if err := v.fetch(ctx); err != nil && v.jwks == nil {
 			return token.Claims{}, err
 		}
 	}
 	c, err := token.VerifyWithJWKS(tok, v.jwks)
-	if err != nil && v.now().Sub(v.fetched) > jwksRetry {
+	if err != nil && v.now().Sub(v.fetched) > jwksRetry && v.mayTry() {
 		if v.fetch(ctx) == nil {
 			c, err = token.VerifyWithJWKS(tok, v.jwks)
 		}
 	}
 	if err != nil {
+		return token.Claims{}, ErrInvalidToken
+	}
+	if !v.now().Before(c.ExpiresAt) {
 		return token.Claims{}, ErrInvalidToken
 	}
 	if c.Issuer != v.BaseURL || c.Audience != v.Audience || c.Subject != subject || c.Purpose != purpose {
@@ -71,12 +75,14 @@ func (v *Verifier) Verify(ctx context.Context, tok, subject, purpose string) (to
 	return c, nil
 }
 
+// mayTry reports whether a fetch is allowed: at most one attempt per 30 s, so
+// an outage costs one request per interval, not one per Verify.
+func (v *Verifier) mayTry() bool { return v.now().Sub(v.lastTry) > jwksRetry }
+
 // fetch replaces the cache. On failure the cache is left as it was.
 func (v *Verifier) fetch(ctx context.Context) error {
-	client := v.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
-	}
+	v.lastTry = v.now()
+	client := noRedirect(v.HTTP)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rolePath(v.BaseURL, "/.well-known/jwks.json"), nil)
 	if err != nil {
 		return fmt.Errorf("%w: build jwks request", ErrUnavailable)

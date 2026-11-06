@@ -51,6 +51,7 @@ func main() {
 		clientKey = mustSecret(ctx, awsCfg, cfg.ClientKeyParam)
 	}
 	httpc := &http.Client{Timeout: 10 * time.Second}
+	// authgate.Client and Verifier copy this client and refuse redirects themselves.
 	h := console.New(console.Deps{
 		Config:   cfg,
 		DB:       db,

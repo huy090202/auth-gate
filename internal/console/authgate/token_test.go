@@ -211,3 +211,49 @@ func TestKeepsStaleJWKSWhenRefetchFails(t *testing.T) {
 		t.Fatalf("cold failure = %v, want ErrUnavailable", err)
 	}
 }
+
+func TestVerifyExpiryFollowsInjectedClock(t *testing.T) {
+	k := signer(t, "k1")
+	stub := newJWKSStub(t, k)
+	c := &clock{time.Now()}
+	v := verifier(stub, c)
+	tok := issue(t, k, nil, stub.srv.URL) // lives 10 minutes
+	if _, err := v.Verify(context.Background(), tok, subject, purpose); err != nil {
+		t.Fatal(err)
+	}
+	c.advance(11 * time.Minute)
+	if _, err := v.Verify(context.Background(), tok, subject, purpose); err == nil {
+		t.Fatal("accepted a token past exp on the injected clock")
+	}
+}
+
+func TestFailedJWKSFetchesAreThrottled(t *testing.T) {
+	k := signer(t, "k1")
+	stub := newJWKSStub(t, k)
+	c := &clock{time.Now()}
+	v := verifier(stub, c)
+	ctx := context.Background()
+	good := issue(t, k, nil, stub.srv.URL)
+	if _, err := v.Verify(ctx, good, subject, purpose); err != nil {
+		t.Fatal(err)
+	}
+	stub.set(true)
+	c.advance(400 * time.Second)
+	forged := issue(t, signer(t, "k1"), nil, stub.srv.URL)
+	for i := 0; i < 5; i++ {
+		if _, err := v.Verify(ctx, forged, subject, purpose); err == nil {
+			t.Fatal("accepted a forged token")
+		}
+		if _, err := v.Verify(ctx, good, subject, purpose); err != nil {
+			t.Fatalf("stale cache dropped: %v", err)
+		}
+	}
+	if n := stub.count(); n != 2 {
+		t.Fatalf("fetches = %d, want 2 (the first plus one failed attempt)", n)
+	}
+	c.advance(31 * time.Second)
+	_, _ = v.Verify(ctx, forged, subject, purpose)
+	if n := stub.count(); n != 3 {
+		t.Fatalf("fetches = %d, want 3 after 30 s", n)
+	}
+}
