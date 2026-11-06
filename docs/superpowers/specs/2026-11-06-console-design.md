@@ -170,6 +170,11 @@ Sessions are server-side, unlike auth-app, so disabling an admin or signing out 
 at once. Cookie `__Host-console_session`: opaque random token, HttpOnly, Secure, SameSite=Strict.
 Non-GET requests must be `application/json`.
 
+Enrolling a first factor is serialised by a short lease on the Admin item (15 seconds, claimed before
+the account's factors are read and released after the write): a session that cannot take it answers
+`409 enrollment_in_progress` and stays signed in, so two sessions of one admin, whatever epoch they
+opened at, can never both add a first factor (product owner decision, 2026-11-06).
+
 **Roles.** `admin` manages clients and reads the audit log. `master` also manages admin accounts.
 
 **Step-up only on security-sensitive actions.** Once signed in, routine work asks for nothing more.
