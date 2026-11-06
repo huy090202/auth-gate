@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/huy090202/auth-gate/internal/console"
+	"github.com/huy090202/auth-gate/internal/console/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/dynamo"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
@@ -36,11 +38,26 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	var awsCfg aws.Config
+	var adminKey, clientKey string
+	if cfg.Dev {
+		adminKey, clientKey = os.Getenv("ADMIN_KEY"), os.Getenv("CLIENT_KEY")
+	} else {
+		awsCfg, err = awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
+		if err != nil {
+			log.Fatalf("load aws config: %v", err)
+		}
+		adminKey = mustSecret(ctx, awsCfg, cfg.AdminKeyParam)
+		clientKey = mustSecret(ctx, awsCfg, cfg.ClientKeyParam)
+	}
+	httpc := &http.Client{Timeout: 10 * time.Second}
 	h := console.New(console.Deps{
-		Config:  cfg,
-		DB:      db,
-		Limiter: &ratelimit.Limiter{DB: db, Table: cfg.Table, TTL: time.Hour},
-		Now:     time.Now,
+		Config:   cfg,
+		DB:       db,
+		Limiter:  &ratelimit.Limiter{DB: db, Table: cfg.Table, TTL: time.Hour},
+		AuthGate: &authgate.Client{BaseURL: cfg.AuthGateBaseURL, ClientKey: clientKey, AdminKey: adminKey, HTTP: httpc},
+		Tokens:   &authgate.Verifier{BaseURL: cfg.AuthGateBaseURL, Audience: cfg.AuthGateClientID, HTTP: httpc},
+		Now:      time.Now,
 	})
 
 	if cfg.Dev {
@@ -52,18 +69,20 @@ func main() {
 	}
 
 	// Only requests that came through CloudFront carry the shared origin secret.
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
-	if err != nil {
-		log.Fatalf("load aws config: %v", err)
-	}
-	verify, err := ssmx.GetSecureString(ctx, awsCfg, cfg.OriginVerifyParam)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if verify == "" {
-		log.Fatalf("ssm parameter %s is empty", cfg.OriginVerifyParam)
-	}
+	verify := mustSecret(ctx, awsCfg, cfg.OriginVerifyParam)
 	h = httpx.RequireKey("x-origin-verify", httpx.StaticKey(verify))(h)
 	// A Function URL sends the API Gateway v2 (HTTP API) payload.
 	lambda.Start(httpadapter.NewV2(h).ProxyWithContext)
+}
+
+// mustSecret reads an SSM parameter at cold start; an empty value is fatal.
+func mustSecret(ctx context.Context, awsCfg aws.Config, name string) string {
+	v, err := ssmx.GetSecureString(ctx, awsCfg, name)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if v == "" {
+		log.Fatalf("ssm parameter %s is empty", name)
+	}
+	return v
 }

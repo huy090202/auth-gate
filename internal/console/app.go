@@ -8,15 +8,18 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
+	"github.com/huy090202/auth-gate/internal/console/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 )
 
-// Deps is what the handlers need from outside. Later tasks add AuthGate and Tokens.
+// Deps is what the handlers need from outside.
 type Deps struct {
-	Config  Config
-	DB      *dynamodb.Client
-	Limiter *ratelimit.Limiter
-	Now     func() time.Time
+	Config   Config
+	DB       *dynamodb.Client
+	Limiter  *ratelimit.Limiter
+	AuthGate *authgate.Client
+	Tokens   *authgate.Verifier
+	Now      func() time.Time
 }
 
 // App holds the dependencies of the handlers.
