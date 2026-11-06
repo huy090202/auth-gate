@@ -10,11 +10,13 @@ import (
 	"github.com/huy090202/auth-gate/internal/auth/client"
 	"github.com/huy090202/auth-gate/internal/auth/service"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
+	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 )
 
 // NewVerify returns the verify-role API behind the client access key.
+// Every authenticated call spends a token from its client's bucket.
 // The origin-verify wrapper is applied in main.
-func NewVerify(svc *service.Service, clients *client.Service) http.Handler {
+func NewVerify(svc *service.Service, clients *client.Service, limiter *ratelimit.Limiter) http.Handler {
 	h := &verify{svc: svc}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/factors/pin", h.enrollPIN)
@@ -25,7 +27,7 @@ func NewVerify(svc *service.Service, clients *client.Service) http.Handler {
 	mux.HandleFunc("DELETE /api/webauthn/credentials/{credentialId}", h.deleteCredential)
 	mux.HandleFunc("POST /api/challenges", h.beginChallenge)
 	mux.HandleFunc("POST /api/challenges/{challengeId}/verify", h.verifyChallenge)
-	return httpx.RequireKey("x-internal-access-key", clients.KeyFunc())(mux)
+	return httpx.RequireKey("x-internal-access-key", clients.KeyFunc())(limitClient(limiter)(mux))
 }
 
 type verify struct{ svc *service.Service }

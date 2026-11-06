@@ -387,6 +387,14 @@ func (s *Service) GetClient(ctx context.Context, clientID string) (client.Client
 	return s.Clients.Get(ctx, clientID)
 }
 
+// UpdateClient applies a patch to a client and returns the stored result.
+func (s *Service) UpdateClient(ctx context.Context, clientID string, p client.Patch) (client.Client, error) {
+	if err := validateIDs(clientID); err != nil {
+		return client.Client{}, err
+	}
+	return s.Clients.Update(ctx, clientID, p)
+}
+
 // RotateClientKey issues a new access key; previous keys keep working for 24 h.
 func (s *Service) RotateClientKey(ctx context.Context, clientID string) (string, error) {
 	if err := validateIDs(clientID); err != nil {

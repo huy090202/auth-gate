@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/huy090202/auth-gate/internal/auth/challenge"
@@ -24,6 +25,7 @@ import (
 	"github.com/huy090202/auth-gate/internal/platform/dynamo"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/kmsx"
+	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 	"github.com/huy090202/auth-gate/internal/platform/ssmx"
 )
 
@@ -51,10 +53,11 @@ func main() {
 		} else {
 			signer = token.NewKMSSigner(kmsx.New(awsCfg), cfg.KMSKeyID)
 		}
-		svc := newService(ctx, cfg, signer)
-		h = handler.NewVerify(svc, svc.Clients)
+		db := mustDynamo(ctx, cfg)
+		svc := newService(db, cfg, signer)
+		h = handler.NewVerify(svc, svc.Clients, &ratelimit.Limiter{DB: db, Table: cfg.Table})
 	case config.RoleAdmin:
-		svc := newService(ctx, cfg, nil)
+		svc := newService(mustDynamo(ctx, cfg), cfg, nil)
 		h = handler.NewAdmin(svc, mustSecret(ctx, awsCfg, cfg.AdminKeyParam))
 	case config.RoleJWKS:
 		var signers []token.Signer
@@ -85,9 +88,11 @@ func runDev(ctx context.Context, cfg config.Config) {
 	}
 	// One signer instance, so tokens from /verify check against /jwks.
 	signer := mustLocalSigner()
-	svc := newService(ctx, cfg, signer)
+	db := mustDynamo(ctx, cfg)
+	svc := newService(db, cfg, signer)
+	limiter := &ratelimit.Limiter{DB: db, Table: cfg.Table}
 	mux := http.NewServeMux()
-	mux.Handle("/verify/", http.StripPrefix("/verify", handler.NewVerify(svc, svc.Clients)))
+	mux.Handle("/verify/", http.StripPrefix("/verify", handler.NewVerify(svc, svc.Clients, limiter)))
 	mux.Handle("/admin/", http.StripPrefix("/admin", handler.NewAdmin(svc, adminKey)))
 	mux.Handle("/jwks/", http.StripPrefix("/jwks", handler.NewJWKS(signer)))
 	addr := ":" + cfg.Port
@@ -96,7 +101,8 @@ func runDev(ctx context.Context, cfg config.Config) {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func newService(ctx context.Context, cfg config.Config, signer token.Signer) *service.Service {
+// mustDynamo builds the DynamoDB client; against a local endpoint it also creates the table.
+func mustDynamo(ctx context.Context, cfg config.Config) *dynamodb.Client {
 	db, err := dynamo.New(ctx, cfg.DynamoEndpoint)
 	if err != nil {
 		log.Fatal(err)
@@ -106,6 +112,10 @@ func newService(ctx context.Context, cfg config.Config, signer token.Signer) *se
 			log.Fatal(err)
 		}
 	}
+	return db
+}
+
+func newService(db *dynamodb.Client, cfg config.Config, signer token.Signer) *service.Service {
 	return &service.Service{
 		Clients:    &client.Service{Store: client.NewDynamoStore(db, cfg.Table)},
 		Factors:    factor.NewDynamoStore(db, cfg.Table),
