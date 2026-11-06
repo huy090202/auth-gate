@@ -143,7 +143,11 @@ The deploy and smoke steps are manual and run by a person with AWS access. They 
    Without a custom domain the first deploy runs twice: it reads the distribution domain,
    then redeploys to set `BASE_URL`, which avoids a CloudFormation dependency cycle.
 5. `04-smoke.sh`: run the Bruno collection, then `cmd/smoke`, a real WebAuthn round trip.
-6. `99-purge.sh`: tear the stage down.
+6. (once, after the first deploy that has client listing) `05-backfill-clients.sh`
+   (`ADMIN_PROFILE=default`): write the list-index item for clients created before it
+   existed. It needs `Scan`, which no Lambda role or the deployer has, so it runs under the
+   operator profile. Safe to rerun; prints counts only.
+7. `99-purge.sh`: tear the stage down.
 
 Prerequisites: AWS CLI v2 and SAM CLI. A new AWS account may refuse the distribution with
 "Your account must be verified before you can add new CloudFront resources"; only AWS Support
@@ -157,8 +161,9 @@ missing deployer permission goes into `infra/deployer-policy.json`; rerun `00-de
 ## Repository layout
 
 ```text
-cmd/auth-gate/       ROLE selects the mux; Lambda adapter and local dev server
-cmd/smoke/           WebAuthn round trip against a deployed stage
+cmd/auth-gate/        ROLE selects the mux; Lambda adapter and local dev server
+cmd/backfill-clients/ one-off: write the list-index item for existing clients
+cmd/smoke/            WebAuthn round trip against a deployed stage
 internal/platform/   foundation: dynamo, kms, ssm, httpx, config, log
 internal/auth/       domain: client, pin, webauthn, challenge, token, handlers
 infra/template.yaml  SAM: three functions, table, KMS key, CloudFront door

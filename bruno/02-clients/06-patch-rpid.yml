@@ -1,0 +1,43 @@
+info:
+  name: "Patch rpId (400)"
+  type: http
+  seq: 6
+
+http:
+  method: PATCH
+  url: "{{baseUrl}}/api/clients/{{clientId}}"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+    - name: X-Internal-Access-Key
+      value: "{{adminKey}}"
+  body:
+    type: json
+    data: |-
+      { "rpId": null }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("400 — rpId is never patchable", function() {
+          expect(res.getStatus()).to.equal(400);
+        });
+
+        test("error is invalid_client", function() {
+          expect(res.getBody().error).to.equal("invalid_client");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  Patches `rpId`. **Expected: 400 `invalid_client`.**
+
+  Every passkey is bound to the `rpId` it was registered under; changing it would
+  orphan them all. So the field is rejected whenever it is present in the body,
+  even as `null`, which is what this request sends. Harmless on prd.

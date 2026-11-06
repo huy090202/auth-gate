@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -391,5 +392,51 @@ func TestDisableKeepsIndexName(t *testing.T) {
 		if v, _ := out.Item["name"].(*types.AttributeValueMemberS); v == nil || v.Value != "renamed meanwhile" {
 			t.Fatalf("index name %v, want it kept", out.Item["name"])
 		}
+	}
+}
+
+func TestBackfillIsIdempotentAndKeepsIndexState(t *testing.T) {
+	svc, db, table := newSvc(t)
+	ctx := context.Background()
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC).Format(time.RFC3339)
+	s := func(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }
+	for _, id := range []string{"legacy1", "legacy2"} {
+		item := dynamo.Key("C#"+id, "META")
+		item["name"], item["rpId"], item["createdAt"] = s("old "+id), s("example.com"), s(created)
+		item["origins"] = &types.AttributeValueMemberSS{Value: []string{"https://example.com"}}
+		item["keyHashes"] = &types.AttributeValueMemberSS{Value: []string{"h-" + id}}
+		for k, v := range map[string]string{"pinLength": "6", "pinMaxAttempts": "5", "pinLockoutSec": "900", "tokenTtlSec": "300"} {
+			item[k] = &types.AttributeValueMemberN{Value: v}
+		}
+		for _, it := range []map[string]types.AttributeValue{item, dynamo.Key("K#h-"+id, "META"), dynamo.Key("S#"+id, "x")} {
+			if _, err := db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(table), Item: it}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	written, skipped, err := client.Backfill(ctx, db, table)
+	if err != nil || written != 2 || skipped != 0 {
+		t.Fatalf("first run: written %d skipped %d err %v, want 2 0", written, skipped, err)
+	}
+	if _, err := svc.Update(ctx, "legacy1", client.Patch{Name: aws.String("renamed")}); err != nil {
+		t.Fatal(err)
+	}
+	snap := func(pk, sk string) map[string]types.AttributeValue {
+		out, err := db.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(table), Key: dynamo.Key(pk, sk), ConsistentRead: aws.Bool(true)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.Item
+	}
+	keyBefore, sessBefore := snap("K#h-legacy1", "META"), snap("S#legacy1", "x")
+	written, skipped, err = client.Backfill(ctx, db, table)
+	if err != nil || written != 0 || skipped != 2 {
+		t.Fatalf("second run: written %d skipped %d err %v, want 0 2", written, skipped, err)
+	}
+	if v, _ := snap("CLIENTS", "C#legacy1")["name"].(*types.AttributeValueMemberS); v == nil || v.Value != "renamed" {
+		t.Fatalf("index name %v, want renamed", snap("CLIENTS", "C#legacy1")["name"])
+	}
+	if !reflect.DeepEqual(snap("K#h-legacy1", "META"), keyBefore) || !reflect.DeepEqual(snap("S#legacy1", "x"), sessBefore) {
+		t.Fatal("K# or S# item changed")
 	}
 }

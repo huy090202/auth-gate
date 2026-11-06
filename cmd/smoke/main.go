@@ -154,6 +154,28 @@ func run(base, adminKey string) error {
 		return fmt.Errorf("token: amr = %v", claims.AMR)
 	}
 	fmt.Println("ok token verified")
+
+	// Disabling a client cuts its key off at once but does not unsign what it was
+	// already issued: the token still verifies against the JWKS. Enabling restores
+	// the same key.
+	if err := api.call("POST", "/api/clients/"+created.ClientID+"/disable", adminKey, nil, http.StatusOK, nil); err != nil {
+		return fmt.Errorf("disable: %w", err)
+	}
+	if err := api.call("GET", "/api/factors/"+subject, key, nil, http.StatusUnauthorized, nil); err != nil {
+		return fmt.Errorf("client call while disabled: %w", err)
+	}
+	fmt.Println("ok disabled client refused")
+	if _, err := token.VerifyWithJWKS(verified.Token, jwks); err != nil {
+		return fmt.Errorf("token while client disabled: %w", err)
+	}
+	fmt.Println("ok token still verifies")
+	if err := api.call("POST", "/api/clients/"+created.ClientID+"/enable", adminKey, nil, http.StatusOK, nil); err != nil {
+		return fmt.Errorf("enable: %w", err)
+	}
+	if err := api.call("GET", "/api/factors/"+subject, key, nil, http.StatusOK, nil); err != nil {
+		return fmt.Errorf("client call after enable: %w", err)
+	}
+	fmt.Println("ok enabled client accepted")
 	return nil
 }
 

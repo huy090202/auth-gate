@@ -1,0 +1,54 @@
+info:
+  name: "Setup: create client C (201)"
+  type: http
+  seq: 16
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/clients"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+    - name: X-Internal-Access-Key
+      value: "{{adminKey}}"
+  body:
+    type: json
+    data: |-
+      {
+        "name": "bruno boundary C",
+        "rpId": "localhost",
+        "origins": ["http://localhost:3000"]
+      }
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.getStatus() === 201) {
+          bru.setVar("disableClientKey", res.getBody().accessKey);
+          bru.setVar("disableClientId", res.getBody().clientId);
+        }
+    - type: tests
+      code: |-
+        test("201 — client created", function() {
+          expect(res.getStatus()).to.equal(201);
+        });
+
+        test("the key is returned once, here", function() {
+          const k = res.getBody().accessKey;
+          expect(typeof k === "string" && k.length > 0, "accessKey missing").to.equal(true);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  **Setup, expected: 201.** A third throwaway client, for the disable case. Its key
+  and id are captured as `disableClientKey` and `disableClientId`, so the
+  `clientKey` that later folders use is left alone.
+
+  > **On prd this creates a real client.** Deleting a client is out of v1.

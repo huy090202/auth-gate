@@ -48,6 +48,8 @@ docs: |-
 
   The new key works at once; the previous one keeps working for 24 h, then its
   item expires by TTL. That window is for the client to redeploy, not a
-  revocation: to cut off a leaked key, rotate twice.
+  revocation. To cut off a leaked key, rotate and then call
+  \`DELETE /api/clients/{id}/keys/previous\` (\`07-revoke-previous-keys\`): that
+  route is what ends the grace.
 
   > **On prd** the client's old key starts its 24 h countdown. Coordinate first.

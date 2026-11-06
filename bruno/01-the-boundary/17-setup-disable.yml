@@ -1,0 +1,36 @@
+info:
+  name: "Setup: disable client C (200)"
+  type: http
+  seq: 17
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/clients/{{disableClientId}}/disable"
+  headers:
+    - name: X-Internal-Access-Key
+      value: "{{adminKey}}"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("200 — client disabled", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+        test("the view carries disabledAt", function() {
+          expect(res.getBody().clientId).to.equal(bru.getVar("disableClientId"));
+          expect(res.getBody().disabledAt).to.be.a("string").and.not.empty;
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  **Setup, expected: 200.** Disables client C with the admin key. The response is
+  the client view with `disabledAt`. `19-setup-enable` turns it back on, so no
+  later folder runs against a disabled client.

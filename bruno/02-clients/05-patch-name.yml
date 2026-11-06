@@ -1,0 +1,58 @@
+info:
+  name: "Patch name"
+  type: http
+  seq: 5
+
+http:
+  method: PATCH
+  url: "{{baseUrl}}/api/clients/{{clientId}}"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+    - name: X-Internal-Access-Key
+      value: "{{adminKey}}"
+  body:
+    type: json
+    data: |-
+      { "name": "bruno demo renamed" }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("200 — client updated", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+        test("the name changed and the rest did not", function() {
+          const b = res.getBody();
+          expect(b.clientId).to.equal(bru.getVar("clientId"));
+          expect(b.name).to.equal("bruno demo renamed");
+          expect(b.rpId).to.equal("localhost");
+          expect(b.origins).to.deep.equal(["http://localhost:3000"]);
+          expect(b.pinPolicy.maxAttempts).to.equal(3);
+          expect(b.tokenTtlSec).to.equal(300);
+        });
+
+        test("never returns key material", function() {
+          const body = JSON.stringify(res.getBody()).toLowerCase();
+          expect(body).to.not.include("accesskey");
+          expect(body).to.not.include("hash");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  Renames the client. **Expected: 200 and the client view.**
+
+  PATCH changes only the fields present: `name`, `origins`, `pinPolicy`,
+  `tokenTtlSec` and `rateLimit`. Keys are not touched, so the client's key
+  keeps working. The list entry is renamed with it.
+
+  Harmless on prd, but the name is what operators see in the list: set it back if
+  you run this against a real client.
