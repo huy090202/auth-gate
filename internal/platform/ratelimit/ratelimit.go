@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
@@ -49,9 +50,11 @@ func (l *Limiter) now() time.Time {
 	return time.Now()
 }
 
-// Allow spends one token from the bucket RL#<key>. It never returns an error:
-// a DynamoDB failure is logged and the request is allowed, because the caller
-// needs the same table anyway and failing here adds no protection.
+// Allow spends one token from the bucket RL#<key>. It never returns an error.
+// A throttled DynamoDB call denies the request, because a client flooding its own
+// bucket is exactly who gets throttled and would otherwise pass unmetered. Any
+// other DynamoDB failure is logged and the request is allowed, because the
+// caller needs the same table anyway and failing here adds no protection.
 //
 // updatedAt (integer microseconds) marks the start of the refill window nobody
 // has claimed yet. The first writer to see an unclaimed window moves updatedAt
@@ -64,8 +67,7 @@ func (l *Limiter) Allow(ctx context.Context, key string, s Settings) Decision {
 
 	b, err := l.read(ctx, k)
 	if err != nil {
-		slog.Error("ratelimit read", "key", key, "err", err)
-		return Decision{Allowed: true}
+		return failed(key, "read", err)
 	}
 	if b == nil {
 		err := l.create(ctx, k, s, now)
@@ -73,13 +75,11 @@ func (l *Limiter) Allow(ctx context.Context, key string, s Settings) Decision {
 			return Decision{Allowed: true}
 		}
 		if !lostCondition(err) {
-			slog.Error("ratelimit write", "key", key, "err", err)
-			return Decision{Allowed: true}
+			return failed(key, "write", err)
 		}
 		// Another caller created it first. Its value decides, so read it once more.
 		if b, err = l.read(ctx, k); err != nil {
-			slog.Error("ratelimit read", "key", key, "err", err)
-			return Decision{Allowed: true}
+			return failed(key, "read", err)
 		}
 		if b == nil {
 			slog.Error("ratelimit read", "key", key, "err", "bucket item gone right after it was created")
@@ -110,8 +110,7 @@ func (l *Limiter) Allow(ctx context.Context, key string, s Settings) Decision {
 			return Decision{Allowed: true}
 		}
 		if !lostCondition(err) {
-			slog.Error("ratelimit write", "key", key, "err", err)
-			return Decision{Allowed: true}
+			return failed(key, "write", err)
 		}
 	}
 
@@ -121,8 +120,7 @@ func (l *Limiter) Allow(ctx context.Context, key string, s Settings) Decision {
 		return Decision{Allowed: true}
 	}
 	if !lostCondition(err) {
-		slog.Error("ratelimit write", "key", key, "err", err)
-		return Decision{Allowed: true}
+		return failed(key, "write", err)
 	}
 	return denied(have, s.PerSecond)
 }
@@ -140,6 +138,18 @@ func refilled(tokens, burst, elapsedUS int64, perSecond float64) int64 {
 		return burst
 	}
 	return tokens + int64(earned)
+}
+
+// failed decides a call that hit a DynamoDB error other than a lost condition.
+// A throttle denies with a warning, since an error per request would make noise
+// during a flood; anything else logs and allows.
+func failed(key, op string, err error) Decision {
+	if retry.IsErrorThrottles(retry.DefaultThrottles).IsErrorThrottle(err).Bool() {
+		slog.Warn("ratelimit throttled, denying", "key", key, "op", op, "err", err)
+		return Decision{RetryAfterSec: 1}
+	}
+	slog.Error("ratelimit "+op, "key", key, "err", err)
+	return Decision{Allowed: true}
 }
 
 func denied(have int64, perSecond float64) Decision {

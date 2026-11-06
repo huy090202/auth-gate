@@ -31,11 +31,13 @@ A clock behind `updatedAt` earns nothing and the call spends normally.
 
 Cost: one read and at most two writes per allowed request, and a failed conditional write still consumes write capacity.
 
-## Fail-open
+## Fail-open, except when throttled
 
-If the table cannot be read or written, the call is allowed and the error is logged. The request needs the same table to do anything useful, so failing closed would add no protection and would turn a table outage into a second, louder one. A malformed bucket item is treated the same way.
+If the table cannot be read or written for a reason other than throttling, the call is allowed and the error is logged. The request needs the same table to do anything useful, so failing closed would add no protection and would turn a table outage into a second, louder one. A malformed bucket item is treated the same way.
 
-That reasoning covers an outage of the table, not a flood on one bucket. A throttled read or write fails open like any other DynamoDB error, so a flood past DynamoDB's per-partition limits passes unmetered: the limiter stops limiting exactly when one client is flooding it. "The request needs the same table anyway" does not cover a hot `RL#` partition, because the rest of the request uses other partitions, which can still serve it. This is reasoned from AWS's documented limits, not measured. The behaviour follows spec section 5, and the product owner will decide on it separately.
+That reasoning covers an outage of the table, not a flood on one bucket. A client flooding its own `RL#` item past DynamoDB's per-partition limits gets throttled, and if those calls passed they would go unmetered: the limiter would stop limiting exactly when one client is flooding it. So a throttling error from any of the four calls (the read, the first-write create, the claim, the spend) denies the request with `Retry-After: 1` and the usual `429 rate_limited`. Throttling is recognised with the SDK's own classification (`retry.DefaultThrottles`), which covers `ProvisionedThroughputExceededException`, `RequestLimitExceeded` and `ThrottlingException`, including the wrapped error returned after the SDK's retries are spent. Each throttled denial logs a warning with the key and the error, not an error per request, so a flood does not drown the log. A lost conditional write is not a throttle and is handled as before. Product owner's decision, 2026-11-06.
+
+DynamoDB Local cannot throttle. This path is proven against a fake HTTP endpoint that answers with the real error shape, not against AWS, so what real throttling looks like (how often, how soon) is unmeasured.
 
 ## Measurement
 
@@ -78,7 +80,7 @@ This is one run on one machine with one key. It was not run against a deployed s
 
 ## Known limit
 
-One bucket is one item, and one item still has DynamoDB's per-partition limits. Every allowed call writes that item, and calls past those limits are not refused: they are throttled and pass unmetered (see Fail-open). So above that rate the configured `perSecond` no longer holds. This is reasoned from AWS's documented limits, not measured: DynamoDB Local does not reproduce them.
+One bucket is one item, and one item still has DynamoDB's per-partition limits. Every allowed call writes that item, and calls past those limits are throttled, which the limiter now answers with `429` (see Fail-open, except when throttled). So above that rate the configured `perSecond` no longer holds: some calls are refused that the bucket would have allowed. This is reasoned from AWS's documented limits, not measured: DynamoDB Local does not reproduce them.
 
 ## Next step
 

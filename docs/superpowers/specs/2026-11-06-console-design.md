@@ -112,8 +112,12 @@ keyed by clientId. Admin and JWKS routes are not limited.
   full bucket of 100, 100 simultaneous calls allowed only 11 to 22 under them, so callers got `429`
   while tokens remained.
 - `429 {"error": "rate_limited"}` with `Retry-After` in whole seconds.
-- A DynamoDB error on the limiter logs and lets the request continue. The request needs the same
-  table anyway, so failing here adds no protection.
+- A throttled DynamoDB call on the limiter (`ProvisionedThroughputExceededException`,
+  `RequestLimitExceeded`, `ThrottlingException`) denies the request with the same `429`, and logs a
+  warning. Product owner's decision, 2026-11-06: a client flooding its own `RL#` item is the one that
+  gets throttled, so letting those calls through would stop the limiter exactly when it is needed.
+  Any other DynamoDB error logs and lets the request continue; the request needs the same table
+  anyway, so failing there adds no protection.
 - Settings on the client: `rateLimit {burst, perSecond}`, default burst 100 and 50 per second,
   changed through `PATCH /api/clients/{id}`. `perSecond: 0` is rejected; there is no unlimited mode.
 

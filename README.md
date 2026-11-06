@@ -58,7 +58,8 @@ curl -X PATCH "$BASE/api/clients/$CLIENT_ID" \
   -d '{"rateLimit": {"burst": 200, "perSecond": 100}}'
 ```
 
-If the table cannot be reached the limiter lets the request through
+If DynamoDB throttles the limiter's own calls, the request is refused with the same
+**429**. If the table fails in any other way the limiter lets the request through
 ([memo](docs/memo/rate-limit-bucket.md)).
 
 ## The WebAuthn relay

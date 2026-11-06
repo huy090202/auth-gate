@@ -2,7 +2,11 @@ package ratelimit
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strconv"
 	"sync"
@@ -11,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
@@ -196,6 +201,112 @@ func TestDynamoErrorLetsRequestThrough(t *testing.T) {
 	l.Table = "missing"
 	if d := l.Allow(context.Background(), "k", Settings{Burst: 1, PerSecond: 1}); !d.Allowed {
 		t.Fatalf("denied on dynamo error: %+v", d)
+	}
+}
+
+// fakeReply is one canned DynamoDB answer: an HTTP status and a JSON body.
+type fakeReply struct {
+	status int
+	body   string
+}
+
+func errReply(status int, code string) fakeReply {
+	return fakeReply{status, fmt.Sprintf(`{"__type":"com.amazonaws.dynamodb.v20120810#%s","message":"fake"}`, code)}
+}
+
+// fakeLimiter points a Limiter at an httptest server that answers each operation by
+// its X-Amz-Target header, taking the replies for that operation in order and
+// repeating the last. DynamoDB Local cannot throttle, so this is the only way to
+// reach those branches. Retries and response checksums are off to keep it fast and quiet.
+func fakeLimiter(t *testing.T, replies map[string][]fakeReply) *Limiter {
+	t.Helper()
+	var mu sync.Mutex
+	next := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		op := r.Header.Get("X-Amz-Target")
+		mu.Lock()
+		rs, ok := replies[op]
+		if !ok {
+			mu.Unlock()
+			t.Errorf("unexpected operation %q", op)
+			http.Error(w, "unexpected", http.StatusTeapot)
+			return
+		}
+		rep := rs[min(next[op], len(rs)-1)]
+		next[op]++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+		w.WriteHeader(rep.status)
+		_, _ = io.WriteString(w, rep.body)
+	}))
+	t.Cleanup(srv.Close)
+	db := dynamodb.New(dynamodb.Options{
+		Region:                          "ap-southeast-1",
+		BaseEndpoint:                    aws.String(srv.URL),
+		Credentials:                     credentials.NewStaticCredentialsProvider("x", "x", ""),
+		Retryer:                         aws.NopRetryer{},
+		DisableValidateResponseChecksum: true,
+	})
+	return &Limiter{DB: db, Table: "t", Now: func() time.Time { return t0 }}
+}
+
+const (
+	getNothing = `{}`
+	// a bucket with 5 tokens whose refill window started 10 s before t0
+	getStale = `{"Item":{"pk":{"S":"RL#k"},"sk":{"S":"META"},"tokens":{"N":"5.000000"},"updatedAt":{"N":"%d"}}}`
+)
+
+func staleItem() fakeReply {
+	return fakeReply{200, fmt.Sprintf(getStale, t0.Add(-10*time.Second).UnixMicro())}
+}
+
+// failingPaths maps each call site to the replies that reach it, with the failure
+// reply for the call under test left to the caller.
+func failingPaths(fail fakeReply) map[string]map[string][]fakeReply {
+	lost := errReply(400, "ConditionalCheckFailedException")
+	return map[string]map[string][]fakeReply{
+		"read":   {"DynamoDB_20120810.GetItem": {fail}},
+		"create": {"DynamoDB_20120810.GetItem": {{200, getNothing}}, "DynamoDB_20120810.PutItem": {fail}},
+		"claim":  {"DynamoDB_20120810.GetItem": {staleItem()}, "DynamoDB_20120810.UpdateItem": {fail}},
+		"spend":  {"DynamoDB_20120810.GetItem": {staleItem()}, "DynamoDB_20120810.UpdateItem": {lost, fail}},
+	}
+}
+
+func TestThrottledCallsDeny(t *testing.T) {
+	cases := []struct {
+		site, code string
+		why        string
+	}{
+		{"read", "ProvisionedThroughputExceededException", "the SDK's own throttle code for a hot partition"},
+		{"read", "RequestLimitExceeded", "the on-demand table throttle code"},
+		{"read", "ThrottlingException", "the generic throttle code"},
+		{"create", "ProvisionedThroughputExceededException", "a flood can throttle the first write too"},
+		{"claim", "RequestLimitExceeded", "the claim is a write on the hot item"},
+		{"spend", "ThrottlingException", "the spend after a lost claim is the most common write under a flood"},
+	}
+	for _, c := range cases {
+		t.Run(c.site+"/"+c.code, func(t *testing.T) {
+			t.Log(c.why)
+			l := fakeLimiter(t, failingPaths(errReply(400, c.code))[c.site])
+			d := l.Allow(context.Background(), "k", Settings{Burst: 10, PerSecond: 1})
+			if d.Allowed || d.RetryAfterSec != 1 {
+				t.Fatalf("decision = %+v, want denied with RetryAfterSec 1", d)
+			}
+		})
+	}
+}
+
+func TestOtherDynamoErrorsStillAllow(t *testing.T) {
+	// A 500 is not a throttle: the limiter keeps failing open on it, and these
+	// are the write-error branches that had no test.
+	for _, site := range []string{"read", "create", "claim", "spend"} {
+		t.Run(site, func(t *testing.T) {
+			l := fakeLimiter(t, failingPaths(errReply(500, "InternalServerError"))[site])
+			if d := l.Allow(context.Background(), "k", Settings{Burst: 10, PerSecond: 1}); !d.Allowed {
+				t.Fatalf("denied on a non-throttle error: %+v", d)
+			}
+		})
 	}
 }
 
