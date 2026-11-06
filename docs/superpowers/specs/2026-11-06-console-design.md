@@ -105,6 +105,9 @@ keyed by clientId. Admin and JWKS routes are not limited.
   with the condition `updatedAt = <the value read> AND tokens >= 1 - refill`.
 - A writer that lost the claim, or found no window to claim, spends with `tokens - 1` and the
   condition `tokens >= 1`. Lost that too: `429`. There is no retry loop.
+- A claim also fires when `tokens > burst`, and a spike overlapping a `PATCH` that lowers burst can
+  briefly pass more than the new burst, bounded by the old stored tokens and ending at the first
+  winning claim (reasoned from the design, not measured).
 - Product owner's decision, 2026-11-06: this replaces the earlier condition and retry rule. On a
   full bucket of 100, 100 simultaneous calls allowed only 11 to 22 under them, so callers got `429`
   while tokens remained.

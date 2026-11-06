@@ -25,7 +25,7 @@ Why this holds:
 - **Never above burst.** Only a claim adds tokens, and it adds to whatever remains after any spends since its read, so the result cannot exceed the value computed from that read.
 - **Never below zero.** `tokens >= 1 - refill` still holds the claim back when spends land between the read and the claim. Without that clause `tokens` can go negative.
 - **No refill from idle time after a spike.** The first writer on a full bucket claims the window although it earns nothing. A plain spend would leave `updatedAt` an hour old after an idle hour, and the next caller would be credited a full bucket again.
-- **A lowered burst clamps.** After a `PATCH` lowers `burst`, `refill` is negative, so the next claim takes the stored tokens down to the new burst.
+- **A lowered burst clamps.** After a `PATCH` lowers `burst`, `refill` is negative, so the next claim takes the stored tokens down to the new burst. A claim also fires when `tokens > burst`, and a spike overlapping a `PATCH` that lowers burst can briefly pass more than the new burst, bounded by the old stored tokens and ending at the first winning claim (reasoned from the design, not measured).
 
 A clock behind `updatedAt` earns nothing and the call spends normally.
 
@@ -34,6 +34,8 @@ Cost: one read and at most two writes per allowed request, and a failed conditio
 ## Fail-open
 
 If the table cannot be read or written, the call is allowed and the error is logged. The request needs the same table to do anything useful, so failing closed would add no protection and would turn a table outage into a second, louder one. A malformed bucket item is treated the same way.
+
+That reasoning covers an outage of the table, not a flood on one bucket. A throttled read or write fails open like any other DynamoDB error, so a flood past DynamoDB's per-partition limits passes unmetered: the limiter stops limiting exactly when one client is flooding it. "The request needs the same table anyway" does not cover a hot `RL#` partition, because the rest of the request uses other partitions, which can still serve it. This is reasoned from AWS's documented limits, not measured. The behaviour follows spec section 5, and the product owner will decide on it separately.
 
 ## Measurement
 
@@ -75,7 +77,7 @@ This is one run on one machine with one key. It was not run against a deployed s
 
 ## Known limit
 
-One bucket is one item, and one item still has DynamoDB's per-item write limit. Every allowed call writes that item, so a client's rate cannot grow past it however high `perSecond` is set. That limit was not measured here: DynamoDB Local does not reproduce it.
+One bucket is one item, and one item still has DynamoDB's per-partition limits. Every allowed call writes that item, and calls past those limits are not refused: they are throttled and pass unmetered (see Fail-open). So above that rate the configured `perSecond` no longer holds. This is reasoned from AWS's documented limits, not measured: DynamoDB Local does not reproduce them.
 
 ## Next step
 
