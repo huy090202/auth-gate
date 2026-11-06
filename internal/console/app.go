@@ -19,9 +19,10 @@ type Deps struct {
 	Now     func() time.Time
 }
 
-// App holds the dependencies of the handlers. The Store arrives with the accounts task.
+// App holds the dependencies of the handlers.
 type App struct {
 	Deps
+	Store *Store
 }
 
 // authLimit is the per-IP bucket on /api/auth/*: 10 at once, then one per 6 seconds.
@@ -29,7 +30,7 @@ var authLimit = ratelimit.Settings{Burst: 10, PerSecond: 1.0 / 6}
 
 // New returns the Console's HTTP handler.
 func New(d Deps) http.Handler {
-	a := &App{Deps: d}
+	a := &App{Deps: d, Store: &Store{DB: d.DB, Table: d.Config.Table}}
 	mux := http.NewServeMux()
 	mux.Handle("/api/auth/", a.limitAuth(http.HandlerFunc(notFound)))
 	mux.HandleFunc("/api/", notFound)
