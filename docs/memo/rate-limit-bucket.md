@@ -45,11 +45,11 @@ That reasoning covers an outage of the table, not a flood on one bucket. A throt
 
 | workers | allowed/s | denied |
 | --- | --- | --- |
-| 1 | 59.9 | 3184 |
-| 5 | 59.9 | 9580 |
-| 10 | 59.9 | 9512 |
-| 20 | 59.9 | 8248 |
-| 50 | 59.9 | 6398 |
+| 1 | 59.9 | 3837 |
+| 5 | 59.9 | 13413 |
+| 10 | 59.9 | 12849 |
+| 20 | 59.9 | 13599 |
+| 50 | 59.9 | 10616 |
 
 Spike: 100 simultaneous calls on a full bucket, 5 times with 2.5 s between (long enough for a full refill).
 
@@ -65,6 +65,7 @@ What the numbers show:
 
 - The sustained rate holds at every worker count: allowed/s stays near 60, which is the refill (50/s) plus the initial burst spread over the 10 s window (100 / 10).
 - A spike on a full bucket gets its whole burst.
+- `denied` counts how often the workers come back, so it moves with the speed of the test client. It was 21 to 66% higher here than in one earlier run on the old test client, probably because reused connections let the workers loop faster; allowed/s and the spikes did not change. It is not a measure of the limiter.
 
 This is one run on one machine with one key. It was not run against a deployed stack.
 
