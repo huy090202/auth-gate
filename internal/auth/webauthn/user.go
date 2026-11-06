@@ -6,6 +6,9 @@ import (
 	"github.com/huy090202/auth-gate/internal/auth/factor"
 )
 
+// MaxUserIDLen is the WebAuthn limit for user.id, in bytes. The subject ID is the user handle.
+const MaxUserIDLen = 64
+
 type user struct {
 	id, name string
 	creds    []gowa.Credential

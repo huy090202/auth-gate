@@ -288,6 +288,9 @@ func (s *Service) BeginRegistration(ctx context.Context, c client.Client, subjec
 	if err := validateIDs(subjectID); err != nil {
 		return challenge.Registration{}, nil, err
 	}
+	if len(subjectID) > webauthn.MaxUserIDLen {
+		return challenge.Registration{}, nil, id.ErrInvalid
+	}
 	creds, err := s.Factors.ListCredentials(ctx, c.ID, subjectID)
 	if err != nil {
 		return challenge.Registration{}, nil, err

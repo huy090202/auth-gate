@@ -1,0 +1,44 @@
+info:
+  name: "Begin registration with a 65-byte subject (400)"
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/webauthn/registrations"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+    - name: X-Internal-Access-Key
+      value: "{{clientKey}}"
+  body:
+    type: json
+    data: |-
+      { "subjectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "displayName": "Bruno User" }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("400 — subject too long for a user handle", function() {
+          expect(res.getStatus()).to.equal(400);
+        });
+
+        test("error is invalid_id", function() {
+          expect(res.getBody().error).to.equal("invalid_id");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  Starts a passkey registration for a `subjectId` of 65 bytes.
+  **Expected: 400 `invalid_id`.**
+
+  The subject ID is the WebAuthn user handle, which the specification limits to
+  64 bytes. Other routes, such as PIN enrol, still accept up to 256 bytes.
+  Harmless on prd: nothing is stored.

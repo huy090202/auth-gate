@@ -186,3 +186,19 @@ func TestPatchEmptyBody(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
+
+// A WebAuthn user handle is at most 64 bytes, so a longer subject must be a 400, not a 500.
+func TestBeginRegistrationSubjectLength(t *testing.T) {
+	e := newEnv(t)
+	_, key := e.newClient(t, ratelimit.Settings{Burst: 100, PerSecond: 100})
+	post := func(n int) *httptest.ResponseRecorder {
+		return do(e.verify, http.MethodPost, "/api/webauthn/registrations", key,
+			`{"subjectId":"`+strings.Repeat("a", n)+`","displayName":"x"}`)
+	}
+	if w := post(65); w.Code != http.StatusBadRequest || strings.TrimSpace(w.Body.String()) != `{"error":"invalid_id"}` {
+		t.Fatalf("65 bytes: got %d %s", w.Code, w.Body.String())
+	}
+	if w := post(64); w.Code != http.StatusCreated {
+		t.Fatalf("64 bytes: got %d %s", w.Code, w.Body.String())
+	}
+}
