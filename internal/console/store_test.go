@@ -195,3 +195,37 @@ func TestCLIDisableLosesRaceWithWebDisable(t *testing.T) {
 	}
 	_ = b
 }
+
+// Why: recording a challenge must not bring back a session that was signed out
+// between the handler's read and its write, as an unconditional put would.
+func TestSetChallengeDoesNotResurrectSession(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	x := Session{Hash: "h1", AdminID: "a", Username: "huy", Stage: StageHalf, Epoch: 0}
+	if err := st.PutSession(ctx, x, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetChallenge(ctx, "h1", "c1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRegistration(ctx, "h1", "r1"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetSession(ctx, "h1")
+	if err != nil || got.ChallengeID != "c1" || got.RegistrationID != "r1" || got.Stage != StageHalf {
+		t.Fatalf("session = %+v (%v)", got, err)
+	}
+	if err := st.DeleteSession(ctx, "h1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetChallenge(ctx, "h1", "c2"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("SetChallenge on a deleted session = %v, want ErrSessionNotFound", err)
+	}
+	if err := st.SetRegistration(ctx, "h1", "r2"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("SetRegistration on a deleted session = %v, want ErrSessionNotFound", err)
+	}
+	if _, err := st.GetSession(ctx, "h1"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("session came back: %v", err)
+	}
+}

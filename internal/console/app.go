@@ -26,16 +26,30 @@ type Deps struct {
 type App struct {
 	Deps
 	Store *Store
+
+	// verifyPassword is VerifyPassword; a field so a test can count the calls.
+	verifyPassword func(password, stored string) bool
 }
 
 // authLimit is the per-IP bucket on /api/auth/*: 10 at once, then one per 6 seconds.
 var authLimit = ratelimit.Settings{Burst: 10, PerSecond: 1.0 / 6}
 
 // New returns the Console's HTTP handler.
-func New(d Deps) http.Handler {
-	a := &App{Deps: d, Store: &Store{DB: d.DB, Table: d.Config.Table}}
+func New(d Deps) http.Handler { return newApp(d).handler() }
+
+func newApp(d Deps) *App {
+	return &App{Deps: d, Store: &Store{DB: d.DB, Table: d.Config.Table}, verifyPassword: VerifyPassword}
+}
+
+func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/api/auth/", a.limitAuth(http.HandlerFunc(notFound)))
+	mux.Handle("/api/auth/", a.limitAuth(a.authRoutes()))
+	a.meRoutes(mux)
+	// Placeholders until the client and audit routes arrive: they answer a
+	// session at the wrong stage the way the real ones will.
+	for _, p := range []string{"/api/clients", "/api/clients/", "/api/audit"} {
+		mux.Handle(p, a.session(StageFull)(http.HandlerFunc(notFound)))
+	}
 	mux.HandleFunc("/api/", notFound)
 	return noStore(requireJSON(mux))
 }

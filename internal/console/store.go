@@ -552,3 +552,33 @@ func (st *Store) UseJTI(ctx context.Context, jti string, exp time.Time) error {
 	}
 	return nil
 }
+
+// SetChallenge records the session's open login or step-up challenge.
+func (st *Store) SetChallenge(ctx context.Context, hash, challengeID string) error {
+	return st.setSessionRef(ctx, hash, "challengeId", challengeID)
+}
+
+// SetRegistration records the session's open passkey registration.
+func (st *Store) SetRegistration(ctx context.Context, hash, registrationID string) error {
+	return st.setSessionRef(ctx, hash, "registrationId", registrationID)
+}
+
+// setSessionRef sets one attribute of an existing session. Like touchSession it
+// will not bring back a session that was signed out in the meantime: that
+// gives ErrSessionNotFound.
+func (st *Store) setSessionRef(ctx context.Context, hash, attr, value string) error {
+	_, err := st.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(st.Table), Key: sesKey(hash),
+		UpdateExpression:          aws.String("SET #a = :v"),
+		ConditionExpression:       aws.String(exists),
+		ExpressionAttributeNames:  map[string]string{"#a": attr},
+		ExpressionAttributeValues: item{":v": s(value)},
+	})
+	if dynamo.IsConditionFailed(err) {
+		return ErrSessionNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("set session %s: %w", attr, err)
+	}
+	return nil
+}
