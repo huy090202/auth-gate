@@ -75,6 +75,7 @@ The admin API today offers create, get one, rotate key and purge subject. The Co
 | `PATCH /api/clients/{id}` | any of `name, origins, pinPolicy, tokenTtlSec, rateLimit` | `200` client view | `rpId` cannot change: existing passkeys are bound to it. Origins still pass the `rpId` suffix check. |
 | `POST /api/clients/{id}/disable` | `{}` | `200` client view | Sets `disabledAt`. |
 | `POST /api/clients/{id}/enable` | `{}` | `200` client view | Clears it. |
+| `DELETE /api/clients/{id}/keys/previous` | none | `200 {revoked: n}` | Ends the 24 h grace at once. The current key is untouched. |
 
 Decisions:
 
@@ -87,7 +88,15 @@ Decisions:
 - **Disable is checked at key lookup.** A disabled client's keys answer `401`, with the same body
   as an unknown key. Tokens already issued stay valid until `exp` (900 s at most) because
   verification is offline; the UI says so.
-- Rotate, get and purge are unchanged. `/api/clients*` already routes to the admin role.
+- **A leaked key can be cut off at once** (product owner, 2026-11-06). Only hashes are stored, so
+  an operator cannot name the leaked key; the route ends every previous key's grace instead. If the
+  current key leaked: rotate, then call it, and the client answers `401` until it deploys the new
+  key. If an old key leaked after a rotate: call it alone, and the new key keeps working. Rotate now
+  also records each replaced key in `retiredKeys` on the client, as hash and expiry, dropping expired
+  entries, because nothing else can find a key in its grace. The view never returns that attribute.
+  Keys rotated before this ships are not recorded and live out their 24 h.
+- Rotate's route contract, get and purge are unchanged. `/api/clients*` already routes to the admin
+  role.
 - The Bruno boundary folder and `cmd/smoke` gain the disable case.
 
 ## 5. Rate limiting
@@ -167,7 +176,7 @@ Non-GET requests must be `application/json`.
 
 | Asks for PIN or passkey again | Does not |
 |---|---|
-| Rotate a client key | Viewing clients and the audit log |
+| Rotate a client key, or revoke its previous keys | Viewing clients and the audit log |
 | Disable a client | Creating a client |
 | Clear one user's factors | Renaming a client |
 | Change a client's origins, PIN policy, token TTL or rate limit | Enabling a client |
@@ -217,6 +226,7 @@ All under `/api`, JSON. Error envelope `{"error": "<snake_case>", ...}`.
 | `POST /clients` | full | Key returned once. |
 | `PATCH /clients/{id}` | full; + step-up unless only `name` changes | |
 | `POST /clients/{id}/keys` | full + step-up | Key returned once. |
+| `DELETE /clients/{id}/keys/previous` | full + step-up | Previous keys stop at once. |
 | `POST /clients/{id}/disable` | full + step-up | The Console's own client cannot be disabled. |
 | `POST /clients/{id}/enable` | full | |
 | `DELETE /clients/{id}/subjects/{subjectId}` | full + step-up | |
@@ -231,11 +241,11 @@ PIN, password or token. Responses carrying a key are `Cache-Control: no-store`.
 ## 8. Screens
 
 Sign in, second factor, first-run enrollment, clients (list, name filter, status), create client,
-client detail (edit, rotate, disable or enable, clear one user's factors), key shown once (copy,
+client detail (edit, rotate, revoke previous keys, disable or enable, clear one user's factors), key shown once (copy,
 must confirm it was saved before closing), audit log, my account (password, PIN, passkeys), admins
 (master only: list, create, temporary password shown once, reset, clear factors, disable, role).
 Destructive actions state the consequence: rotating keeps the old key valid for 24 hours;
-disabling stops the client's calls at once; clearing factors cannot be undone; the purge takes a
+revoking previous keys stops them at once, so anything still using one starts failing; disabling stops the client's calls at once; clearing factors cannot be undone; the purge takes a
 typed subject id. Every string in EN and VI, through a typed strings module so a missing key fails
 typecheck. Dates follow the language.
 
