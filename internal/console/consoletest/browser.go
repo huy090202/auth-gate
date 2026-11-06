@@ -49,6 +49,8 @@ type Browser struct {
 	H    *Harness
 	Base string
 	HTTP *http.Client
+
+	pin string // the PIN this browser last enrolled or signed in with, for StepUp
 }
 
 // NewBrowser returns a caller of the harness's Console.
@@ -155,7 +157,11 @@ func (b *Browser) Login(username, password string) Response {
 // EnrollPIN sets the signed-in admin's PIN (no step-up token).
 func (b *Browser) EnrollPIN(pin string) Response {
 	b.H.T.Helper()
-	return b.Do("POST", "/api/me/pin", map[string]string{"pin": pin})
+	r := b.Do("POST", "/api/me/pin", map[string]string{"pin": pin})
+	if r.Status == http.StatusOK {
+		b.pin = pin
+	}
+	return r
 }
 
 // StartSecondFactor opens a login challenge for "pin" or "webauthn".
@@ -171,7 +177,11 @@ func (b *Browser) SignInWithPIN(pin string) Response {
 	if st.Status != http.StatusOK {
 		b.H.T.Fatalf("start second factor: %d %s", st.Status, st.Body)
 	}
-	return b.Do("POST", "/api/auth/second-factor/verify", map[string]string{"challengeId": st.Str("challengeId"), "pin": pin})
+	r := b.Do("POST", "/api/auth/second-factor/verify", map[string]string{"challengeId": st.Str("challengeId"), "pin": pin})
+	if r.Status == http.StatusOK {
+		b.pin = pin
+	}
+	return r
 }
 
 // NewPasskey returns a fresh virtual authenticator with one credential.
@@ -254,4 +264,45 @@ func (h *Harness) StepUpToken(adminID, purpose, pin string) string {
 		h.T.Fatal(err)
 	}
 	return tok
+}
+
+// StepUp runs /stepup/start and /stepup/verify with the PIN this browser enrolled
+// or signed in with, and returns the token for the action. It fails the test if
+// either call is refused.
+func (b *Browser) StepUp(action string) string {
+	b.H.T.Helper()
+	if b.pin == "" {
+		b.H.T.Fatal("StepUp: this browser has not used a PIN")
+	}
+	st := b.Do("POST", "/api/stepup/start", map[string]string{"action": action, "factor": "pin"})
+	if st.Status != http.StatusOK {
+		b.H.T.Fatalf("step-up start: %d %s", st.Status, st.Body)
+	}
+	v := b.Do("POST", "/api/stepup/verify", map[string]string{"challengeId": st.Str("challengeId"), "pin": b.pin})
+	if v.Status != http.StatusOK {
+		b.H.T.Fatalf("step-up verify: %d %s", v.Status, v.Body)
+	}
+	return v.Str("stepUpToken")
+}
+
+// StepUpPasskey is StepUp with a passkey that is enrolled for the admin.
+func (b *Browser) StepUpPasskey(p *Passkey, action string) string {
+	b.H.T.Helper()
+	st := b.Do("POST", "/api/stepup/start", map[string]string{"action": action, "factor": "webauthn"})
+	if st.Status != http.StatusOK {
+		b.H.T.Fatalf("step-up start: %d %s", st.Status, st.Body)
+	}
+	pk, _ := json.Marshal(st.Map()["publicKey"])
+	ao, err := virtualwebauthn.ParseAssertionOptions(string(pk))
+	if err != nil {
+		b.H.T.Fatalf("parse request options: %v", err)
+	}
+	p.Credential.Counter++
+	assertion := virtualwebauthn.CreateAssertionResponse(p.RP, p.Authn, p.Credential, *ao)
+	v := b.Do("POST", "/api/stepup/verify",
+		map[string]any{"challengeId": st.Str("challengeId"), "credential": json.RawMessage(assertion)})
+	if v.Status != http.StatusOK {
+		b.H.T.Fatalf("step-up verify: %d %s", v.Status, v.Body)
+	}
+	return v.Str("stepUpToken")
 }

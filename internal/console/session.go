@@ -176,6 +176,7 @@ func (a *App) session(stages ...Stage) func(http.Handler) http.Handler {
 				a.reject(w, r, hash)
 				return
 			}
+			setAuditActor(r.Context(), admin.ID, admin.Username)
 			if !stageAllowed(x.Stage, stages) {
 				writeErr(w, stageError(x.Stage))
 				return

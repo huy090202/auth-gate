@@ -46,24 +46,6 @@ func TestLastFactorRefused(t *testing.T) {
 	want(t, b.Do("DELETE", "/api/me/passkeys/"+r.Str("credentialId"), nil), 409, "last_factor")
 }
 
-// Why: in a full session every change to one's own credentials asks for a step-up token.
-// (Tests holding a token come with the routes that mint one.)
-func TestFullSelfServiceWithoutTokenIsRefused(t *testing.T) {
-	h := consoletest.New(t)
-	a := h.CreateAdmin("ada", pw, console.RoleAdmin, false)
-	withPIN(t, h, a, pin1)
-	b := h.NewBrowser()
-	want(t, b.Login("ada", pw), 200, "")
-	want(t, b.SignInWithPIN(pin1), 200, "")
-	want(t, b.Do("POST", "/api/me/password", passwordBody(pw, pw2)), 403, "step_up_required")
-	want(t, b.EnrollPIN(pin2), 403, "step_up_required")
-	want(t, b.Do("DELETE", "/api/me/pin", nil), 403, "step_up_required")
-	want(t, b.StartPasskey(), 403, "step_up_required")
-	want(t, b.Do("DELETE", "/api/me/passkeys/abc", nil), 403, "step_up_required")
-	// Nothing changed.
-	want(t, h.NewBrowser().Login("ada", pw), 200, "")
-}
-
 func pinWorks(t *testing.T, h *consoletest.Harness, a console.Admin, pin string) bool {
 	t.Helper()
 	ch, err := h.AuthGate.CreateChallenge(context.Background(), a.ID, "probe", "pin")

@@ -31,12 +31,12 @@ func (a *App) meRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/me", anyStage(handlerFunc(a.me)))
 	// The password route is the one write with no step-up in stage enroll, so it
 	// shares the login limiter: it is a way to test guesses of the current password.
-	mux.Handle("POST /api/me/password", a.limitAuth(self(handlerFunc(a.changePassword))))
-	mux.Handle("POST /api/me/pin", self(handlerFunc(a.setPIN)))
-	mux.Handle("DELETE /api/me/pin", self(handlerFunc(a.deletePIN)))
-	mux.Handle("POST /api/me/passkeys/start", self(handlerFunc(a.passkeyStart)))
-	mux.Handle("POST /api/me/passkeys/finish", self(handlerFunc(a.passkeyFinish)))
-	mux.Handle("DELETE /api/me/passkeys/{id}", self(handlerFunc(a.deletePasskey)))
+	mux.Handle("POST /api/me/password", a.limitAuth(a.audited("change-password", nil, self(handlerFunc(a.changePassword)))))
+	mux.Handle("POST /api/me/pin", a.audited("set-pin", nil, self(handlerFunc(a.setPIN))))
+	mux.Handle("DELETE /api/me/pin", a.audited("delete-pin", nil, self(handlerFunc(a.deletePIN))))
+	mux.Handle("POST /api/me/passkeys/start", a.audited("passkey-start", nil, self(handlerFunc(a.passkeyStart))))
+	mux.Handle("POST /api/me/passkeys/finish", a.audited("passkey-finish", nil, self(handlerFunc(a.passkeyFinish))))
+	mux.Handle("DELETE /api/me/passkeys/{id}", a.audited("delete-passkey", pathID, self(handlerFunc(a.deletePasskey))))
 }
 
 // me describes the signed-in admin. A session that has not proved a factor yet (half,

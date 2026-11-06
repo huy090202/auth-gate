@@ -45,9 +45,11 @@ func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/auth/", a.limitAuth(a.authRoutes()))
 	a.meRoutes(mux)
-	// Placeholders until the client and audit routes arrive: they answer a
-	// session at the wrong stage the way the real ones will.
-	for _, p := range []string{"/api/clients", "/api/clients/", "/api/audit"} {
+	a.stepUpRoutes(mux)
+	a.clientRoutes(mux)
+	// Admin routes arrive with their own task; until then a session at the wrong
+	// stage is still answered the way the real ones will.
+	for _, p := range []string{"/api/admins", "/api/admins/"} {
 		mux.Handle(p, a.session(StageFull)(http.HandlerFunc(notFound)))
 	}
 	mux.HandleFunc("/api/", notFound)
