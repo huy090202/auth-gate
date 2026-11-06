@@ -10,6 +10,8 @@ passkey-only login. Browsers never call auth-gate; only backends do.
 The design is in [`docs/superpowers/specs/`](docs/superpowers/specs/2026-10-18-auth-gate-module-design.md),
 and the reasons behind each choice are one-page memos in [`docs/memo/`](docs/memo/).
 
+To integrate, start with the [docs and live demo](https://d3d49hg6rb8ylx.cloudfront.net) (EN/VI).
+
 ## One base URL
 
 One Go binary runs as three Lambda functions behind one CloudFront distribution, which
