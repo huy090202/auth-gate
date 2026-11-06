@@ -14,10 +14,13 @@ import (
 	"github.com/huy090202/auth-gate/internal/platform/id"
 )
 
-// firstFactorLeaseFor is how long a first-factor lease lasts. It must outlast the
-// 10 s HTTP timeout on the AuthGate client in cmd/console/main.go, so a write
-// that is still in flight can no longer land after its lease has expired.
-const firstFactorLeaseFor = 15 * time.Second
+// firstFactorLeaseFor is how long a first-factor lease lasts. The clock starts at
+// the claim and the lease must cover the factor read and the write, each of which
+// can take up to 10 s, plus a margin. That holds only while a write cannot land
+// later than that: it depends on the 10 s HTTP timeout of the AuthGate client in
+// cmd/console/main.go and on AuthGate's own function timeout (Timeout: 10 in
+// infra/template.yaml), because the client timeout does not bound when a write lands.
+const firstFactorLeaseFor = 25 * time.Second
 
 // meRoutes serves /api/me/*. Every write checks the step-up token (a full
 // session needs one; an enrolling one passes factorsForWrite instead), runs its own
@@ -95,11 +98,12 @@ func (a *App) factorAdded(r *http.Request, x *Session, had authgate.Factors) err
 // claimer sees whatever the earlier holder wrote. Of such sessions one holds the
 // lease at a time, whatever epoch it opened at; another gets 409
 // enrollment_in_progress without an AuthGate call and keeps its session. The
-// returned release must be called once the write is over, whatever its outcome.
-func (a *App) beginFirstFactor(w http.ResponseWriter, r *http.Request, x Session) (authgate.Factors, func(), error) {
+// returned release must be called once the write is over, with the write's error:
+// a write that got no answer may still land, so its lease is kept until it expires.
+func (a *App) beginFirstFactor(w http.ResponseWriter, r *http.Request, x Session) (authgate.Factors, func(writeErr error), error) {
 	if x.Stage != StageEnroll || x.FactorProved {
 		f, err := a.factorsForWrite(w, r, x)
-		return f, func() {}, err
+		return f, func(error) {}, err
 	}
 	holder := id.New() // not the session token, which must stay secret
 	now := a.now()
@@ -113,7 +117,10 @@ func (a *App) beginFirstFactor(w http.ResponseWriter, r *http.Request, x Session
 	case err != nil:
 		return authgate.Factors{}, nil, err
 	}
-	release := func() {
+	release := func(writeErr error) {
+		if errors.Is(writeErr, authgate.ErrNoAnswer) {
+			return // the write may still land: let the lease run out
+		}
 		// The request may be cancelled; the lease should still go.
 		if err := a.Store.ReleaseFirstFactorLease(context.WithoutCancel(r.Context()), x.Username, holder); err != nil {
 			slog.Warn("console: release first-factor lease", "err", err)
@@ -121,7 +128,7 @@ func (a *App) beginFirstFactor(w http.ResponseWriter, r *http.Request, x Session
 	}
 	f, err := a.factorsForWrite(w, r, x)
 	if err != nil {
-		release()
+		release(nil)
 		return f, nil, err
 	}
 	return f, release, nil
@@ -236,7 +243,8 @@ func (a *App) setPIN(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	defer release()
+	var writeErr error
+	defer func() { release(writeErr) }()
 	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
@@ -244,6 +252,7 @@ func (a *App) setPIN(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if err := a.AuthGate.SetPIN(r.Context(), admin.ID, in.PIN); err != nil {
+		writeErr = err
 		return agError(err)
 	}
 	if err := a.factorAdded(r, &x, had); err != nil {
@@ -324,12 +333,14 @@ func (a *App) passkeyFinish(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	defer release()
+	var writeErr error
+	defer func() { release(writeErr) }()
 	if err := a.claimFirstFactor(w, r, &x); err != nil {
 		return err
 	}
 	credID, err := a.AuthGate.FinishRegistration(r.Context(), in.RegistrationID, in.Credential)
 	if err != nil {
+		writeErr = err
 		return agError(err)
 	}
 	if err := a.factorAdded(r, &x, had); err != nil {

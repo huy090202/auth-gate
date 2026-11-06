@@ -96,6 +96,11 @@ func noRedirect(hc *http.Client) *http.Client {
 	return &cp
 }
 
+// ErrNoAnswer marks an ErrUnavailable where no status came back (the request
+// failed, timed out or the body was cut off): a write that failed so may still land.
+// An answered 5xx is not one.
+var ErrNoAnswer = errors.New("authgate: no answer")
+
 func (c *Client) http() *http.Client { return noRedirect(c.HTTP) }
 
 // do sends one request and returns the 2xx body. See ErrUnavailable and Error
@@ -120,12 +125,12 @@ func (c *Client) do(ctx context.Context, method, path, key string, body any) (js
 	resp, err := c.http().Do(req)
 	if err != nil {
 		// Only the kind of failure is kept; the URL error text is dropped.
-		return nil, fmt.Errorf("%w: request failed", ErrUnavailable)
+		return nil, fmt.Errorf("%w: request failed: %w", ErrUnavailable, ErrNoAnswer)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
-		return nil, fmt.Errorf("%w: read failed", ErrUnavailable)
+		return nil, fmt.Errorf("%w: read failed: %w", ErrUnavailable, ErrNoAnswer)
 	}
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:

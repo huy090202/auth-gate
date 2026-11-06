@@ -96,6 +96,13 @@ func TestServerErrorAndOwnKey401AreUnavailable(t *testing.T) {
 	s.srv.Close()
 	if _, err := c.Factors(ctx, "u1"); !isUnavailable(err) {
 		t.Fatalf("network failure = %v, want ErrUnavailable", err)
+	} else if !errors.Is(err, authgate.ErrNoAnswer) {
+		t.Fatalf("network failure = %v, want ErrNoAnswer", err)
+	}
+	// An answered 5xx is not "no answer": the write was refused, it will not land later.
+	s5 := newStub(t, 503, `{}`)
+	if _, err := s5.client().Factors(ctx, "u1"); !isUnavailable(err) || errors.Is(err, authgate.ErrNoAnswer) {
+		t.Fatalf("503 = %v, want ErrUnavailable without ErrNoAnswer", err)
 	}
 }
 

@@ -3,6 +3,7 @@ package console_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -338,7 +339,8 @@ func TestFirstPasskeyHoldsOffOtherSessions(t *testing.T) {
 	if err != nil || f.PIN || len(f.WebAuthn) != 1 {
 		t.Fatalf("factors = %+v (%v): want only the first session's passkey", f, err)
 	}
-	// The refused session was not ended; its next try finds the factor and is ended.
+	// The refused session was not ended, but the winner's epoch bump made its epoch
+	// stale: the 401 comes from the middleware, not from a factor read.
 	want(t, owner.EnrollPIN(pin1), 401, "unauthorized")
 }
 
@@ -429,6 +431,9 @@ func TestFreshLoginDuringOwnersWriteCannotAddFactor(t *testing.T) {
 	go func() { done <- owner.EnrollPIN(pin1) }()
 	<-g.entered // the owner has bumped the epoch and is inside the AuthGate write
 
+	// Past the old 15 s lease: the read and the write each have up to 10 s, so a
+	// write held this long can still land and the lease must still be held.
+	h.Clock.Advance(16 * time.Second)
 	other := gated(h, g)
 	want(t, other.Login("ada", pw), 200, "")
 	pk := h.NewPasskey()
@@ -531,4 +536,76 @@ func TestFailedWriteReleasesLease(t *testing.T) {
 	ok := h2.BrowserFor(console.New(h2.Deps))
 	ok.SetCookie(flaky.CookieValue())
 	want(t, ok.EnrollPasskey(pk), 200, "")
+}
+
+// failWrite fails a PIN write with no answer at all, as a client timeout does: the
+// request may or may not have reached AuthGate.
+type failWrite struct{ base http.RoundTripper }
+
+func (f failWrite) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/api/factors/pin") {
+		return nil, errors.New("timeout")
+	}
+	return f.base.RoundTrip(r)
+}
+
+// Why: a write that got no answer may still land later, so its lease must stay
+// until it runs out; an answered failure (TestFailedWriteReleasesLease) releases.
+func TestLeaseKeptWhenWriteGotNoAnswer(t *testing.T) {
+	h := consoletest.New(t)
+	h.CreateAdmin("ada", pw, console.RoleAdmin, true)
+	deps := h.Deps
+	deps.AuthGate = &authgate.Client{BaseURL: h.AuthGateURL, ClientKey: h.ClientKey, AdminKey: consoletest.AdminKey,
+		HTTP: &http.Client{Transport: failWrite{base: h.AuthGate.HTTP.Transport}}}
+	owner := h.BrowserFor(console.New(deps))
+	other := h.NewBrowser()
+	want(t, owner.Login("ada", pw), 200, "")
+	want(t, owner.EnrollPIN(pin1), 502, "authgate_unavailable")
+	want(t, other.Login("ada", pw), 200, "") // opened after the owner's epoch bump
+	want(t, other.EnrollPIN(pin2), 409, "enrollment_in_progress")
+	h.Clock.Advance(26 * time.Second)
+	want(t, other.EnrollPIN(pin2), 200, "")
+}
+
+// Why: a holder whose lease ran out must not remove the lease of the session that
+// claimed after it, or a third session could slip in beside the second one's write.
+func TestExpiredHoldersReleaseKeepsNewerLease(t *testing.T) {
+	h := consoletest.New(t)
+	h.CreateAdmin("ada", pw, console.RoleAdmin, true)
+	st, ctx := h.Store(), context.Background()
+	t0 := h.Clock.Now()
+	if _, err := st.ClaimFirstFactorLease(ctx, "ada", "first", t0, t0.Add(15*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	t1 := t0.Add(16 * time.Second)
+	if _, err := st.ClaimFirstFactorLease(ctx, "ada", "second", t1, t1.Add(15*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReleaseFirstFactorLease(ctx, "ada", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ClaimFirstFactorLease(ctx, "ada", "third", t1, t1.Add(15*time.Second)); !errors.Is(err, console.ErrLeaseHeld) {
+		t.Fatalf("claim after the stale release = %v, want ErrLeaseHeld", err)
+	}
+	if err := st.ReleaseFirstFactorLease(ctx, "ada", "second"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ClaimFirstFactorLease(ctx, "ada", "third", t1, t1.Add(15*time.Second)); err != nil {
+		t.Fatalf("claim after the holder's own release = %v", err)
+	}
+}
+
+// Why: a session that passed the middleware at the old epoch and then outlasts its
+// lease must still lose to the session that claimed after it: only the epoch claim
+// stops its write.
+func TestOldEpochSessionLosesAfterItsLeaseRanOut(t *testing.T) {
+	h, a, owner, attacker, hook := raceRig(t)
+	hook.arm(func() {
+		h.Clock.Advance(26 * time.Second) // the attacker's lease runs out while it is held here
+		check(t, owner.EnrollPIN(pin1), 200, "")
+	})
+	want(t, attacker.EnrollPIN(pin2), 401, "unauthorized")
+	if !pinWorks(t, h, a, pin1) || pinWorks(t, h, a, pin2) {
+		t.Fatal("the late session's PIN replaced the owner's")
+	}
 }
