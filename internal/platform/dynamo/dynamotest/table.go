@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,16 +15,22 @@ import (
 	"github.com/huy090202/auth-gate/internal/platform/id"
 )
 
+// sharedClient is one client per test process, so tests reuse each other's
+// connections instead of each opening its own to DynamoDB Local.
+var sharedClient = sync.OnceValues(func() (*dynamodb.Client, error) {
+	return dynamo.New(context.Background(), os.Getenv("DYNAMO_ENDPOINT"))
+})
+
 // NewTable creates a unique table on the endpoint in DYNAMO_ENDPOINT and
 // deletes it when the test ends. The test is skipped when the variable is unset.
+// Each test gets its own table; the client is shared.
 func NewTable(t *testing.T) (*dynamodb.Client, string) {
 	t.Helper()
-	endpoint := os.Getenv("DYNAMO_ENDPOINT")
-	if endpoint == "" {
+	if os.Getenv("DYNAMO_ENDPOINT") == "" {
 		t.Skip("DYNAMO_ENDPOINT not set; skipping DynamoDB test")
 	}
 	ctx := context.Background()
-	c, err := dynamo.New(ctx, endpoint)
+	c, err := sharedClient()
 	if err != nil {
 		t.Fatalf("dynamo client: %v", err)
 	}

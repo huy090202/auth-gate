@@ -1,0 +1,41 @@
+info:
+  name: "Second call, bucket empty (429)"
+  type: http
+  seq: 4
+
+http:
+  method: GET
+  url: "{{baseUrl}}/api/factors/{{subjectId}}"
+  headers:
+    - name: X-Internal-Access-Key
+      value: "{{rlClientKey}}"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("429 — the bucket is empty", function() {
+          expect(res.getStatus()).to.equal(429);
+        });
+
+        test('body is exactly {"error":"rate_limited"}', function() {
+          expect(res.getBody()).to.deep.equal({ error: "rate_limited" });
+        });
+
+        test("Retry-After is a whole number of seconds", function() {
+          const v = res.getHeader("retry-after");
+          expect(/^[0-9]+$/.test(String(v)), "retry-after = " + v).to.equal(true);
+          expect(Number(v)).to.be.at.least(1);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  The same read again, straight after `03`. **Expected: 429.** The next token is
+  100 seconds away, so `Retry-After` is large; a caller should wait that long
+  rather than retry in a loop. Harmless on prd.

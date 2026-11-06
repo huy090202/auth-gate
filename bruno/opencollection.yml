@@ -63,10 +63,18 @@ docs:
     stored. A client key on an admin route is a 401. `04-smoke.sh` refuses to run
     if the two are ever equal.
 
+    ### Rate limit
+
+    The verify role is limited per client: a token bucket of **100 burst, 50 per
+    second** by default. An empty bucket is a **429** with the body
+    `{"error":"rate_limited"}` and a `Retry-After` in whole seconds. The admin role
+    is not limited. `06-rate-limit/` shows it with a throwaway client.
+
     ### Variables
 
     - `baseUrl`, `rawVerifyUrl`, `adminKey`, `subjectId` come from the environment.
-    - `clientKey`, `clientId`, `challengeId`, `token` are captured at run time.
+    - `clientKey`, `clientId`, `challengeId`, `token` are captured at run time;
+      `rlClientKey` and `rlClientId` belong to `06-rate-limit` alone.
 
     ### Environments
 
@@ -79,7 +87,8 @@ docs:
     verifies the JWT with node's `crypto`, which the default safe sandbox lacks):
 
     ```bash
-    cd bruno && npx -y @usebruno/cli run --env local --sandbox=developer
+    pnpm install   # once, at the repo root
+    cd bruno && ../node_modules/.bin/bru run --env local --sandbox=developer
     ```
 
     For stg, `scripts/setup-and-deploy/04-smoke.sh` writes a temporary,

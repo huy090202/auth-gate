@@ -11,6 +11,7 @@ import (
 
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/id"
+	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 )
 
 var (
@@ -26,6 +27,8 @@ const (
 	defaultTokenTTLSec = 300
 	maxTokenTTLSec     = 900
 	keyGrace           = 24 * time.Hour
+	maxRateBurst       = 10000
+	maxRatePerSecond   = 5000
 )
 
 // PinPolicy is the per-client PIN rule set.
@@ -33,6 +36,9 @@ type PinPolicy struct{ Length, MaxAttempts, LockoutSec int }
 
 // DefaultPinPolicy returns the policy used when a client does not set one.
 func DefaultPinPolicy() PinPolicy { return PinPolicy{Length: 6, MaxAttempts: 5, LockoutSec: 900} }
+
+// DefaultRateLimit returns the bucket used when a client does not set one.
+func DefaultRateLimit() ratelimit.Settings { return ratelimit.Settings{Burst: 100, PerSecond: 50} }
 
 // Client is a registered calling backend. KeyHashes holds the hashes of the
 // currently active access keys; it is bookkeeping for rotation and must never
@@ -44,8 +50,38 @@ type Client struct {
 	Origins     []string
 	PinPolicy   PinPolicy
 	TokenTTLSec int
+	RateLimit   ratelimit.Settings
 	CreatedAt   time.Time
 	KeyHashes   []string
+}
+
+// Patch is a partial update of a client; a nil field is left unchanged.
+type Patch struct {
+	RateLimit *ratelimit.Settings
+}
+
+func (p Patch) empty() bool { return p.RateLimit == nil }
+
+// Validate checks the patch and returns an error wrapping ErrInvalid.
+// perSecond must be above zero: there is no unlimited mode, and a zero rate
+// would make the limiter's retry-after infinite.
+func (p Patch) Validate() error {
+	bad := func(format string, a ...any) error {
+		return fmt.Errorf("%w: %s", ErrInvalid, fmt.Sprintf(format, a...))
+	}
+	if p.empty() {
+		return bad("nothing to update")
+	}
+	if r := p.RateLimit; r != nil {
+		if r.Burst < 1 || r.Burst > maxRateBurst {
+			return bad("rateLimit burst must be 1-%d", maxRateBurst)
+		}
+		// Written as a negated range so NaN fails too.
+		if !(r.PerSecond > 0 && r.PerSecond <= maxRatePerSecond) {
+			return bad("rateLimit perSecond must be above 0 and at most %d", maxRatePerSecond)
+		}
+	}
+	return nil
 }
 
 // CreateInput is the admin request to register a client.
@@ -135,6 +171,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Client, string, e
 		Origins:     in.Origins,
 		PinPolicy:   DefaultPinPolicy(),
 		TokenTTLSec: defaultTokenTTLSec,
+		RateLimit:   DefaultRateLimit(),
 		CreatedAt:   s.now().UTC().Truncate(time.Second),
 		KeyHashes:   []string{hash},
 	}
@@ -186,11 +223,26 @@ func (s *Service) RotateKey(ctx context.Context, clientID string) (string, error
 			return "", err
 		}
 	}
-	c.KeyHashes = []string{hash}
-	if err := s.Store.PutClient(ctx, c); err != nil {
+	if err := s.Store.SetKeyHashes(ctx, c.ID, []string{hash}); err != nil {
 		return "", err
 	}
 	return raw, nil
+}
+
+// Update applies a patch to an existing client and returns the stored result.
+// An invalid patch wraps ErrInvalid; an unknown client is ErrNotFound.
+func (s *Service) Update(ctx context.Context, id string, p Patch) (Client, error) {
+	c, err := s.Store.GetClient(ctx, id)
+	if err != nil {
+		return Client{}, err
+	}
+	if err := p.Validate(); err != nil {
+		return Client{}, err
+	}
+	if err := s.Store.UpdateClient(ctx, c, p); err != nil {
+		return Client{}, err
+	}
+	return s.Store.GetClient(ctx, id)
 }
 
 // Authenticate resolves a raw access key to its client. It returns

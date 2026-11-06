@@ -1,0 +1,43 @@
+info:
+  name: "Patch perSecond 0 (400)"
+  type: http
+  seq: 5
+
+http:
+  method: PATCH
+  url: "{{baseUrl}}/api/clients/{{rlClientId}}"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+    - name: X-Internal-Access-Key
+      value: "{{adminKey}}"
+  body:
+    type: json
+    data: |-
+      {
+        "rateLimit": { "burst": 5, "perSecond": 0 }
+      }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("400 — a bucket that never refills is refused", function() {
+          expect(res.getStatus()).to.equal(400);
+        });
+
+        test("error is invalid_client", function() {
+          expect(res.getBody().error).to.equal("invalid_client");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  **Expected: 400** `invalid_client`. With `perSecond` 0 the bucket would never
+  refill and the client would be locked out for good. The stored bucket is
+  unchanged. Harmless on prd.

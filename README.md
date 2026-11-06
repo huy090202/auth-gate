@@ -44,6 +44,24 @@ Each client registers its `rpId` and `origins`, so it can only verify passkeys f
 own domains. A subject is an opaque string chosen by the client; ids containing `#` are
 rejected. PINs are argon2id hashed and locked after repeated failures.
 
+## Rate limit
+
+The `verify` role is limited per client with a token bucket stored in the table. A new
+client holds **100 tokens (burst) and refills 50 per second**. A call that finds the
+bucket empty gets **429** with the body `{"error":"rate_limited"}` and a `Retry-After`
+header in whole seconds. The `admin` role is not limited. Change one client's bucket
+with the admin key, no deploy needed (`perSecond` must be above 0):
+
+```bash
+curl -X PATCH "$BASE/api/clients/$CLIENT_ID" \
+  -H "x-internal-access-key: $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{"rateLimit": {"burst": 200, "perSecond": 100}}'
+```
+
+If DynamoDB throttles the limiter's own calls, the request is refused with the same
+**429**. If the table fails in any other way the limiter lets the request through
+([memo](docs/memo/rate-limit-bucket.md)).
+
 ## The WebAuthn relay
 
 The browser runs `navigator.credentials.create/get`, but only against the client's own
@@ -101,7 +119,8 @@ adds the prefix itself when `baseUrl` is a localhost URL. Run it from `bruno/`:
 
 ```bash
 cd bruno/environments && cp local.example.yml local.yml
-cd .. && npx -y @usebruno/cli run --env local --sandbox=developer
+cd ../.. && pnpm install   # once: installs the pinned Bruno CLI
+cd bruno && ../node_modules/.bin/bru run --env local --sandbox=developer
 ```
 
 `make check` runs `go vet`, `golangci-lint run` and `go test ./...`; `make test-store`

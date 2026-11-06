@@ -1,0 +1,34 @@
+info:
+  name: Rate limit
+  type: folder
+  seq: 6
+
+request: {}
+
+docs:
+  content: |-
+    ## The verify role is rate limited, per client
+
+    Every client has a token bucket in the table. New clients get **burst 100,
+    50 per second**. A call that finds the bucket empty is answered
+    **429** with the body exactly `{"error":"rate_limited"}` and a `Retry-After`
+    header in whole seconds. Only the verify role is limited; the admin role is
+    not.
+
+    This folder uses a **throwaway client** (`rlClientId` / `rlClientKey`), so
+    `03-pin` and `05-tokens` never meet a tight bucket and the shared `clientKey`
+    is left alone.
+
+    | request | expected | why it matters |
+    | --- | --- | --- |
+    | setup: create client | **201** | a client of its own to limit |
+    | patch tight | **200**, `{burst:1, perSecond:0.01}` | the limit is tunable without a deploy |
+    | first call | **200**, no factors | spends the one token and passes the limiter |
+    | second call | **429** `rate_limited` | the bucket is empty; `Retry-After` is numeric |
+    | patch `perSecond: 0` | **400** `invalid_client` | a bucket that never refills would lock a client out forever |
+
+    The folder never waits for a refill: at 0.01 per second the next token is
+    100 seconds away, far longer than the run.
+
+    > **On prd this creates a real client.** Deleting a client is out of v1.
+  type: text/markdown

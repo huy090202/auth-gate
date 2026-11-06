@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -15,6 +17,13 @@ import (
 )
 
 const localRegion = "ap-southeast-1"
+
+// localIdleConns replaces the SDK's pool of 10 idle connections per host, for
+// DynamoDB Local only. Tests run up to 200 callers at once and the default pool
+// closes the surplus, so back-to-back test runs use up this machine's local ports
+// and connections start to reset. 512 is well above that fan-out; it was measured
+// to delay that point, not to remove it.
+const localIdleConns = 512
 
 // New returns a DynamoDB client. An empty endpoint targets real AWS using the
 // default config chain; a non-empty endpoint targets that URL (DynamoDB Local)
@@ -34,6 +43,10 @@ func New(ctx context.Context, endpoint string) (*dynamodb.Client, error) {
 	return dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
 		if endpoint != "" {
 			o.BaseEndpoint = aws.String(endpoint)
+			o.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) {
+				t.MaxIdleConns = localIdleConns
+				t.MaxIdleConnsPerHost = localIdleConns
+			})
 		}
 	}), nil
 }

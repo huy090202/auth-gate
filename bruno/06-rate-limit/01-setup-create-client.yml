@@ -1,0 +1,49 @@
+info:
+  name: "Setup: create a throwaway client (201)"
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/clients"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+    - name: X-Internal-Access-Key
+      value: "{{adminKey}}"
+  body:
+    type: json
+    data: |-
+      {
+        "name": "bruno rate limit",
+        "rpId": "localhost",
+        "origins": ["http://localhost:3000"]
+      }
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.getStatus() === 201) {
+          bru.setVar("rlClientKey", res.getBody().accessKey);
+          bru.setVar("rlClientId", res.getBody().clientId);
+        }
+    - type: tests
+      code: |-
+        test("201 — client created", function() {
+          expect(res.getStatus()).to.equal(201);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  **Setup, expected: 201.** Creates a client only this folder uses and captures
+  `rlClientKey` and `rlClientId`. The shared `clientKey` is not touched.
+
+  > **On prd this creates a real client.** Deleting a client is out of v1; it
+  > stays until `99-purge.sh`. Do not run this folder against prd casually.

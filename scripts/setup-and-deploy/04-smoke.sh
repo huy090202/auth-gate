@@ -53,7 +53,7 @@ YAML
 )
 
 echo "bruno: $base_url"
-(cd "$ROOT/bruno" && npx -y @usebruno/cli run --env "$STAGE" --sandbox=developer)
+(cd "$ROOT/bruno" && ../node_modules/.bin/bru run --env "$STAGE" --sandbox=developer)
 
 echo "cmd/smoke: $base_url"
 (cd "$ROOT" && ADMIN_KEY="$admin_key" go run ./cmd/smoke -base-url "$base_url")

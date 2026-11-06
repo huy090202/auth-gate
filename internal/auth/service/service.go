@@ -288,6 +288,9 @@ func (s *Service) BeginRegistration(ctx context.Context, c client.Client, subjec
 	if err := validateIDs(subjectID); err != nil {
 		return challenge.Registration{}, nil, err
 	}
+	if len(subjectID) > webauthn.MaxUserIDLen {
+		return challenge.Registration{}, nil, id.ErrInvalid
+	}
 	creds, err := s.Factors.ListCredentials(ctx, c.ID, subjectID)
 	if err != nil {
 		return challenge.Registration{}, nil, err
@@ -385,6 +388,14 @@ func (s *Service) GetClient(ctx context.Context, clientID string) (client.Client
 		return client.Client{}, err
 	}
 	return s.Clients.Get(ctx, clientID)
+}
+
+// UpdateClient applies a patch to a client and returns the stored result.
+func (s *Service) UpdateClient(ctx context.Context, clientID string, p client.Patch) (client.Client, error) {
+	if err := validateIDs(clientID); err != nil {
+		return client.Client{}, err
+	}
+	return s.Clients.Update(ctx, clientID, p)
 }
 
 // RotateClientKey issues a new access key; previous keys keep working for 24 h.
