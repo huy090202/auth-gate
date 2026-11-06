@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
@@ -17,7 +18,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/huy090202/auth-gate/internal/console"
+	"github.com/huy090202/auth-gate/internal/console/authgate"
 	"github.com/huy090202/auth-gate/internal/console/consoletest"
+	"github.com/huy090202/auth-gate/internal/platform/id"
 )
 
 type syncBuf struct {
@@ -211,6 +214,7 @@ func TestOwnClientIsProtected(t *testing.T) {
 	want(t, b.Do("POST", "/api/clients/"+other+"/keys", struct{}{}, tokHeader, tok), 201, "")
 	// Reading and enabling stay open.
 	want(t, b.Do("GET", own, nil), 200, "")
+	want(t, b.Do("POST", own+"/enable", struct{}{}), 200, "")
 }
 
 // Why: a refused action must leave a trace, with who asked and from where.
@@ -299,4 +303,125 @@ func TestFullSelfServiceNeedsStepUp(t *testing.T) {
 	want(t, b.Do("POST", "/api/me/pin", map[string]string{"pin": pin2}, tokHeader, b.StepUpPasskey(pk, "add-factor")), 200, "")
 	want(t, b.Do("POST", "/api/me/password", passwordBody(pw, pw2), tokHeader, b.StepUpPasskey(pk, "change-password")), 200, "")
 	want(t, h.NewBrowser().Login("ada", pw2), 200, "")
+}
+
+// Why: an id is any path segment, and a front that decodes percent-encoding again could turn one into another
+// route or the Console's own client; ids are checked at the door and AuthGate is not asked.
+func TestMalformedIDsNeverReachAuthGate(t *testing.T) {
+	h := consoletest.New(t)
+	a := h.CreateAdmin("ada", pw, console.RoleAdmin, false)
+	withPIN(t, h, a, pin1)
+	rt := &countingRT{base: h.AuthGate.HTTP.Transport}
+	deps := h.Deps
+	deps.AuthGate = &authgate.Client{BaseURL: h.AuthGateURL, ClientKey: h.ClientKey, AdminKey: consoletest.AdminKey, HTTP: &http.Client{Transport: rt}}
+	b := h.BrowserFor(console.New(deps))
+	want(t, b.Login("ada", pw), 200, "")
+	want(t, b.SignInWithPIN(pin1), 200, "")
+	ok := id.New()
+
+	type route struct{ method, tmpl, action string }
+	routes := []route{
+		{"GET", "/api/clients/%s", ""},
+		{"PATCH", "/api/clients/%s", "update-client"},
+		{"POST", "/api/clients/%s/keys", "rotate-key"},
+		{"DELETE", "/api/clients/%s/keys/previous", "revoke-previous-keys"},
+		{"POST", "/api/clients/%s/disable", "disable-client"},
+		{"POST", "/api/clients/%s/enable", ""},
+		{"DELETE", "/api/clients/%s/subjects/s1", "purge-subject"},
+	}
+	// A dot segment is cleaned away by the router (a redirect) before any handler runs: status 0 means "any refusal".
+	badIDs := []struct {
+		raw    string
+		status int
+	}{
+		{"A%252Fkeys%253F", 404}, {"A%2Fkeys", 404}, {"A%3Fx", 404}, {"A%23x", 404}, {"..", 0}, {"%2e%2e", 0}, {"abc", 404},
+		{strings.ToLower(ok), 404}, {ok + "x", 404}, {"01ARZ3NDEKTSV4RRFFQ69G5FAU", 404}, // lower case, 27 chars, 'U' is not Crockford
+	}
+	for _, r := range routes {
+		tok := ""
+		if r.action != "" {
+			tok = b.StepUp(r.action)
+		}
+		var body any
+		if r.method != "GET" && r.method != "DELETE" {
+			body = map[string]any{"name": "x"}
+		}
+		calls := rt.n.Load()
+		for _, bad := range badIDs {
+			var hdr []string
+			if tok != "" {
+				hdr = []string{tokHeader, tok}
+			}
+			resp := b.Do(r.method, strings.Replace(r.tmpl, "%s", bad.raw, 1), body, hdr...)
+			if bad.status != 0 && (resp.Status != bad.status || resp.Str("error") != "not_found") || resp.Status/100 == 2 {
+				t.Errorf("%s %s id %q = %d %s", r.method, r.tmpl, bad.raw, resp.Status, resp.Body)
+			}
+		}
+		if got := rt.n.Load() - calls; got != 0 {
+			t.Errorf("%s %s: AuthGate was called %d times", r.method, r.tmpl, got)
+		}
+	}
+	// The subject of a purge.
+	tok := b.StepUp("purge-subject")
+	calls := rt.n.Load()
+	for _, sub := range []string{"a%2Fb", "a%3Fb", "a%23b", "a%2525b", "%2e%2e", "%2e", "a%00b", "a%0ab", "a%7fb", strings.Repeat("s", 257)} {
+		resp := b.Do("DELETE", "/api/clients/"+ok+"/subjects/"+sub, nil, tokHeader, tok)
+		if resp.Status/100 == 2 || (resp.Status != 400 && resp.Status != 301 && resp.Status != 404) {
+			t.Errorf("subject %q = %d %s", sub, resp.Status, resp.Body)
+		}
+		if resp.Status == 400 && resp.Str("error") != "invalid_id" {
+			t.Errorf("subject %q = %s", sub, resp.Body)
+		}
+	}
+	if got := rt.n.Load() - calls; got != 0 {
+		t.Errorf("a bad subject reached AuthGate %d times", got)
+	}
+}
+
+// Why: guessing usernames must leave a trace without storing what was typed, and must cost the same as guessing a real one.
+func TestUnknownLoginIsAuditedWithoutTheName(t *testing.T) {
+	logs := captureLogs(t)
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleAdmin)
+	typed := "hunter2-my-real-password"
+	h.Clock.Advance(time.Second)
+	want(t, h.NewBrowser().Login(typed, "whatever-password"), 401, "invalid_credentials")
+	want(t, h.NewBrowser().Login("nobody", "whatever-password"), 401, "invalid_credentials")
+
+	entries, _ := auditOf(t, b, "")
+	n := 0
+	for _, e := range entries {
+		if e.Action == "login" && e.AdminID == "" {
+			n++
+			if e.Username != "" || e.Target != "" || e.Result != "failed:invalid_credentials" {
+				t.Fatalf("entry = %+v", e)
+			}
+		}
+	}
+	if n != 2 {
+		t.Fatalf("%d anonymous login entries, want 2: %+v", n, entries)
+	}
+	items := scanTable(t, h)
+	for _, s := range []string{typed, "nobody", "whatever-password"} {
+		if strings.Contains(items, s) || strings.Contains(logs.String(), s) {
+			t.Errorf("%q was stored or logged", s)
+		}
+	}
+}
+
+// Why: a write with no session is unbounded and unlimited, so it is logged, not stored.
+func TestNoSessionWriteIsLoggedNotStored(t *testing.T) {
+	logs := captureLogs(t)
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleAdmin)
+	before, _ := auditOf(t, b, "")
+	anon := h.NewBrowser()
+	want(t, anon.Do("POST", "/api/clients", map[string]any{"name": "x"}, viewerHdr, "198.51.100.9:1"), 401, "unauthorized")
+	after, _ := auditOf(t, b, "")
+	if len(after) != len(before) {
+		t.Fatalf("an item was stored: %+v", after[:len(after)-len(before)])
+	}
+	if l := logs.String(); !strings.Contains(l, "write without a session") || !strings.Contains(l, "198.51.100.9") || !strings.Contains(l, "failed:unauthorized") {
+		t.Fatalf("no warning in the logs:\n%s", l)
+	}
 }

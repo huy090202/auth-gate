@@ -242,7 +242,7 @@ All under `/api`, JSON. Error envelope `{"error": "<snake_case>", ...}`.
 | `POST /admins` | master + step-up | Temporary password returned once. |
 | `POST /admins/{username}/reset-password`, `/clear-factors`, `/disable`, `/enable`, `/role` | master + step-up | Guards in §6. Other roles get `403 forbidden`. |
 
-Every write records an audit item, success or failure. Audit items and logs never contain a key,
+Every write records an audit item, success or failure; a failed write with no session (other than under `/auth`, where it is stored with empty identity) is logged, not stored. Audit items and logs never contain a key,
 PIN, password or token. Responses carrying a key are `Cache-Control: no-store`.
 
 ## 8. Screens

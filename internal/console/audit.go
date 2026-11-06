@@ -131,11 +131,13 @@ const (
 
 // audited records the outcome of a write: "success", or "failed:<code>" with the
 // error code the handler answered. The entry carries the session's admin and the
-// viewer address. Without an identified admin (no session, or a sign-in for an
-// account that does not exist) nothing is written, so a caller who is not
-// signed in cannot fill the log. A failed write is logged and does not change
-// the answer. The target function names what the action touches; the handler may
-// replace it with setAuditTarget once it knows (a created client's id).
+// viewer address. Sign-in and the other /api/auth routes are always stored, with
+// empty identity when no account was found (the submitted name is never kept,
+// people type passwords into that field); they are rate limited per address. A
+// write elsewhere without a session is unbounded and unlimited, so it goes to the
+// log as a warning, not to the table. A failed audit write is logged and does not
+// change the answer. The target function names what the action touches; the
+// handler may replace it with setAuditTarget once it knows (a created client's id).
 func (a *App) audited(action string, target func(*http.Request) string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		note := &auditNote{}
@@ -147,22 +149,25 @@ func (a *App) audited(action string, target func(*http.Request) string, h http.H
 		if bw.status == 0 {
 			bw.status = http.StatusOK
 		}
-		if note.AdminID != "" {
-			result := "success"
-			if bw.status >= 400 {
-				var e struct {
-					Error string `json:"error"`
-				}
-				_ = json.Unmarshal(bw.body.Bytes(), &e)
-				if e.Error == "" {
-					e.Error = fmt.Sprintf("http_%d", bw.status)
-				}
-				result = "failed:" + e.Error
+		result := "success"
+		if bw.status >= 400 {
+			var e struct {
+				Error string `json:"error"`
 			}
+			_ = json.Unmarshal(bw.body.Bytes(), &e)
+			if e.Error == "" {
+				e.Error = fmt.Sprintf("http_%d", bw.status)
+			}
+			result = truncate("failed:"+e.Error, maxAuditTarget)
+		}
+		switch {
+		case note.AdminID != "" || strings.HasPrefix(r.URL.Path, "/api/auth/"):
 			a.writeAudit(r, AuditEntry{
 				AdminID: note.AdminID, Username: note.Username, Action: action,
 				Target: truncate(note.Target, maxAuditTarget), Result: result, IP: a.auditIP(r), At: a.now(),
 			})
+		default:
+			slog.Warn("console: write without a session", "route", r.Method+" "+r.URL.Path, "ip", a.auditIP(r), "result", result)
 		}
 		w.WriteHeader(bw.status)
 		_, _ = w.Write(bw.body.Bytes())

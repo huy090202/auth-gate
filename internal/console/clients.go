@@ -4,11 +4,44 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"regexp"
+	"strings"
 )
 
 var errOwnClient = &apiError{Status: http.StatusConflict, Code: "own_client_protected"}
 
 func pathID(r *http.Request) string { return r.PathValue("id") }
+
+// clientIDRE is the form id.New gives every client: a 26-character ULID in
+// upper-case Crockford base 32.
+var clientIDRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
+
+// clientID returns the {id} of the route, or 404 when it cannot be a client's.
+// An id is any path segment, and whatever sits between the browser and AuthGate
+// may decode percent-encoding once more, so a segment that is not a plain id
+// never goes into an AuthGate path, and never reaches a guard.
+func clientID(r *http.Request) (string, error) {
+	id := r.PathValue("id")
+	if !clientIDRE.MatchString(id) {
+		return "", &apiError{Status: http.StatusNotFound, Code: "not_found"}
+	}
+	return id, nil
+}
+
+// subjectID returns the {subjectId} of the route. Subjects are the callers' own
+// ids, so AuthGate's rule (1 to 256 bytes) stands, minus what could change a path:
+// no '/', '?', '#', '%', control character, and not a dot segment.
+func subjectID(r *http.Request) (string, error) {
+	v := r.PathValue("subjectId")
+	bad := v == "" || len(v) > 256 || v == "." || v == ".." || strings.ContainsAny(v, "/?#%")
+	for _, c := range []byte(v) {
+		bad = bad || c < 0x20 || c == 0x7f
+	}
+	if bad {
+		return "", &apiError{Status: http.StatusBadRequest, Code: "invalid_id"}
+	}
+	return v, nil
+}
 
 // clientRoutes serves /api/clients/* and /api/audit for a full session. The
 // catch-all patterns keep the answer to a session at the wrong stage, and to a
@@ -62,7 +95,11 @@ func (a *App) listClients(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) getClient(w http.ResponseWriter, r *http.Request) error {
-	raw, err := a.AuthGate.GetClient(r.Context(), r.PathValue("id"))
+	id, err := clientID(r)
+	if err != nil {
+		return err
+	}
+	raw, err := a.AuthGate.GetClient(r.Context(), id)
 	if err != nil {
 		return agError(err)
 	}
@@ -118,7 +155,10 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) error {
 // passed on as it came so AuthGate refuses it.
 func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 	x, _ := sessionFrom(r.Context())
-	id := r.PathValue("id")
+	id, err := clientID(r)
+	if err != nil {
+		return err
+	}
 	var in struct {
 		Name        *string         `json:"name"`
 		Origins     []string        `json:"origins"`
@@ -182,12 +222,15 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 // every /api answer.
 func (a *App) clientWrite(action string, status int, call func(context.Context, *App, string) (json.RawMessage, error)) handlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
+		id, err := clientID(r)
+		if err != nil {
+			return err
+		}
 		x, _ := sessionFrom(r.Context())
 		tok, err := a.checkStepUp(r, x, action)
 		if err != nil {
 			return err
 		}
-		id := r.PathValue("id")
 		if id == a.Config.AuthGateClientID {
 			return errOwnClient
 		}
@@ -204,7 +247,11 @@ func (a *App) clientWrite(action string, status int, call func(context.Context, 
 }
 
 func (a *App) enableClient(w http.ResponseWriter, r *http.Request) error {
-	raw, err := a.AuthGate.EnableClient(r.Context(), r.PathValue("id"))
+	id, err := clientID(r)
+	if err != nil {
+		return err
+	}
+	raw, err := a.AuthGate.EnableClient(r.Context(), id)
 	if err != nil {
 		return agError(err)
 	}
@@ -213,19 +260,26 @@ func (a *App) enableClient(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) purgeSubject(w http.ResponseWriter, r *http.Request) error {
+	id, err := clientID(r)
+	if err != nil {
+		return err
+	}
+	subject, err := subjectID(r)
+	if err != nil {
+		return err
+	}
 	x, _ := sessionFrom(r.Context())
 	tok, err := a.checkStepUp(r, x, "purge-subject")
 	if err != nil {
 		return err
 	}
-	id := r.PathValue("id")
 	if id == a.Config.AuthGateClientID {
 		return errOwnClient
 	}
 	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
-	if err := a.AuthGate.PurgeSubject(r.Context(), id, r.PathValue("subjectId")); err != nil {
+	if err := a.AuthGate.PurgeSubject(r.Context(), id, subject); err != nil {
 		return agError(err)
 	}
 	w.WriteHeader(http.StatusNoContent)

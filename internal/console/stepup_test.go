@@ -61,6 +61,8 @@ func TestStepUpRequiredExactlyOnTheList(t *testing.T) {
 		{"revoke-previous-keys", "DELETE", base + "/keys/previous", nil},
 		{"update-client", "PATCH", base, map[string]any{"origins": []string{"https://app.test", "https://b.app.test"}}},
 		{"update-client", "PATCH", base, map[string]any{"tokenTtlSec": 60}},
+		{"update-client", "PATCH", base, map[string]any{"pinPolicy": map[string]int{"length": 6, "maxAttempts": 5, "lockoutSec": 900}}},
+		{"update-client", "PATCH", base, map[string]any{"rateLimit": map[string]any{"burst": 10, "perSecond": 5}}},
 		{"disable-client", "POST", base + "/disable", struct{}{}},
 		{"purge-subject", "DELETE", base + "/subjects/s1", nil},
 	}
