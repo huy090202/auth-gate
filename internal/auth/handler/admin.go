@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -16,9 +17,13 @@ func NewAdmin(svc *service.Service, adminKey string) http.Handler {
 	h := &admin{svc: svc}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/clients", h.create)
+	mux.HandleFunc("GET /api/clients", h.list)
 	mux.HandleFunc("GET /api/clients/{id}", h.get)
 	mux.HandleFunc("PATCH /api/clients/{id}", h.patch)
+	mux.HandleFunc("POST /api/clients/{id}/disable", h.disable)
+	mux.HandleFunc("POST /api/clients/{id}/enable", h.enable)
 	mux.HandleFunc("POST /api/clients/{id}/keys", h.rotate)
+	mux.HandleFunc("DELETE /api/clients/{id}/keys/previous", h.revokePrevious)
 	mux.HandleFunc("DELETE /api/clients/{id}/subjects/{subjectId}", h.purge)
 	return httpx.RequireKey("x-internal-access-key", httpx.StaticKey(adminKey))(mux)
 }
@@ -41,6 +46,23 @@ type clientView struct {
 	TokenTTLSec int           `json:"tokenTtlSec"`
 	RateLimit   rateLimitView `json:"rateLimit"`
 	CreatedAt   string        `json:"createdAt"`
+	DisabledAt  string        `json:"disabledAt,omitempty"`
+}
+
+// summaryView is the list view of a client.
+type summaryView struct {
+	ClientID   string `json:"clientId"`
+	Name       string `json:"name"`
+	RPID       string `json:"rpId"`
+	CreatedAt  string `json:"createdAt"`
+	DisabledAt string `json:"disabledAt,omitempty"`
+}
+
+func rfc3339(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 type rateLimitView struct {
@@ -83,13 +105,25 @@ func (h *admin) get(w http.ResponseWriter, r *http.Request) {
 
 func (h *admin) patch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		RateLimit *rateLimitView `json:"rateLimit"`
+		Name        *string         `json:"name"`
+		Origins     []string        `json:"origins"`
+		PinPolicy   *pinPolicyView  `json:"pinPolicy"`
+		TokenTTLSec *int            `json:"tokenTtlSec"`
+		RateLimit   *rateLimitView  `json:"rateLimit"`
+		RPID        json.RawMessage `json:"rpId"` // never patchable; any presence, even null, is rejected
 	}
 	if err := httpx.DecodeJSON(r, &body); err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	var p client.Patch
+	if body.RPID != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_client", nil)
+		return
+	}
+	p := client.Patch{Name: body.Name, Origins: body.Origins, TokenTTLSec: body.TokenTTLSec}
+	if pp := body.PinPolicy; pp != nil {
+		p.PinPolicy = &client.PinPolicy{Length: pp.Length, MaxAttempts: pp.MaxAttempts, LockoutSec: pp.LockoutSec}
+	}
 	if rl := body.RateLimit; rl != nil {
 		p.RateLimit = &ratelimit.Settings{Burst: rl.Burst, PerSecond: rl.PerSecond}
 	}
@@ -99,6 +133,54 @@ func (h *admin) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, viewOf(c))
+}
+
+func (h *admin) list(w http.ResponseWriter, r *http.Request) {
+	items, next, err := h.svc.ListClients(r.Context(), r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	views := make([]summaryView, 0, len(items))
+	for _, s := range items {
+		views = append(views, summaryView{
+			ClientID: s.ID, Name: s.Name, RPID: s.RPID,
+			CreatedAt: s.CreatedAt.UTC().Format(time.RFC3339), DisabledAt: rfc3339(s.DisabledAt),
+		})
+	}
+	resp := map[string]any{"clients": views}
+	if next != "" {
+		resp["nextCursor"] = next
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+// disable and enable ignore the request body, so an empty one works.
+func (h *admin) disable(w http.ResponseWriter, r *http.Request) {
+	c, err := h.svc.DisableClient(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, viewOf(c))
+}
+
+func (h *admin) enable(w http.ResponseWriter, r *http.Request) {
+	c, err := h.svc.EnableClient(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, viewOf(c))
+}
+
+func (h *admin) revokePrevious(w http.ResponseWriter, r *http.Request) {
+	n, err := h.svc.RevokePreviousKeys(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]int{"revoked": n})
 }
 
 func viewOf(c client.Client) clientView {
@@ -112,6 +194,7 @@ func viewOf(c client.Client) clientView {
 		TokenTTLSec: c.TokenTTLSec,
 		RateLimit:   rateLimitView{Burst: c.RateLimit.Burst, PerSecond: c.RateLimit.PerSecond},
 		CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
+		DisabledAt:  rfc3339(c.DisabledAt),
 	}
 }
 

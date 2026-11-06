@@ -17,6 +17,7 @@ docs:
     | --- | --- | --- |
     | no key / wrong key | **401** | the verify role has no anonymous route |
     | client key on an admin route | **401** | a client backend cannot mint clients |
+    | disabled key | **401** | same as unknown |
     | `#` in an id | **400** `invalid_id` | keys are built by concatenation with `#` |
     | replayed challenge | **410** `challenge_gone` | a challenge is single-use |
     | another client's challenge | **410** `challenge_gone` | challenges are scoped to the client key |

@@ -1,0 +1,57 @@
+info:
+  name: "List clients"
+  type: http
+  seq: 4
+
+http:
+  method: GET
+  url: "{{baseUrl}}/api/clients"
+  headers:
+    - name: X-Internal-Access-Key
+      value: "{{adminKey}}"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("200 — a page of clients", function() {
+          expect(res.getStatus()).to.equal(200);
+          expect(res.getBody().clients).to.be.an("array");
+        });
+
+        test("the newest client is on the first page", function() {
+          // Newest first, and other runs may have left clients behind, so look
+          // for this run's client rather than counting.
+          const mine = res.getBody().clients.find((c) => c.clientId === bru.getVar("clientId"));
+          expect(mine, "client missing from the first page").to.be.an("object");
+          expect(mine.name).to.equal("bruno demo");
+          expect(mine.rpId).to.equal("localhost");
+          expect(mine.createdAt).to.be.a("string").and.not.empty;
+        });
+
+        test("summaries carry no key material and no detail", function() {
+          const body = JSON.stringify(res.getBody()).toLowerCase();
+          expect(body).to.not.include("accesskey");
+          expect(body).to.not.include("hash");
+          expect(body).to.not.include("origins");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  Lists clients, newest first. **Expected: 200 `{clients, nextCursor?}`.**
+
+  Each entry is a summary: `clientId`, `name`, `rpId`, `createdAt`, and
+  `disabledAt` while disabled. When there are more, `nextCursor` is present;
+  pass it back as `?cursor=`. A cursor that was not issued by this endpoint is a
+  400.
+
+  The list reads an index item per client. Clients created before the index
+  existed appear only after `scripts/setup-and-deploy/05-backfill-clients.sh`.
+
+  Harmless on prd.

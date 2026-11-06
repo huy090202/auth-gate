@@ -1,0 +1,31 @@
+info:
+  name: "Re-enabled client's key works (200)"
+  type: http
+  seq: 20
+
+http:
+  method: GET
+  url: "{{baseUrl}}/api/factors/{{subjectId}}"
+  headers:
+    - name: X-Internal-Access-Key
+      value: "{{disableClientKey}}"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("200 — the same key works after enabling", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  The same key and the same request as `18`, after `19`. **Expected: 200.** This is
+  the one success in this folder besides the setup steps: it proves `18`'s 401
+  came from the disabled flag and not from a broken key or route.

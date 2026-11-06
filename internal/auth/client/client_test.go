@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -224,5 +225,218 @@ func TestRotateKeepsRateLimit(t *testing.T) {
 	hashes, _ := out.Item["keyHashes"].(*types.AttributeValueMemberSS)
 	if hashes == nil || len(hashes.Value) != 1 || hashes.Value[0] != client.HashKey(newRaw) {
 		t.Fatalf("keyHashes %v, want only the new hash", out.Item["keyHashes"])
+	}
+}
+
+func rawItem(t *testing.T, db *dynamodb.Client, table, pk string) map[string]types.AttributeValue {
+	t.Helper()
+	out, err := db.GetItem(context.Background(), &dynamodb.GetItemInput{TableName: aws.String(table), Key: dynamo.Key(pk, "META"), ConsistentRead: aws.Bool(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out.Item
+}
+
+func TestCreateWritesIndexInOneTransaction(t *testing.T) {
+	svc, db, table := newSvc(t)
+	cl, _ := mustCreate(t, svc)
+	out, err := db.GetItem(context.Background(), &dynamodb.GetItemInput{TableName: aws.String(table), Key: dynamo.Key("CLIENTS", "C#"+cl.ID), ConsistentRead: aws.Bool(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := func(k string) string {
+		v, _ := out.Item[k].(*types.AttributeValueMemberS)
+		if v == nil {
+			return ""
+		}
+		return v.Value
+	}
+	if s("name") != "shop" || s("rpId") != "example.com" || s("createdAt") != cl.CreatedAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("index item %v", out.Item)
+	}
+}
+
+func TestRotateDropsExpiredRetiredKeys(t *testing.T) {
+	c, table := dynamotest.NewTable(t)
+	ctx := context.Background()
+	now := time.Now()
+	svc := &client.Service{Store: client.NewDynamoStore(c, table), Now: func() time.Time { return now }}
+	cl, k1, err := svc.Create(ctx, client.CreateInput{Name: "shop", RPID: "example.com", Origins: []string{"https://app.example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k2, err := svc.RotateKey(ctx, cl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(25 * time.Hour) // k1's grace is over
+	if _, err := svc.RotateKey(ctx, cl.ID); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := rawItem(t, c, table, "C#"+cl.ID)["retiredKeys"].(*types.AttributeValueMemberM)
+	if m == nil || len(m.Value) != 1 {
+		t.Fatalf("retiredKeys %v, want only k2", m)
+	}
+	if _, ok := m.Value[client.HashKey(k2)]; !ok {
+		t.Fatalf("retiredKeys %v lacks k2", m.Value)
+	}
+	if _, ok := m.Value[client.HashKey(k1)]; ok {
+		t.Fatal("expired k1 is still recorded")
+	}
+}
+
+// seamStore runs afterGet once, right after the next GetClient has read, so a
+// test can interleave a second operation between a first one's read and write.
+type seamStore struct {
+	client.Store
+	afterGet func()
+}
+
+func (s *seamStore) GetClient(ctx context.Context, id string) (client.Client, error) {
+	c, err := s.Store.GetClient(ctx, id)
+	if f := s.afterGet; f != nil && err == nil {
+		s.afterGet = nil
+		f()
+	}
+	return c, err
+}
+
+func TestConcurrentRotateLoserGetsConflict(t *testing.T) {
+	c, table := dynamotest.NewTable(t)
+	ctx := context.Background()
+	seam := &seamStore{Store: client.NewDynamoStore(c, table)}
+	svc := &client.Service{Store: seam}
+	cl, _ := mustCreate(t, svc)
+	var winner string
+	seam.afterGet = func() {
+		var err error
+		if winner, err = svc.RotateKey(ctx, cl.ID); err != nil {
+			t.Error(err)
+		}
+	}
+	loser, err := svc.RotateKey(ctx, cl.ID)
+	if !errors.Is(err, client.ErrRotateConflict) || loser != "" {
+		t.Fatalf("loser got key %q, err %v; want ErrRotateConflict", loser, err)
+	}
+	if _, err := svc.Authenticate(ctx, winner); err != nil {
+		t.Fatalf("winner's key: %v", err)
+	}
+	// Only the first key, the winner's and nothing else are key items: the loser's was deleted.
+	out, err := c.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String(table), FilterExpression: aws.String("begins_with(pk, :p)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":p": &types.AttributeValueMemberS{Value: "K#"}}})
+	if err != nil || out.Count != 2 {
+		t.Fatalf("key items: %v %v, want 2 (first and winner's)", out.Count, err)
+	}
+}
+
+func TestRevokeKeepsEntriesItNeverRead(t *testing.T) {
+	c, table := dynamotest.NewTable(t)
+	ctx := context.Background()
+	seam := &seamStore{Store: client.NewDynamoStore(c, table)}
+	svc := &client.Service{Store: seam}
+	cl, _ := mustCreate(t, svc)
+	if _, err := svc.RotateKey(ctx, cl.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The key the interleaved rotate will retire is the current one now.
+	got, err := svc.Get(ctx, cl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur := got.KeyHashes[0]
+	// Revoke reads retired={k0}; a rotate then adds cur before revoke writes.
+	seam.afterGet = func() {
+		if _, err := svc.RotateKey(ctx, cl.ID); err != nil {
+			t.Error(err)
+		}
+	}
+	if n, err := svc.RevokePreviousKeys(ctx, cl.ID); err != nil || n != 1 {
+		t.Fatalf("first revoke: %d %v", n, err)
+	}
+	m, _ := rawItem(t, c, table, "C#"+cl.ID)["retiredKeys"].(*types.AttributeValueMemberM)
+	if m == nil {
+		t.Fatal("retiredKeys gone: the entry revoke never read was erased")
+	}
+	if _, ok := m.Value[cur]; !ok || len(m.Value) != 1 {
+		t.Fatalf("retiredKeys %v, want only %s", m.Value, cur)
+	}
+	if n, err := svc.RevokePreviousKeys(ctx, cl.ID); err != nil || n != 1 {
+		t.Fatalf("second revoke: %d %v, want 1", n, err)
+	}
+	if _, _, err := seam.GetKey(ctx, cur); !errors.Is(err, client.ErrNotFound) {
+		t.Fatalf("the interleaved key item still exists: %v", err)
+	}
+}
+
+func TestDisableKeepsIndexName(t *testing.T) {
+	svc, db, table := newSvc(t)
+	cl, _ := mustCreate(t, svc)
+	ctx := context.Background()
+	idx := dynamo.Key("CLIENTS", "C#"+cl.ID)
+	if _, err := db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(table), Key: idx,
+		UpdateExpression:          aws.String("SET #n = :v"),
+		ExpressionAttributeNames:  map[string]string{"#n": "name"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":v": &types.AttributeValueMemberS{Value: "renamed meanwhile"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, act := range []func(context.Context, string) (client.Client, error){svc.Disable, svc.Enable} {
+		if _, err := act(ctx, cl.ID); err != nil {
+			t.Fatal(err)
+		}
+		out, err := db.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(table), Key: idx, ConsistentRead: aws.Bool(true)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v, _ := out.Item["name"].(*types.AttributeValueMemberS); v == nil || v.Value != "renamed meanwhile" {
+			t.Fatalf("index name %v, want it kept", out.Item["name"])
+		}
+	}
+}
+
+func TestBackfillIsIdempotentAndKeepsIndexState(t *testing.T) {
+	svc, db, table := newSvc(t)
+	ctx := context.Background()
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC).Format(time.RFC3339)
+	s := func(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }
+	for _, id := range []string{"legacy1", "legacy2"} {
+		item := dynamo.Key("C#"+id, "META")
+		item["name"], item["rpId"], item["createdAt"] = s("old "+id), s("example.com"), s(created)
+		item["origins"] = &types.AttributeValueMemberSS{Value: []string{"https://example.com"}}
+		item["keyHashes"] = &types.AttributeValueMemberSS{Value: []string{"h-" + id}}
+		for k, v := range map[string]string{"pinLength": "6", "pinMaxAttempts": "5", "pinLockoutSec": "900", "tokenTtlSec": "300"} {
+			item[k] = &types.AttributeValueMemberN{Value: v}
+		}
+		for _, it := range []map[string]types.AttributeValue{item, dynamo.Key("K#h-"+id, "META"), dynamo.Key("S#"+id, "x")} {
+			if _, err := db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(table), Item: it}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	written, skipped, err := client.Backfill(ctx, db, table)
+	if err != nil || written != 2 || skipped != 0 {
+		t.Fatalf("first run: written %d skipped %d err %v, want 2 0", written, skipped, err)
+	}
+	if _, err := svc.Update(ctx, "legacy1", client.Patch{Name: aws.String("renamed")}); err != nil {
+		t.Fatal(err)
+	}
+	snap := func(pk, sk string) map[string]types.AttributeValue {
+		out, err := db.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(table), Key: dynamo.Key(pk, sk), ConsistentRead: aws.Bool(true)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.Item
+	}
+	keyBefore, sessBefore := snap("K#h-legacy1", "META"), snap("S#legacy1", "x")
+	written, skipped, err = client.Backfill(ctx, db, table)
+	if err != nil || written != 0 || skipped != 2 {
+		t.Fatalf("second run: written %d skipped %d err %v, want 0 2", written, skipped, err)
+	}
+	if v, _ := snap("CLIENTS", "C#legacy1")["name"].(*types.AttributeValueMemberS); v == nil || v.Value != "renamed" {
+		t.Fatalf("index name %v, want renamed", snap("CLIENTS", "C#legacy1")["name"])
+	}
+	if !reflect.DeepEqual(snap("K#h-legacy1", "META"), keyBefore) || !reflect.DeepEqual(snap("S#legacy1", "x"), sessBefore) {
+		t.Fatal("K# or S# item changed")
 	}
 }

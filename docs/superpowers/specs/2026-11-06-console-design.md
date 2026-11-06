@@ -93,7 +93,7 @@ Decisions:
   current key leaked: rotate, then call it, and the client answers `401` until it deploys the new
   key. If an old key leaked after a rotate: call it alone, and the new key keeps working. Rotate now
   also records each replaced key in `retiredKeys` on the client, as hash and expiry, dropping expired
-  entries, because nothing else can find a key in its grace. The view never returns that attribute.
+  entries, because nothing else can find a key in its grace. The view never returns that attribute. Rotate writes only if the client's keys are unchanged since it read them; a concurrent rotate that loses answers `409 rotate_conflict`, its new key is deleted, and the caller may retry.
   Keys rotated before this ships are not recorded and live out their 24 h.
 - Rotate's route contract, get and purge are unchanged. `/api/clients*` already routes to the admin
   role.

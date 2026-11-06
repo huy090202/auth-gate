@@ -1,0 +1,90 @@
+info:
+  name: "Revoke previous keys"
+  type: http
+  seq: 7
+
+http:
+  method: DELETE
+  url: "{{baseUrl}}/api/clients/{{clientId}}/keys/previous"
+  headers:
+    - name: X-Internal-Access-Key
+      value: "{{adminKey}}"
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        // `03-rotate-key` left the old key in `previousClientKey` and put the new
+        // one in `clientKey`. Before the revoke, the old key is still inside its grace.
+        const base = String(bru.getEnvVar("baseUrl") || "").replace(/\/+$/, "");
+        // Locally, auth-gate serves the verify role under /verify; on AWS CloudFront routes it.
+        const prefix = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base) ? "/verify" : "";
+        const r = await bru.sendRequest({
+          method: "GET",
+          url: base + prefix + "/api/factors/" + bru.getEnvVar("subjectId"),
+          headers: { "x-internal-access-key": bru.getVar("previousClientKey") },
+        });
+        bru.setVar("previousKeyStatusBefore", r.status);
+    - type: tests
+      code: |-
+        const base = String(bru.getEnvVar("baseUrl") || "").replace(/\/+$/, "");
+        // Locally, auth-gate serves the verify role under /verify; on AWS CloudFront routes it.
+        const prefix = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base) ? "/verify" : "";
+
+        async function status(key) {
+          // sendRequest rejects on a non-2xx status, and the 401 is the point.
+          try {
+            const r = await bru.sendRequest({
+              method: "GET",
+              url: base + prefix + "/api/factors/" + bru.getEnvVar("subjectId"),
+              headers: { "x-internal-access-key": key },
+            });
+            return r.status;
+          } catch (e) {
+            if (e && e.response) return e.response.status;
+            throw e;
+          }
+        }
+
+        test("200 — revoked", function() {
+          expect(res.getStatus()).to.equal(200);
+          expect(res.getBody().revoked).to.be.at.least(1);
+        });
+
+        test("the previous key answered 200 until now", function() {
+          expect(bru.getVar("previousKeyStatusBefore")).to.equal(200);
+        });
+
+        const previousAfter = await status(bru.getVar("previousClientKey"));
+        const currentAfter = await status(bru.getVar("clientKey"));
+
+        test("the previous key now answers 401", function() {
+          expect(previousAfter).to.equal(401);
+        });
+
+        test("the current key still answers 200", function() {
+          expect(currentAfter).to.equal(200);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  Ends the grace of the previous key. **Expected: 200 `{revoked: n}`**, with
+  `n >= 1` here because `03-rotate-key` just retired one.
+
+  This is how to cut off a leaked key: rotate (`03`) so the client has a new key,
+  then call this. Rotating alone never ends the grace; the old key keeps working
+  for 24 h, and rotating again only starts a new window for the one before it.
+  The current key is never touched, and revoking when nothing is retired is a 200
+  with `revoked: 0`.
+
+  The request checks the whole story: before it, the previous key answers 200;
+  after it, 401, and the current key still answers 200.
+
+  > **On prd** this really cuts the old key off. Be sure the client has
+  > redeployed with the new one.

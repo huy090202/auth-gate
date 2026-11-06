@@ -71,6 +71,12 @@ What the numbers show:
 
 This is one run on one machine with one key. It was not run against a deployed stack.
 
+### Stage probe, 2026-11-06
+
+300 calls with default settings through the stg CloudFront door, 20 parallel `curl` processes, one throwaway client: 300 `200`, no `429`. The verify Lambda's log for that period has no `ratelimit` line, so nothing was throttled and no call was let through by a failed read or write. It also has no "did not match expected checksum" line.
+
+The log's `REPORT` lines put about 294 invocations in 11 seconds, about 27 a second, with a peak of 77 in one second. The bucket allows 100 plus 50 a second, so every call was within the limit and 300 `200` is the right answer. This shows real DynamoDB does not refuse this traffic. It does not exercise a denial, a simultaneous spike of 100, or throttling, and those remain proven only against DynamoDB Local and a fake endpoint.
+
 ## Alternatives rejected
 
 - A counter per Lambda instance: it limits an instance, not a client.

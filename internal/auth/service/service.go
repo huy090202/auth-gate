@@ -398,6 +398,35 @@ func (s *Service) UpdateClient(ctx context.Context, clientID string, p client.Pa
 	return s.Clients.Update(ctx, clientID, p)
 }
 
+// ListClients returns one page of client summaries and the next cursor.
+func (s *Service) ListClients(ctx context.Context, cursor string) ([]client.Summary, string, error) {
+	return s.Clients.List(ctx, cursor)
+}
+
+// DisableClient stops the client's keys from authenticating.
+func (s *Service) DisableClient(ctx context.Context, clientID string) (client.Client, error) {
+	if err := validateIDs(clientID); err != nil {
+		return client.Client{}, err
+	}
+	return s.Clients.Disable(ctx, clientID)
+}
+
+// EnableClient lets the client's keys authenticate again.
+func (s *Service) EnableClient(ctx context.Context, clientID string) (client.Client, error) {
+	if err := validateIDs(clientID); err != nil {
+		return client.Client{}, err
+	}
+	return s.Clients.Enable(ctx, clientID)
+}
+
+// RevokePreviousKeys ends the grace of every replaced key and returns how many were still valid.
+func (s *Service) RevokePreviousKeys(ctx context.Context, clientID string) (int, error) {
+	if err := validateIDs(clientID); err != nil {
+		return 0, err
+	}
+	return s.Clients.RevokePreviousKeys(ctx, clientID)
+}
+
 // RotateClientKey issues a new access key; previous keys keep working for 24 h.
 func (s *Service) RotateClientKey(ctx context.Context, clientID string) (string, error) {
 	if err := validateIDs(clientID); err != nil {
