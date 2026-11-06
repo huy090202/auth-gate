@@ -1,6 +1,7 @@
 package console
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -8,6 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+
+	"github.com/huy090202/auth-gate/internal/platform/dynamo"
 	"github.com/huy090202/auth-gate/internal/platform/dynamo/dynamotest"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 )
@@ -90,7 +95,7 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 	}
 }
 
-func newTestApp(t *testing.T) http.Handler {
+func newTestApp(t *testing.T) (http.Handler, *dynamodb.Client, string) {
 	t.Helper()
 	db, table := dynamotest.NewTable(t)
 	now := func() time.Time { return time.Unix(1_800_000_000, 0) }
@@ -99,7 +104,7 @@ func newTestApp(t *testing.T) http.Handler {
 		DB:      db,
 		Limiter: &ratelimit.Limiter{DB: db, Table: table, TTL: time.Hour, Now: now},
 		Now:     now,
-	})
+	}), db, table
 }
 
 func authReq(h http.Handler, viewer, xff string) *httptest.ResponseRecorder {
@@ -117,7 +122,7 @@ func authReq(h http.Handler, viewer, xff string) *httptest.ResponseRecorder {
 
 // Why: the sign-in routes need a brake per visitor, and one visitor must not spend another's.
 func TestAuthRoutesRateLimitedPerIP(t *testing.T) {
-	h := newTestApp(t)
+	h, db, table := newTestApp(t)
 	for i := 0; i < 10; i++ {
 		if w := authReq(h, "198.51.100.10:1000", ""); w.Code == http.StatusTooManyRequests {
 			t.Fatalf("request %d limited", i+1)
@@ -133,11 +138,21 @@ func TestAuthRoutesRateLimitedPerIP(t *testing.T) {
 	if w := authReq(h, "198.51.100.11:1000", ""); w.Code == http.StatusTooManyRequests {
 		t.Fatal("other IP was limited")
 	}
+	// The bucket sits under the documented key, with an expiry.
+	out, err := db.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String(table), Key: dynamo.Key("RL#198.51.100.10", "META"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Item) == 0 || out.Item["ttl"] == nil {
+		t.Fatalf("RL#198.51.100.10 / META missing or without ttl: %v", out.Item)
+	}
 }
 
 // Why: X-Forwarded-For is caller-controlled; if it chose the bucket, anyone could skip the limit.
 func TestForgedXForwardedForDoesNotChangeBucket(t *testing.T) {
-	h := newTestApp(t)
+	h, _, _ := newTestApp(t)
 	for i := 0; i < 10; i++ {
 		authReq(h, "198.51.100.10:1000", "10.0.0."+strconv.Itoa(i))
 	}
@@ -148,7 +163,7 @@ func TestForgedXForwardedForDoesNotChangeBucket(t *testing.T) {
 
 // Why: a missing header must neither disable the limit nor fall back to a forgeable key.
 func TestMissingViewerAddressSharesOneBucket(t *testing.T) {
-	h := newTestApp(t)
+	h, _, _ := newTestApp(t)
 	for i := 0; i < 10; i++ {
 		authReq(h, "", "10.0.0."+strconv.Itoa(i))
 	}
@@ -159,7 +174,7 @@ func TestMissingViewerAddressSharesOneBucket(t *testing.T) {
 
 // Why: the SPA reads every API answer as JSON, so an unknown path must not return HTML or text.
 func TestUnknownAPIPathIsJSON404(t *testing.T) {
-	h := newTestApp(t)
+	h, _, _ := newTestApp(t)
 	r := httptest.NewRequest("GET", "/api/nope", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)

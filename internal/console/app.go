@@ -48,7 +48,7 @@ func notFound(w http.ResponseWriter, _ *http.Request) {
 func (a *App) limitAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := a.clientKey(r)
-		d := a.Limiter.Allow(r.Context(), "ip#"+key, authLimit)
+		d := a.Limiter.Allow(r.Context(), key, authLimit)
 		if !d.Allowed {
 			writeErr(w, &apiError{Status: http.StatusTooManyRequests, Code: "rate_limited", RetryAfter: d.RetryAfterSec})
 			return
