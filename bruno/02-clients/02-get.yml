@@ -26,6 +26,10 @@ runtime:
           expect(b.pinPolicy.maxAttempts).to.equal(3);
         });
 
+        test("carries the default rate limit", function() {
+          expect(res.getBody().rateLimit).to.deep.equal({ burst: 100, perSecond: 50 });
+        });
+
         test("never returns key material", function() {
           const body = JSON.stringify(res.getBody()).toLowerCase();
           expect(body).to.not.include("accesskey");

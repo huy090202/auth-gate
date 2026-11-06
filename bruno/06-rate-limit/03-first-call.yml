@@ -1,0 +1,35 @@
+info:
+  name: "First call spends the only token (200)"
+  type: http
+  seq: 3
+
+http:
+  method: GET
+  url: "{{baseUrl}}/api/factors/{{subjectId}}"
+  headers:
+    - name: X-Internal-Access-Key
+      value: "{{rlClientKey}}"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("not 429 — the limiter let it through", function() {
+          expect(res.getStatus()).to.not.equal(429);
+        });
+
+        test("200 — the handler answered, with no factors for this subject", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  A read for a subject this client never enrolled. **Expected: 200**, which
+  proves the call got past the limiter and reached the handler. It spends the
+  bucket's single token. Harmless on prd.
