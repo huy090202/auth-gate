@@ -29,7 +29,8 @@ type rig struct {
 func newRig(t *testing.T) *rig {
 	t.Helper()
 	db, table := dynamotest.NewTable(t)
-	clk := &clock{t: time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)}
+	// Anchored to real time: a stored ttl in the past lets DynamoDB's reaper delete the item mid-test.
+	clk := &clock{t: time.Now().UTC().Truncate(time.Second)}
 	st := &Store{DB: db, Table: table}
 	app := &App{Deps: Deps{Now: clk.now}, Store: st}
 	mux := http.NewServeMux()
@@ -137,7 +138,7 @@ func TestFullIdleThirtyAndAbsoluteEightHours(t *testing.T) {
 	g.clk.t = g.clk.t.Add(31 * time.Minute)
 	g.expect(t, "/full", idle, 401, "unauthorized")
 
-	g.clk.t = time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	g.clk.t = g.clk.t.Add(24 * time.Hour)
 	long := g.open(t, a, StageFull)
 	start := g.clk.t
 	for g.clk.t.Add(20 * time.Minute).Before(start.Add(8 * time.Hour)) {

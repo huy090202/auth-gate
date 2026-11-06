@@ -98,7 +98,9 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 func newTestApp(t *testing.T) (http.Handler, *dynamodb.Client, string) {
 	t.Helper()
 	db, table := dynamotest.NewTable(t)
-	now := func() time.Time { return time.Unix(1_800_000_000, 0) }
+	// Anchored to real time: a stored ttl in the past lets DynamoDB's reaper delete the item mid-test.
+	start := time.Now()
+	now := func() time.Time { return start }
 	return New(Deps{
 		Config:  Config{Table: table},
 		DB:      db,
