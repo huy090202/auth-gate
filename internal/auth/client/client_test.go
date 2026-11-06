@@ -190,18 +190,39 @@ func TestUpdateKeepsKeyHashes(t *testing.T) {
 }
 
 func TestRotateKeepsRateLimit(t *testing.T) {
-	svc, _, _ := newSvc(t)
+	svc, db, table := newSvc(t)
 	cl, _ := mustCreate(t, svc)
 	ctx := context.Background()
 	want := ratelimit.Settings{Burst: 5, PerSecond: 0.5}
 	if _, err := svc.Update(ctx, cl.ID, client.Patch{RateLimit: &want}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.RotateKey(ctx, cl.ID); err != nil {
+	// An attribute Client does not model: a whole-item rewrite would drop it.
+	key := dynamo.Key("C#"+cl.ID, "META")
+	if _, err := db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(table), Key: key,
+		UpdateExpression:          aws.String("SET disabledAt = :v"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":v": &types.AttributeValueMemberS{Value: "2026-11-06T00:00:00Z"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newRaw, err := svc.RotateKey(ctx, cl.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	got, err := svc.Get(ctx, cl.ID)
 	if err != nil || got.RateLimit != want {
 		t.Fatalf("after rotate: %+v %v", got.RateLimit, err)
+	}
+	out, err := db.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(table), Key: key, ConsistentRead: aws.Bool(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := out.Item["disabledAt"].(*types.AttributeValueMemberS); !ok || v.Value != "2026-11-06T00:00:00Z" {
+		t.Fatalf("rotate dropped an attribute it does not own: %v", out.Item["disabledAt"])
+	}
+	hashes, _ := out.Item["keyHashes"].(*types.AttributeValueMemberSS)
+	if hashes == nil || len(hashes.Value) != 1 || hashes.Value[0] != client.HashKey(newRaw) {
+		t.Fatalf("keyHashes %v, want only the new hash", out.Item["keyHashes"])
 	}
 }
