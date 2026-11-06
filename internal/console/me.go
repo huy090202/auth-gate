@@ -10,7 +10,7 @@ import (
 )
 
 // meRoutes serves /api/me/*. Every write checks the step-up token (a full
-// session needs one; an enrolling one passes enrollGuard instead), runs its own
+// session needs one; an enrolling one passes factorsForWrite instead), runs its own
 // guards, and only then spends the token.
 func (a *App) meRoutes(mux *http.ServeMux) {
 	anyStage := a.session(StageHalf, StageEnroll, StageFull)
@@ -26,8 +26,8 @@ func (a *App) meRoutes(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/me/passkeys/{id}", self(handlerFunc(a.deletePasskey)))
 }
 
-// me describes the signed-in admin. A half session has only proved the password,
-// so it sees which kinds of factor exist, not the passkeys themselves.
+// me describes the signed-in admin. A session that has not proved a factor yet (half,
+// or enrolling without one) has only proved the password, so it sees which kinds of factor exist, not the passkeys themselves.
 func (a *App) me(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
 	out := map[string]any{
@@ -37,7 +37,7 @@ func (a *App) me(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return agError(err)
 	}
-	if x.Stage == StageHalf {
+	if x.Stage == StageHalf || (x.Stage == StageEnroll && !x.FactorProved) {
 		out["factors"] = map[string]bool{"pin": f.PIN, "webauthn": len(f.WebAuthn) > 0}
 	} else {
 		if f.WebAuthn == nil {
@@ -79,6 +79,30 @@ func (a *App) factorAdded(r *http.Request, x *Session, had authgate.Factors) err
 	return nil
 }
 
+// claimFirstFactor runs just before an enrolling session that has not proved a
+// factor writes one at AuthGate. It bumps the admin's sessionEpoch on the epoch
+// this session holds and reissues the session at the next one. Of several such
+// sessions only one gets through; every other is dead at once, and the loser
+// answers 401 without touching AuthGate, so a factor cannot land from a session
+// that read "no factor yet" before another session's factor did.
+func (a *App) claimFirstFactor(w http.ResponseWriter, r *http.Request, x *Session) error {
+	if x.Stage != StageEnroll || x.FactorProved {
+		return nil
+	}
+	if err := a.Store.BumpEpoch(r.Context(), x.Username, x.Epoch); err != nil {
+		if errors.Is(err, ErrConflict) {
+			return a.endSession(w, r, *x)
+		}
+		return err
+	}
+	nx, err := a.reissue(r.Context(), w, *x, StageEnroll, x.Epoch+1)
+	if err != nil {
+		return err
+	}
+	*x = nx
+	return nil
+}
+
 // settle moves an enrolling session to full once it has proved a factor and
 // the password is no longer temporary, and returns the stage it is in.
 func (a *App) settle(w http.ResponseWriter, r *http.Request, x Session, mustChange bool) (Stage, error) {
@@ -95,9 +119,6 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
 	tok, err := a.checkStepUp(r, x, "change-password")
 	if err != nil {
-		return err
-	}
-	if _, err := a.factorsForWrite(w, r, x); err != nil {
 		return err
 	}
 	var in struct{ CurrentPassword, NewPassword string }
@@ -128,6 +149,10 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	// Read the factors as late as possible: the compare and the hash above are slow.
+	if _, err := a.factorsForWrite(w, r, x); err != nil {
+		return err
+	}
 	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
@@ -143,7 +168,7 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) error {
 	if x.Stage == StageEnroll && x.FactorProved {
 		next = StageFull
 	}
-	if err := a.reissue(r.Context(), w, x, next, admin.SessionEpoch+1); err != nil {
+	if _, err := a.reissue(r.Context(), w, x, next, admin.SessionEpoch+1); err != nil {
 		return err
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stage": next})
@@ -156,15 +181,18 @@ func (a *App) setPIN(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	had, err := a.factorsForWrite(w, r, x)
-	if err != nil {
-		return err
-	}
 	var in struct{ PIN string }
 	if err := decodeBody(r, &in); err != nil {
 		return err
 	}
+	had, err := a.factorsForWrite(w, r, x)
+	if err != nil {
+		return err
+	}
 	if err := a.spendStepUp(r, tok); err != nil {
+		return err
+	}
+	if err := a.claimFirstFactor(w, r, &x); err != nil {
 		return err
 	}
 	if err := a.AuthGate.SetPIN(r.Context(), admin.ID, in.PIN); err != nil {
@@ -234,10 +262,6 @@ func (a *App) passkeyStart(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) passkeyFinish(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	had, err := a.factorsForWrite(w, r, x)
-	if err != nil {
-		return err
-	}
 	var in struct {
 		RegistrationID string          `json:"registrationId"`
 		Credential     json.RawMessage `json:"credential"`
@@ -247,6 +271,13 @@ func (a *App) passkeyFinish(w http.ResponseWriter, r *http.Request) error {
 	}
 	if x.RegistrationID == "" || in.RegistrationID != x.RegistrationID {
 		return errChallengeGone
+	}
+	had, err := a.factorsForWrite(w, r, x)
+	if err != nil {
+		return err
+	}
+	if err := a.claimFirstFactor(w, r, &x); err != nil {
+		return err
 	}
 	credID, err := a.AuthGate.FinishRegistration(r.Context(), in.RegistrationID, in.Credential)
 	if err != nil {

@@ -296,18 +296,36 @@ func (st *Store) SetPassword(ctx context.Context, username, hash string, mustCha
 // older session of the admin ends. It is conditional on the epoch the caller
 // read, so two changes cannot both win; the loser gets ErrConflict.
 func (st *Store) ChangePassword(ctx context.Context, username, hash string, epoch int) error {
-	cond := exists + " AND sessionEpoch = :e"
-	if epoch == 0 {
-		cond = exists + " AND (attribute_not_exists(sessionEpoch) OR sessionEpoch = :e)"
-	}
 	err := st.update(ctx, username,
-		"SET passwordHash = :h, mustChangePassword = :m, failedCount = :zero REMOVE lockedUntil ADD sessionEpoch :one", cond, nil,
+		"SET passwordHash = :h, mustChangePassword = :m, failedCount = :zero REMOVE lockedUntil ADD sessionEpoch :one", epochCond(epoch), nil,
 		item{":h": s(hash), ":m": &types.AttributeValueMemberBOOL{Value: false}, ":zero": n(0), ":one": n(1), ":e": n(int64(epoch))})
 	if dynamo.IsConditionFailed(err) {
 		return ErrConflict
 	}
 	if err != nil {
 		return fmt.Errorf("change password: %w", err)
+	}
+	return nil
+}
+
+// epochCond holds while the admin exists and its sessionEpoch is still the one read.
+func epochCond(epoch int) string {
+	if epoch == 0 {
+		return exists + " AND (attribute_not_exists(sessionEpoch) OR sessionEpoch = :e)"
+	}
+	return exists + " AND sessionEpoch = :e"
+}
+
+// BumpEpoch moves sessionEpoch up by one if it is still epoch, which ends every
+// session of the admin that was opened at the old one. Of two callers holding the
+// same epoch only one wins; the other gets ErrConflict.
+func (st *Store) BumpEpoch(ctx context.Context, username string, epoch int) error {
+	err := st.update(ctx, username, "ADD sessionEpoch :one", epochCond(epoch), nil, item{":one": n(1), ":e": n(int64(epoch))})
+	if dynamo.IsConditionFailed(err) {
+		return ErrConflict
+	}
+	if err != nil {
+		return fmt.Errorf("bump epoch: %w", err)
 	}
 	return nil
 }

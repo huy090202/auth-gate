@@ -1,11 +1,13 @@
 package console_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/huy090202/auth-gate/internal/console"
@@ -253,5 +255,106 @@ func TestUnlistedAuthGateFieldsAreDropped(t *testing.T) {
 	}
 	if _, ok := m["internalNote"]; ok || len(m) != 4 {
 		t.Fatalf("unlisted field passed through: %s", r.Body)
+	}
+}
+
+// afterFactors runs a callback right after AuthGate has answered one factor
+// listing, once armed: the moment between a handler's read and its write.
+type afterFactors struct {
+	base  http.RoundTripper
+	mu    sync.Mutex
+	armed func()
+	early func() // runs before AuthGate is asked, once
+}
+
+func (t *afterFactors) arm(f func()) { t.mu.Lock(); t.armed = f; t.mu.Unlock() }
+
+func (t *afterFactors) before(f func()) { t.mu.Lock(); t.early = f; t.mu.Unlock() }
+
+func (t *afterFactors) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/api/factors/") {
+		t.mu.Lock()
+		e := t.early
+		t.early = nil
+		t.mu.Unlock()
+		if e != nil {
+			e()
+		}
+	}
+	resp, err := t.base.RoundTrip(r)
+	if err != nil || r.Method != http.MethodGet || !strings.Contains(r.URL.Path, "/api/factors/") {
+		return resp, err
+	}
+	t.mu.Lock()
+	f := t.armed
+	t.armed = nil
+	t.mu.Unlock()
+	if f != nil {
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		f()
+		resp.Body = io.NopCloser(bytes.NewReader(raw))
+	}
+	return resp, err
+}
+
+// raceRig: the owner uses the normal Console; the attacker's session goes through
+// one whose AuthGate client can be held after a factor listing.
+func raceRig(t *testing.T) (h *consoletest.Harness, a console.Admin, owner, attacker *consoletest.Browser, hook *afterFactors) {
+	h = consoletest.New(t)
+	a = h.CreateAdmin("ada", pw, console.RoleAdmin, true)
+	hook = &afterFactors{base: h.AuthGate.HTTP.Transport}
+	deps := h.Deps
+	deps.AuthGate = &authgate.Client{BaseURL: h.AuthGateURL, ClientKey: h.ClientKey, AdminKey: consoletest.AdminKey,
+		HTTP: &http.Client{Transport: hook}}
+	owner, attacker = h.NewBrowser(), h.BrowserFor(console.New(deps))
+	want(t, attacker.Login("ada", pw), 200, "")
+	want(t, owner.Login("ada", pw), 200, "")
+	return
+}
+
+// Why: a session that read "no factor yet" must not land one after another
+// session's factor did: its passkey would stay on the account as a second factor.
+func TestFirstPasskeyLosesToTheOwnersFactor(t *testing.T) {
+	h, a, owner, attacker, hook := raceRig(t)
+	pk := h.NewPasskey()
+	start := attacker.StartPasskey()
+	want(t, start, 200, "")
+	hook.arm(func() { want(t, owner.EnrollPIN(pin1), 200, "") })
+	want(t, attacker.FinishPasskey(start.Str("registrationId"), pk.Attest(h, start)), 401, "unauthorized")
+	f, err := h.AuthGate.Factors(context.Background(), a.ID)
+	if err != nil || !f.PIN || len(f.WebAuthn) != 0 {
+		t.Fatalf("factors = %+v (%v): the attacker's passkey landed", f, err)
+	}
+	// The owner's next write is unaffected.
+	want(t, owner.Do("POST", "/api/me/password", passwordBody(pw, pw2)), 200, "")
+	if stageOf(t, owner) != "full" {
+		t.Fatal("the owner did not reach full")
+	}
+}
+
+// Why: the same race with a PIN must not replace the owner's PIN.
+func TestFirstPINLosesToTheOwnersFactor(t *testing.T) {
+	h, a, owner, attacker, hook := raceRig(t)
+	hook.arm(func() { want(t, owner.EnrollPIN(pin1), 200, "") })
+	want(t, attacker.EnrollPIN(pin2), 401, "unauthorized")
+	if !pinWorks(t, h, a, pin1) || pinWorks(t, h, a, pin2) {
+		t.Fatal("the owner's PIN was replaced")
+	}
+	want(t, owner.Do("POST", "/api/me/password", passwordBody(pw, pw2)), 200, "")
+	if stageOf(t, owner) != "full" {
+		t.Fatal("the owner did not reach full")
+	}
+}
+
+// Why: an enrolling session that has not proved a factor must not be shown the passkey list,
+// even when a factor appears between its session check and its factor read.
+func TestUnprovedEnrollSessionSeesFactorFlagsOnly(t *testing.T) {
+	h, _, owner, attacker, hook := raceRig(t)
+	pk := h.NewPasskey()
+	hook.before(func() { want(t, owner.EnrollPasskey(pk), 200, "") })
+	f, _ := attacker.Do("GET", "/api/me", nil).Map()["factors"].(map[string]any)
+	if f["webauthn"] != true || f["pin"] != false {
+		t.Fatalf("factors = %v, want flags only", f)
 	}
 }

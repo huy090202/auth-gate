@@ -35,7 +35,7 @@ type stepUp struct {
 // purpose, expiry) without spending it, so the handler can run its own guards
 // first and a refusal does not cost the admin their token. Without a token it
 // is 403 before anything else. An enrolling session needs none; the caller
-// decides whether it may act at all (see enrollGuard). It is only called behind
+// decides whether it may act at all (see factorsForWrite). It is only called behind
 // a session, so a caller without one cannot make the Console fetch AuthGate's
 // keys. Any failure is the same 403.
 func (a *App) checkStepUp(r *http.Request, s Session, action string) (*stepUp, error) {
