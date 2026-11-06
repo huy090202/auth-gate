@@ -90,10 +90,10 @@ func (b *Browser) SetCookie(value string) {
 }
 
 // Do sends one request. A body that is not nil is sent as JSON. Calls to
-// /api/auth/ move the clock by Pace first. Header pairs follow as name, value.
+// /api/auth/ and /api/me/password (both behind the login limiter) move the clock by Pace first. Header pairs follow as name, value.
 func (b *Browser) Do(method, path string, body any, headers ...string) Response {
 	b.H.T.Helper()
-	if strings.HasPrefix(path, "/api/auth/") {
+	if strings.HasPrefix(path, "/api/auth/") || path == "/api/me/password" {
 		b.H.Clock.Advance(Pace)
 	}
 	var rd io.Reader
@@ -238,4 +238,20 @@ func (b *Browser) SignInWithPasskey(p *Passkey) Response {
 	assertion := virtualwebauthn.CreateAssertionResponse(p.RP, p.Authn, p.Credential, *ao)
 	return b.Do("POST", "/api/auth/second-factor/verify",
 		map[string]any{"challengeId": st.Str("challengeId"), "credential": json.RawMessage(assertion)})
+}
+
+// StepUpToken mints, straight at AuthGate, the token a step-up would give: a PIN
+// challenge for the admin with the given purpose, answered with pin.
+func (h *Harness) StepUpToken(adminID, purpose, pin string) string {
+	h.T.Helper()
+	ctx := context.Background()
+	ch, err := h.AuthGate.CreateChallenge(ctx, adminID, purpose, "pin")
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	tok, err := h.AuthGate.VerifyChallenge(ctx, ch.ID, &pin, nil)
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	return tok
 }

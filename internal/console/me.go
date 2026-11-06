@@ -2,19 +2,23 @@ package console
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/huy090202/auth-gate/internal/console/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 )
 
-// meRoutes serves /api/me/*. Every write calls requireStepUp first, which lets
-// an enrolling session through and asks a full one for a token.
+// meRoutes serves /api/me/*. Every write checks the step-up token (a full
+// session needs one; an enrolling one passes enrollGuard instead), runs its own
+// guards, and only then spends the token.
 func (a *App) meRoutes(mux *http.ServeMux) {
 	anyStage := a.session(StageHalf, StageEnroll, StageFull)
 	self := a.session(StageEnroll, StageFull)
 	mux.Handle("GET /api/me", anyStage(handlerFunc(a.me)))
-	mux.Handle("POST /api/me/password", self(handlerFunc(a.changePassword)))
+	// The password route is the one write with no step-up in stage enroll, so it
+	// shares the login limiter: it is a way to test guesses of the current password.
+	mux.Handle("POST /api/me/password", a.limitAuth(self(handlerFunc(a.changePassword))))
 	mux.Handle("POST /api/me/pin", self(handlerFunc(a.setPIN)))
 	mux.Handle("DELETE /api/me/pin", self(handlerFunc(a.deletePIN)))
 	mux.Handle("POST /api/me/passkeys/start", self(handlerFunc(a.passkeyStart)))
@@ -23,17 +27,19 @@ func (a *App) meRoutes(mux *http.ServeMux) {
 }
 
 // me describes the signed-in admin. A half session has only proved the password,
-// so it does not see the factor list.
+// so it sees which kinds of factor exist, not the passkeys themselves.
 func (a *App) me(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
 	out := map[string]any{
 		"username": admin.Username, "role": admin.Role, "stage": x.Stage, "mustChangePassword": admin.MustChangePassword,
 	}
-	if x.Stage != StageHalf {
-		f, err := a.AuthGate.Factors(r.Context(), admin.ID)
-		if err != nil {
-			return agError(err)
-		}
+	f, err := a.AuthGate.Factors(r.Context(), admin.ID)
+	if err != nil {
+		return agError(err)
+	}
+	if x.Stage == StageHalf {
+		out["factors"] = map[string]bool{"pin": f.PIN, "webauthn": len(f.WebAuthn) > 0}
+	} else {
 		if f.WebAuthn == nil {
 			f.WebAuthn = []authgate.Credential{}
 		}
@@ -43,18 +49,41 @@ func (a *App) me(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// settle moves an enrolling session to full once the password is no longer
-// temporary and a factor exists, and returns the stage the session is in.
-func (a *App) settle(w http.ResponseWriter, r *http.Request, x Session, mustChange bool) (Stage, error) {
-	if x.Stage != StageEnroll || mustChange {
-		return x.Stage, nil
-	}
+// factorsForWrite reads the account's factors for a write and applies the rule
+// for an enrolling session. One that has not proved a factor itself holds nothing
+// but the temporary password: it may act only while the account has no factor
+// at all (its first factor, or the password); with a factor present it may be
+// the victim's stale session or an attacker's, so it is ended with 401. A full
+// session has proved its factor at sign-in.
+func (a *App) factorsForWrite(w http.ResponseWriter, r *http.Request, x Session) (authgate.Factors, error) {
 	f, err := a.AuthGate.Factors(r.Context(), x.AdminID)
 	if err != nil {
-		return "", agError(err)
+		return f, agError(err)
 	}
-	if !f.PIN && len(f.WebAuthn) == 0 {
-		return StageEnroll, nil
+	if x.Stage == StageEnroll && !x.FactorProved && (f.PIN || len(f.WebAuthn) > 0) {
+		return f, a.endSession(w, r, x)
+	}
+	return f, nil
+}
+
+// factorAdded runs after a factor was added. An enrolling session that added the
+// account's first factor has thereby proved it, and is recorded as such.
+func (a *App) factorAdded(r *http.Request, x *Session, had authgate.Factors) error {
+	if x.Stage != StageEnroll || x.FactorProved || had.PIN || len(had.WebAuthn) > 0 {
+		return nil
+	}
+	if err := a.Store.SetFactorProved(r.Context(), x.Hash); err != nil {
+		return sessionGone(err)
+	}
+	x.FactorProved = true
+	return nil
+}
+
+// settle moves an enrolling session to full once it has proved a factor and
+// the password is no longer temporary, and returns the stage it is in.
+func (a *App) settle(w http.ResponseWriter, r *http.Request, x Session, mustChange bool) (Stage, error) {
+	if x.Stage != StageEnroll || !x.FactorProved || mustChange {
+		return x.Stage, nil
 	}
 	if err := a.promote(r.Context(), w, x, StageFull); err != nil {
 		return "", err
@@ -64,7 +93,11 @@ func (a *App) settle(w http.ResponseWriter, r *http.Request, x Session, mustChan
 
 func (a *App) changePassword(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	if err := a.requireStepUp(r, x, "change-password"); err != nil {
+	tok, err := a.checkStepUp(r, x, "change-password")
+	if err != nil {
+		return err
+	}
+	if _, err := a.factorsForWrite(w, r, x); err != nil {
 		return err
 	}
 	var in struct{ CurrentPassword, NewPassword string }
@@ -72,6 +105,19 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if !a.verifyPassword(in.CurrentPassword, admin.PasswordHash) {
+		// Without a step-up token to stand in the way, guesses count like sign-in failures.
+		if x.Stage == StageEnroll {
+			if err := a.Store.RecordLoginFailure(r.Context(), admin.Username, a.now()); err != nil {
+				return err
+			}
+			cur, err := a.Store.GetAdmin(r.Context(), admin.Username)
+			if err != nil {
+				return err
+			}
+			if cur.LockedUntil != nil && a.now().Before(*cur.LockedUntil) {
+				return a.endSession(w, r, x)
+			}
+		}
 		return &apiError{Status: http.StatusBadRequest, Code: "wrong_password"}
 	}
 	// The current password has just been verified, so equal strings mean "same as current".
@@ -82,28 +128,50 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.Store.SetPassword(r.Context(), admin.Username, hash, false, false); err != nil {
+	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
-	st, err := a.settle(w, r, x, false)
-	if err != nil {
+	// The epoch moves, which ends every other session of the admin; this one is
+	// reissued at the new epoch (and promoted if it has what full needs).
+	if err := a.Store.ChangePassword(r.Context(), admin.Username, hash, admin.SessionEpoch); err != nil {
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrAdminNotFound) {
+			return errUnauthorized
+		}
 		return err
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stage": st})
+	next := x.Stage
+	if x.Stage == StageEnroll && x.FactorProved {
+		next = StageFull
+	}
+	if err := a.reissue(r.Context(), w, x, next, admin.SessionEpoch+1); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stage": next})
 	return nil
 }
 
 func (a *App) setPIN(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	if err := a.requireStepUp(r, x, "add-factor"); err != nil {
+	tok, err := a.checkStepUp(r, x, "add-factor")
+	if err != nil {
+		return err
+	}
+	had, err := a.factorsForWrite(w, r, x)
+	if err != nil {
 		return err
 	}
 	var in struct{ PIN string }
 	if err := decodeBody(r, &in); err != nil {
 		return err
 	}
+	if err := a.spendStepUp(r, tok); err != nil {
+		return err
+	}
 	if err := a.AuthGate.SetPIN(r.Context(), admin.ID, in.PIN); err != nil {
 		return agError(err)
+	}
+	if err := a.factorAdded(r, &x, had); err != nil {
+		return err
 	}
 	st, err := a.settle(w, r, x, admin.MustChangePassword)
 	if err != nil {
@@ -115,18 +183,22 @@ func (a *App) setPIN(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) deletePIN(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	if err := a.requireStepUp(r, x, "remove-factor"); err != nil {
+	tok, err := a.checkStepUp(r, x, "remove-factor")
+	if err != nil {
 		return err
 	}
-	f, err := a.AuthGate.Factors(r.Context(), admin.ID)
+	f, err := a.factorsForWrite(w, r, x)
 	if err != nil {
-		return agError(err)
+		return err
 	}
 	if !f.PIN {
 		return &apiError{Status: http.StatusConflict, Code: "factor_not_enrolled"}
 	}
 	if len(f.WebAuthn) == 0 {
 		return &apiError{Status: http.StatusConflict, Code: "last_factor"}
+	}
+	if err := a.spendStepUp(r, tok); err != nil {
+		return err
 	}
 	if err := a.AuthGate.DeletePIN(r.Context(), admin.ID); err != nil {
 		return agError(err)
@@ -139,7 +211,14 @@ func (a *App) deletePIN(w http.ResponseWriter, r *http.Request) error {
 // is tied to this start by the registration id kept in the session.
 func (a *App) passkeyStart(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	if err := a.requireStepUp(r, x, "add-factor"); err != nil {
+	tok, err := a.checkStepUp(r, x, "add-factor")
+	if err != nil {
+		return err
+	}
+	if _, err := a.factorsForWrite(w, r, x); err != nil {
+		return err
+	}
+	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
 	id, publicKey, err := a.AuthGate.StartRegistration(r.Context(), admin.ID, admin.Username)
@@ -155,6 +234,10 @@ func (a *App) passkeyStart(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) passkeyFinish(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
+	had, err := a.factorsForWrite(w, r, x)
+	if err != nil {
+		return err
+	}
 	var in struct {
 		RegistrationID string          `json:"registrationId"`
 		Credential     json.RawMessage `json:"credential"`
@@ -169,6 +252,9 @@ func (a *App) passkeyFinish(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return agError(err)
 	}
+	if err := a.factorAdded(r, &x, had); err != nil {
+		return err
+	}
 	st, err := a.settle(w, r, x, admin.MustChangePassword)
 	if err != nil {
 		return err
@@ -179,14 +265,15 @@ func (a *App) passkeyFinish(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) deletePasskey(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	if err := a.requireStepUp(r, x, "remove-factor"); err != nil {
+	tok, err := a.checkStepUp(r, x, "remove-factor")
+	if err != nil {
+		return err
+	}
+	f, err := a.factorsForWrite(w, r, x)
+	if err != nil {
 		return err
 	}
 	id := r.PathValue("id")
-	f, err := a.AuthGate.Factors(r.Context(), admin.ID)
-	if err != nil {
-		return agError(err)
-	}
 	found := false
 	for _, c := range f.WebAuthn {
 		found = found || c.CredentialID == id
@@ -196,6 +283,9 @@ func (a *App) deletePasskey(w http.ResponseWriter, r *http.Request) error {
 	}
 	if !f.PIN && len(f.WebAuthn) == 1 {
 		return &apiError{Status: http.StatusConflict, Code: "last_factor"}
+	}
+	if err := a.spendStepUp(r, tok); err != nil {
+		return err
 	}
 	if err := a.AuthGate.DeleteCredential(r.Context(), admin.ID, id); err != nil {
 		return agError(err)

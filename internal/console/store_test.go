@@ -229,3 +229,34 @@ func TestSetChallengeDoesNotResurrectSession(t *testing.T) {
 		t.Fatalf("session came back: %v", err)
 	}
 }
+
+// Why: promotion swaps the session items in one step; a session signed out
+// mid-request must not come back as the new one.
+func TestReplaceSessionNeedsTheOldOne(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	old := Session{Hash: "old", AdminID: "a", Username: "huy", Stage: StageHalf}
+	if err := st.PutSession(ctx, old, now); err != nil {
+		t.Fatal(err)
+	}
+	next := Session{Hash: "new", AdminID: "a", Username: "huy", Stage: StageFull, FactorProved: true}
+	if err := st.ReplaceSession(ctx, "old", next, now); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetSession(ctx, "new")
+	if err != nil || !got.FactorProved || got.Stage != StageFull {
+		t.Fatalf("new = %+v (%v)", got, err)
+	}
+	if _, err := st.GetSession(ctx, "old"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("old session is still there: %v", err)
+	}
+	// The old one is gone now, as after a sign-out: nothing new may appear.
+	again := Session{Hash: "newer", AdminID: "a", Username: "huy", Stage: StageFull}
+	if err := st.ReplaceSession(ctx, "old", again, now); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("err = %v, want ErrSessionNotFound", err)
+	}
+	if _, err := st.GetSession(ctx, "newer"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("a session came back: %v", err)
+	}
+}

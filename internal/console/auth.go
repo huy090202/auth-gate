@@ -154,6 +154,7 @@ func (a *App) secondFactorVerify(w http.ResponseWriter, r *http.Request) error {
 	if admin.MustChangePassword {
 		next = StageEnroll
 	}
+	x.FactorProved = true // this session just passed a factor
 	if err := a.promote(ctx, w, x, next); err != nil {
 		return err
 	}

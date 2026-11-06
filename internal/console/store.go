@@ -53,6 +53,7 @@ type Session struct {
 	Epoch                   int
 	ChallengeID             string
 	RegistrationID          string
+	FactorProved            bool
 	CreatedAt, LastSeenAt   time.Time
 }
 
@@ -290,6 +291,27 @@ func (st *Store) SetPassword(ctx context.Context, username, hash string, mustCha
 	return st.mapNotFound(st.update(ctx, username, expr, exists, nil, vals), "set password")
 }
 
+// ChangePassword stores a new password for a self-service change: the
+// temporary flag goes, the lock clears and sessionEpoch moves up by one, so every
+// older session of the admin ends. It is conditional on the epoch the caller
+// read, so two changes cannot both win; the loser gets ErrConflict.
+func (st *Store) ChangePassword(ctx context.Context, username, hash string, epoch int) error {
+	cond := exists + " AND sessionEpoch = :e"
+	if epoch == 0 {
+		cond = exists + " AND (attribute_not_exists(sessionEpoch) OR sessionEpoch = :e)"
+	}
+	err := st.update(ctx, username,
+		"SET passwordHash = :h, mustChangePassword = :m, failedCount = :zero REMOVE lockedUntil ADD sessionEpoch :one", cond, nil,
+		item{":h": s(hash), ":m": &types.AttributeValueMemberBOOL{Value: false}, ":zero": n(0), ":one": n(1), ":e": n(int64(epoch))})
+	if dynamo.IsConditionFailed(err) {
+		return ErrConflict
+	}
+	if err != nil {
+		return fmt.Errorf("change password: %w", err)
+	}
+	return nil
+}
+
 // EndSessions ends every open session of the admin: each carries the old epoch.
 func (st *Store) EndSessions(ctx context.Context, username string) error {
 	return st.mapNotFound(st.update(ctx, username, "ADD sessionEpoch :one", exists, nil, item{":one": n(1)}), "end sessions")
@@ -459,8 +481,8 @@ func (x Session) expiresAt() time.Time {
 	}
 }
 
-// PutSession stores a session with its ttl. Zero times default to now.
-func (st *Store) PutSession(ctx context.Context, x Session, now time.Time) error {
+// sessionItem is the stored form of a session. Zero times default to now.
+func sessionItem(x Session, now time.Time) item {
 	if x.CreatedAt.IsZero() {
 		x.CreatedAt = now
 	}
@@ -478,8 +500,35 @@ func (st *Store) PutSession(ctx context.Context, x Session, now time.Time) error
 	if x.RegistrationID != "" {
 		it["registrationId"] = s(x.RegistrationID)
 	}
-	if _, err := st.DB.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(st.Table), Item: it}); err != nil {
+	if x.FactorProved {
+		it["factorProved"] = &types.AttributeValueMemberBOOL{Value: true}
+	}
+	return it
+}
+
+// PutSession stores a session with its ttl. Zero times default to now. It
+// overwrites; use ReplaceSession to swap one session for another.
+func (st *Store) PutSession(ctx context.Context, x Session, now time.Time) error {
+	if _, err := st.DB.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(st.Table), Item: sessionItem(x, now)}); err != nil {
 		return fmt.Errorf("put session: %w", err)
+	}
+	return nil
+}
+
+// ReplaceSession stores x and deletes the session oldHash in one transaction,
+// conditional on the old one still existing. A session signed out in the
+// meantime gives ErrSessionNotFound and nothing is stored.
+func (st *Store) ReplaceSession(ctx context.Context, oldHash string, x Session, now time.Time) error {
+	err := dynamo.TransactWrite(ctx, st.DB,
+		types.TransactWriteItem{Delete: &types.Delete{
+			TableName: aws.String(st.Table), Key: sesKey(oldHash), ConditionExpression: aws.String(exists),
+		}},
+		types.TransactWriteItem{Put: &types.Put{TableName: aws.String(st.Table), Item: sessionItem(x, now)}})
+	if dynamo.IsConditionFailed(err) {
+		return ErrSessionNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("replace session: %w", err)
 	}
 	return nil
 }
@@ -500,6 +549,9 @@ func (st *Store) GetSession(ctx context.Context, hash string) (Session, error) {
 		Hash: hash, AdminID: getS(it, "adminId"), Username: getS(it, "username"),
 		Stage: Stage(getS(it, "stage")), Epoch: getN(it, "epoch"),
 		ChallengeID: getS(it, "challengeId"), RegistrationID: getS(it, "registrationId"),
+	}
+	if v, ok := it["factorProved"].(*types.AttributeValueMemberBOOL); ok {
+		x.FactorProved = v.Value
 	}
 	c, err := getT(it, "createdAt")
 	if err != nil || c == nil {
@@ -555,24 +607,29 @@ func (st *Store) UseJTI(ctx context.Context, jti string, exp time.Time) error {
 
 // SetChallenge records the session's open login or step-up challenge.
 func (st *Store) SetChallenge(ctx context.Context, hash, challengeID string) error {
-	return st.setSessionRef(ctx, hash, "challengeId", challengeID)
+	return st.setSessionRef(ctx, hash, "challengeId", s(challengeID))
 }
 
 // SetRegistration records the session's open passkey registration.
 func (st *Store) SetRegistration(ctx context.Context, hash, registrationID string) error {
-	return st.setSessionRef(ctx, hash, "registrationId", registrationID)
+	return st.setSessionRef(ctx, hash, "registrationId", s(registrationID))
+}
+
+// SetFactorProved records that the session itself enrolled the account's first factor.
+func (st *Store) SetFactorProved(ctx context.Context, hash string) error {
+	return st.setSessionRef(ctx, hash, "factorProved", &types.AttributeValueMemberBOOL{Value: true})
 }
 
 // setSessionRef sets one attribute of an existing session. Like touchSession it
 // will not bring back a session that was signed out in the meantime: that
 // gives ErrSessionNotFound.
-func (st *Store) setSessionRef(ctx context.Context, hash, attr, value string) error {
+func (st *Store) setSessionRef(ctx context.Context, hash, attr string, value types.AttributeValue) error {
 	_, err := st.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(st.Table), Key: sesKey(hash),
 		UpdateExpression:          aws.String("SET #a = :v"),
 		ConditionExpression:       aws.String(exists),
 		ExpressionAttributeNames:  map[string]string{"#a": attr},
-		ExpressionAttributeValues: item{":v": s(value)},
+		ExpressionAttributeValues: item{":v": value},
 	})
 	if dynamo.IsConditionFailed(err) {
 		return ErrSessionNotFound

@@ -87,24 +87,41 @@ func (a *App) startSession(ctx context.Context, w http.ResponseWriter, admin Adm
 // promote moves a session to another stage under a new token, so a token seen
 // at one stage is worthless at the next. The clock restarts and the old item goes.
 func (a *App) promote(ctx context.Context, w http.ResponseWriter, old Session, st Stage) error {
+	return a.reissue(ctx, w, old, st, old.Epoch)
+}
+
+// reissue replaces a session by one at the given stage and epoch under a new
+// token. Within the same stage the original start time stays, so the stage's
+// time limit is not extended. The swap is one transaction, so a session signed
+// out meanwhile is not brought back (it gives 401).
+func (a *App) reissue(ctx context.Context, w http.ResponseWriter, old Session, st Stage, epoch int) error {
 	token, hash, err := newToken()
 	if err != nil {
 		return err
 	}
 	now := a.now()
 	x := Session{Hash: hash, AdminID: old.AdminID, Username: old.Username, Stage: st,
-		Epoch: old.Epoch, CreatedAt: now, LastSeenAt: now}
-	if err := a.Store.PutSession(ctx, x, now); err != nil {
-		return err
+		Epoch: epoch, FactorProved: old.FactorProved, CreatedAt: now, LastSeenAt: now}
+	if st == old.Stage {
+		x.CreatedAt = old.CreatedAt
 	}
-	if err := a.Store.DeleteSession(ctx, old.Hash); err != nil {
-		return err
+	if err := a.Store.ReplaceSession(ctx, old.Hash, x, now); err != nil {
+		return sessionGone(err)
 	}
 	a.setCookie(w, token, 0)
 	return nil
 }
 
 var errUnauthorized = &apiError{Status: http.StatusUnauthorized, Code: "unauthorized"}
+
+// endSession deletes the session, clears its cookie and answers 401.
+func (a *App) endSession(w http.ResponseWriter, r *http.Request, x Session) error {
+	if err := a.Store.DeleteSession(r.Context(), x.Hash); err != nil {
+		return err
+	}
+	a.setCookie(w, "", -1)
+	return errUnauthorized
+}
 
 // reject ends whatever session the request carried and answers 401.
 func (a *App) reject(w http.ResponseWriter, r *http.Request, hash string) {
