@@ -6,9 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/huy090202/auth-gate/internal/console"
 	"github.com/huy090202/auth-gate/internal/console/authgate"
@@ -258,6 +261,15 @@ func TestUnlistedAuthGateFieldsAreDropped(t *testing.T) {
 	}
 }
 
+// check is want for code that runs on a server goroutine: it reports with
+// t.Errorf, because t.Fatalf may only be called from the test goroutine.
+func check(t *testing.T, r consoletest.Response, status int, code string) {
+	t.Helper()
+	if r.Status != status || (code != "" && r.Str("error") != code) {
+		t.Errorf("got %d %s, want %d %s", r.Status, r.Body, status, code)
+	}
+}
+
 // afterFactors runs a callback right after AuthGate has answered one factor
 // listing, once armed: the moment between a handler's read and its write.
 type afterFactors struct {
@@ -313,38 +325,34 @@ func raceRig(t *testing.T) (h *consoletest.Harness, a console.Admin, owner, atta
 	return
 }
 
-// Why: a session that read "no factor yet" must not land one after another
-// session's factor did: its passkey would stay on the account as a second factor.
-func TestFirstPasskeyLosesToTheOwnersFactor(t *testing.T) {
+// Why: while one session holds the first-factor lease and has read "no factor yet",
+// another cannot add its own factor beside the first one's passkey.
+func TestFirstPasskeyHoldsOffOtherSessions(t *testing.T) {
 	h, a, owner, attacker, hook := raceRig(t)
 	pk := h.NewPasskey()
 	start := attacker.StartPasskey()
 	want(t, start, 200, "")
-	hook.arm(func() { want(t, owner.EnrollPIN(pin1), 200, "") })
-	want(t, attacker.FinishPasskey(start.Str("registrationId"), pk.Attest(h, start)), 401, "unauthorized")
+	hook.arm(func() { check(t, owner.EnrollPIN(pin1), 409, "enrollment_in_progress") })
+	want(t, attacker.FinishPasskey(start.Str("registrationId"), pk.Attest(h, start)), 200, "")
 	f, err := h.AuthGate.Factors(context.Background(), a.ID)
-	if err != nil || !f.PIN || len(f.WebAuthn) != 0 {
-		t.Fatalf("factors = %+v (%v): the attacker's passkey landed", f, err)
+	if err != nil || f.PIN || len(f.WebAuthn) != 1 {
+		t.Fatalf("factors = %+v (%v): want only the first session's passkey", f, err)
 	}
-	// The owner's next write is unaffected.
-	want(t, owner.Do("POST", "/api/me/password", passwordBody(pw, pw2)), 200, "")
-	if stageOf(t, owner) != "full" {
-		t.Fatal("the owner did not reach full")
-	}
+	// The refused session was not ended; its next try finds the factor and is ended.
+	want(t, owner.EnrollPIN(pin1), 401, "unauthorized")
 }
 
-// Why: the same race with a PIN must not replace the owner's PIN.
-func TestFirstPINLosesToTheOwnersFactor(t *testing.T) {
+// Why: the same with a PIN: a second session's passkey must not land beside it.
+func TestFirstPINHoldsOffOtherSessions(t *testing.T) {
 	h, a, owner, attacker, hook := raceRig(t)
-	hook.arm(func() { want(t, owner.EnrollPIN(pin1), 200, "") })
-	want(t, attacker.EnrollPIN(pin2), 401, "unauthorized")
-	if !pinWorks(t, h, a, pin1) || pinWorks(t, h, a, pin2) {
-		t.Fatal("the owner's PIN was replaced")
+	pk := h.NewPasskey()
+	hook.arm(func() { check(t, owner.EnrollPasskey(pk), 409, "enrollment_in_progress") })
+	want(t, attacker.EnrollPIN(pin2), 200, "")
+	f, err := h.AuthGate.Factors(context.Background(), a.ID)
+	if err != nil || !f.PIN || len(f.WebAuthn) != 0 {
+		t.Fatalf("factors = %+v (%v): want only the first session's PIN", f, err)
 	}
-	want(t, owner.Do("POST", "/api/me/password", passwordBody(pw, pw2)), 200, "")
-	if stageOf(t, owner) != "full" {
-		t.Fatal("the owner did not reach full")
-	}
+	want(t, owner.EnrollPIN(pin1), 401, "unauthorized")
 }
 
 // Why: an enrolling session that has not proved a factor must not be shown the passkey list,
@@ -352,9 +360,175 @@ func TestFirstPINLosesToTheOwnersFactor(t *testing.T) {
 func TestUnprovedEnrollSessionSeesFactorFlagsOnly(t *testing.T) {
 	h, _, owner, attacker, hook := raceRig(t)
 	pk := h.NewPasskey()
-	hook.before(func() { want(t, owner.EnrollPasskey(pk), 200, "") })
+	hook.before(func() { check(t, owner.EnrollPasskey(pk), 200, "") })
 	f, _ := attacker.Do("GET", "/api/me", nil).Map()["factors"].(map[string]any)
 	if f["webauthn"] != true || f["pin"] != false {
 		t.Fatalf("factors = %v, want flags only", f)
 	}
+}
+
+// gate sits between a Console and AuthGate. It counts the factor writes that get
+// through and can hold the first PIN write open until the test lets it go.
+type gate struct {
+	base    http.RoundTripper
+	writes  atomic.Int32
+	entered chan struct{} // receives once when a held write arrives
+	release chan struct{}
+	hold    atomic.Bool
+	once    sync.Once
+}
+
+func newGate(t *testing.T, base http.RoundTripper) *gate {
+	g := &gate{base: base, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	return g
+}
+
+// let releases the held write (and any later one); it is safe to call twice.
+func (g *gate) let() { g.once.Do(func() { close(g.release) }) }
+
+func (g *gate) RoundTrip(r *http.Request) (*http.Response, error) {
+	isPIN := r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/api/factors/pin")
+	isFinish := r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/webauthn/registrations/")
+	if isPIN || isFinish {
+		g.writes.Add(1)
+	}
+	if isPIN && g.hold.CompareAndSwap(true, false) {
+		g.entered <- struct{}{}
+		select {
+		case <-g.release:
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		}
+	}
+	return g.base.RoundTrip(r)
+}
+
+// gated returns a Console whose AuthGate client goes through g.
+func gated(h *consoletest.Harness, g *gate) *consoletest.Browser {
+	deps := h.Deps
+	deps.AuthGate = &authgate.Client{BaseURL: h.AuthGateURL, ClientKey: h.ClientKey, AdminKey: consoletest.AdminKey,
+		HTTP: &http.Client{Transport: g}}
+	b := h.BrowserFor(console.New(deps))
+	// Cleanups run last in, first out: register after the server so a held write
+	// is let go before the server's Close waits for it.
+	h.T.Cleanup(g.let)
+	return b
+}
+
+// Why: a login during the owner's AuthGate write reads the new epoch and no factor;
+// without the lease its write would land beside the owner's (a silent second factor
+// or a replaced PIN while the owner got 200).
+func TestFreshLoginDuringOwnersWriteCannotAddFactor(t *testing.T) {
+	h := consoletest.New(t)
+	a := h.CreateAdmin("ada", pw, console.RoleAdmin, true)
+	g := newGate(t, h.AuthGate.HTTP.Transport)
+	g.hold.Store(true)
+	owner := gated(h, g)
+	want(t, owner.Login("ada", pw), 200, "")
+	done := make(chan consoletest.Response, 1)
+	go func() { done <- owner.EnrollPIN(pin1) }()
+	<-g.entered // the owner has bumped the epoch and is inside the AuthGate write
+
+	other := gated(h, g)
+	want(t, other.Login("ada", pw), 200, "")
+	pk := h.NewPasskey()
+	start := other.StartPasskey()
+	want(t, start, 200, "")
+	before := g.writes.Load()
+
+	r := other.EnrollPIN(pin2)
+	want(t, r, 409, "enrollment_in_progress")
+	if ra, err := strconv.Atoi(r.Header.Get("Retry-After")); err != nil || ra < 1 {
+		t.Fatalf("Retry-After = %q", r.Header.Get("Retry-After"))
+	}
+	want(t, other.FinishPasskey(start.Str("registrationId"), pk.Attest(h, start)), 409, "enrollment_in_progress")
+	if g.writes.Load() != before {
+		t.Fatal("the refused session reached AuthGate")
+	}
+
+	g.let()
+	want(t, <-done, 200, "")
+	f, err := h.AuthGate.Factors(context.Background(), a.ID)
+	if err != nil || !f.PIN || len(f.WebAuthn) != 0 || !pinWorks(t, h, a, pin1) || pinWorks(t, h, a, pin2) {
+		t.Fatalf("factors = %+v (%v): more than the owner's PIN", f, err)
+	}
+	// The refused session was not ended; its next try finds the owner's factor.
+	want(t, other.EnrollPIN(pin2), 401, "unauthorized")
+}
+
+// Why: a holder that crashed, or was refused, must not lock the admin out of
+// enrolling for the whole lease: a lease nobody released is waited out, not ignored.
+func TestLeaseExpiresAfterACrash(t *testing.T) {
+	h := consoletest.New(t)
+	h.CreateAdmin("ada", pw, console.RoleAdmin, true)
+	b := h.NewBrowser()
+	want(t, b.Login("ada", pw), 200, "")
+	now := h.Clock.Now()
+	if _, err := h.Store().ClaimFirstFactorLease(context.Background(), "ada", "gone", now, now.Add(15*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	r := b.EnrollPIN(pin1)
+	want(t, r, 409, "enrollment_in_progress")
+	if ra, err := strconv.Atoi(r.Header.Get("Retry-After")); err != nil || ra < 1 || ra > 15 {
+		t.Fatalf("Retry-After = %q", r.Header.Get("Retry-After"))
+	}
+	h.Clock.Advance(16 * time.Second)
+	want(t, b.EnrollPIN(pin1), 200, "")
+}
+
+// Why: a claimer that waited out an expired, unreleased lease must read the factors
+// only after it holds the lease, so it sees what the earlier holder wrote.
+func TestLeaseExpiredClaimerSeesEarlierFactor(t *testing.T) {
+	h := consoletest.New(t)
+	a := h.CreateAdmin("ada", pw, console.RoleAdmin, true)
+	g := newGate(t, h.AuthGate.HTTP.Transport)
+	late := gated(h, g)
+	want(t, late.Login("ada", pw), 200, "")
+	now := h.Clock.Now()
+	if _, err := h.Store().ClaimFirstFactorLease(context.Background(), "ada", "slow", now, now.Add(15*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	withPIN(t, h, a, pin1) // the holder's write landed, then it never released
+	h.Clock.Advance(16 * time.Second)
+	want(t, late.EnrollPIN(pin2), 401, "unauthorized")
+	if g.writes.Load() != 0 || !pinWorks(t, h, a, pin1) || pinWorks(t, h, a, pin2) {
+		t.Fatal("the late session wrote, or the earlier factor was replaced")
+	}
+}
+
+// failFinish answers a passkey registration finish with 502, as a gateway would.
+type failFinish struct{ base http.RoundTripper }
+
+func (f failFinish) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/webauthn/registrations/") {
+		return &http.Response{StatusCode: 502, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	}
+	return f.base.RoundTrip(r)
+}
+
+// Why: when AuthGate refuses or fails the write, the lease must go with it, or the
+// admin's own retry is locked out for the lease's length.
+func TestFailedWriteReleasesLease(t *testing.T) {
+	h := consoletest.New(t)
+	h.CreateAdmin("ada", pw, console.RoleAdmin, true)
+	b := h.NewBrowser()
+	want(t, b.Login("ada", pw), 200, "")
+	want(t, b.EnrollPIN("12"), 400, "")
+	want(t, b.EnrollPIN(pin1), 200, "")
+
+	h2 := consoletest.New(t)
+	h2.CreateAdmin("bob", pw, console.RoleAdmin, true)
+	deps := h2.Deps
+	deps.AuthGate = &authgate.Client{BaseURL: h2.AuthGateURL, ClientKey: h2.ClientKey, AdminKey: consoletest.AdminKey,
+		HTTP: &http.Client{Transport: failFinish{base: h2.AuthGate.HTTP.Transport}}}
+	flaky := h2.BrowserFor(console.New(deps))
+	want(t, flaky.Login("bob", pw), 200, "")
+	pk := h2.NewPasskey()
+	start := flaky.StartPasskey()
+	want(t, start, 200, "")
+	want(t, flaky.FinishPasskey(start.Str("registrationId"), pk.Attest(h2, start)), 502, "authgate_unavailable")
+	// The same browser, on the Console that reaches AuthGate again: a fresh start and finish.
+	ok := h2.BrowserFor(console.New(h2.Deps))
+	ok.SetCookie(flaky.CookieValue())
+	want(t, ok.EnrollPasskey(pk), 200, "")
 }

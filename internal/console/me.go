@@ -1,13 +1,23 @@
 package console
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"math"
 	"net/http"
+	"time"
 
 	"github.com/huy090202/auth-gate/internal/console/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
+	"github.com/huy090202/auth-gate/internal/platform/id"
 )
+
+// firstFactorLeaseFor is how long a first-factor lease lasts. It must outlast the
+// 10 s HTTP timeout on the AuthGate client in cmd/console/main.go, so a write
+// that is still in flight can no longer land after its lease has expired.
+const firstFactorLeaseFor = 15 * time.Second
 
 // meRoutes serves /api/me/*. Every write checks the step-up token (a full
 // session needs one; an enrolling one passes factorsForWrite instead), runs its own
@@ -79,12 +89,49 @@ func (a *App) factorAdded(r *http.Request, x *Session, had authgate.Factors) err
 	return nil
 }
 
-// claimFirstFactor runs just before an enrolling session that has not proved a
-// factor writes one at AuthGate. It bumps the admin's sessionEpoch on the epoch
-// this session holds and reissues the session at the next one. Of several such
-// sessions only one gets through; every other is dead at once, and the loser
-// answers 401 without touching AuthGate, so a factor cannot land from a session
-// that read "no factor yet" before another session's factor did.
+// beginFirstFactor reads the account's factors for a factor write. A session that
+// enrolls without having proved a factor first takes the admin's first-factor
+// lease, and only then reads the factors, so after a lease expires the next
+// claimer sees whatever the earlier holder wrote. Of such sessions one holds the
+// lease at a time, whatever epoch it opened at; another gets 409
+// enrollment_in_progress without an AuthGate call and keeps its session. The
+// returned release must be called once the write is over, whatever its outcome.
+func (a *App) beginFirstFactor(w http.ResponseWriter, r *http.Request, x Session) (authgate.Factors, func(), error) {
+	if x.Stage != StageEnroll || x.FactorProved {
+		f, err := a.factorsForWrite(w, r, x)
+		return f, func() {}, err
+	}
+	holder := id.New() // not the session token, which must stay secret
+	now := a.now()
+	held, err := a.Store.ClaimFirstFactorLease(r.Context(), x.Username, holder, now, now.Add(firstFactorLeaseFor))
+	switch {
+	case errors.Is(err, ErrLeaseHeld):
+		wait := int(math.Ceil(held.Sub(now).Seconds()))
+		return authgate.Factors{}, nil, &apiError{Status: http.StatusConflict, Code: "enrollment_in_progress", RetryAfter: max(wait, 1)}
+	case errors.Is(err, ErrAdminNotFound):
+		return authgate.Factors{}, nil, errUnauthorized
+	case err != nil:
+		return authgate.Factors{}, nil, err
+	}
+	release := func() {
+		// The request may be cancelled; the lease should still go.
+		if err := a.Store.ReleaseFirstFactorLease(context.WithoutCancel(r.Context()), x.Username, holder); err != nil {
+			slog.Warn("console: release first-factor lease", "err", err)
+		}
+	}
+	f, err := a.factorsForWrite(w, r, x)
+	if err != nil {
+		release()
+		return f, nil, err
+	}
+	return f, release, nil
+}
+
+// claimFirstFactor runs, under the lease, just before an enrolling session that
+// has not proved a factor writes one at AuthGate. It bumps the admin's
+// sessionEpoch on the epoch this session holds and reissues the session at the
+// next one, which ends the sessions opened at the old epoch. The lease keeps out
+// the ones opened at the new epoch.
 func (a *App) claimFirstFactor(w http.ResponseWriter, r *http.Request, x *Session) error {
 	if x.Stage != StageEnroll || x.FactorProved {
 		return nil
@@ -185,10 +232,11 @@ func (a *App) setPIN(w http.ResponseWriter, r *http.Request) error {
 	if err := decodeBody(r, &in); err != nil {
 		return err
 	}
-	had, err := a.factorsForWrite(w, r, x)
+	had, release, err := a.beginFirstFactor(w, r, x)
 	if err != nil {
 		return err
 	}
+	defer release()
 	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
@@ -272,10 +320,11 @@ func (a *App) passkeyFinish(w http.ResponseWriter, r *http.Request) error {
 	if x.RegistrationID == "" || in.RegistrationID != x.RegistrationID {
 		return errChallengeGone
 	}
-	had, err := a.factorsForWrite(w, r, x)
+	had, release, err := a.beginFirstFactor(w, r, x)
 	if err != nil {
 		return err
 	}
+	defer release()
 	if err := a.claimFirstFactor(w, r, &x); err != nil {
 		return err
 	}

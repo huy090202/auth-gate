@@ -330,6 +330,47 @@ func (st *Store) BumpEpoch(ctx context.Context, username string, epoch int) erro
 	return nil
 }
 
+// ErrLeaseHeld means another session holds the first-factor lease.
+var ErrLeaseHeld = errors.New("console: first-factor lease held")
+
+// ClaimFirstFactorLease takes the admin's first-factor lease for holder until
+// until, if no lease is set or the one set has run out at now. The lease lives
+// on the Admin item as store-only attributes: no view or log reads them. A lost
+// claim returns ErrLeaseHeld and when the holder's lease ends.
+func (st *Store) ClaimFirstFactorLease(ctx context.Context, username, holder string, now, until time.Time) (time.Time, error) {
+	err := st.update(ctx, username, "SET firstFactorLeaseUntil = :until, firstFactorLeaseBy = :by",
+		exists+" AND (attribute_not_exists(firstFactorLeaseUntil) OR firstFactorLeaseUntil <= :now)", nil,
+		item{":until": n(until.UnixMilli()), ":by": s(holder), ":now": n(now.UnixMilli())})
+	if err == nil {
+		return time.Time{}, nil
+	}
+	if !dynamo.IsConditionFailed(err) {
+		return time.Time{}, fmt.Errorf("claim first-factor lease: %w", err)
+	}
+	// Lost: the admin is gone, or the lease is held. Read to tell which.
+	out, gerr := st.DB.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(st.Table), Key: adminKey(username), ConsistentRead: aws.Bool(true),
+	})
+	if gerr != nil {
+		return time.Time{}, fmt.Errorf("claim first-factor lease: %w", gerr)
+	}
+	if out.Item == nil {
+		return time.Time{}, ErrAdminNotFound
+	}
+	return time.UnixMilli(int64(getN(out.Item, "firstFactorLeaseUntil"))), ErrLeaseHeld
+}
+
+// ReleaseFirstFactorLease drops the lease if holder still holds it, so a holder
+// whose lease ran out cannot remove a newer one. Nothing to release is not an error.
+func (st *Store) ReleaseFirstFactorLease(ctx context.Context, username, holder string) error {
+	err := st.update(ctx, username, "REMOVE firstFactorLeaseUntil, firstFactorLeaseBy",
+		exists+" AND firstFactorLeaseBy = :by", nil, item{":by": s(holder)})
+	if err != nil && !dynamo.IsConditionFailed(err) {
+		return fmt.Errorf("release first-factor lease: %w", err)
+	}
+	return nil
+}
+
 // EndSessions ends every open session of the admin: each carries the old epoch.
 func (st *Store) EndSessions(ctx context.Context, username string) error {
 	return st.mapNotFound(st.update(ctx, username, "ADD sessionEpoch :one", exists, nil, item{":one": n(1)}), "end sessions")
