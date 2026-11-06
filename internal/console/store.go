@@ -78,6 +78,9 @@ const (
 type Store struct {
 	DB    *dynamodb.Client
 	Table string
+
+	// afterSurvivor, when set, runs between choosing the survivor and the write. Tests use it to interleave.
+	afterSurvivor func()
 }
 
 // tsLayout is RFC 3339 with a fixed nine fractional digits, so timestamps sort
@@ -325,15 +328,24 @@ func (st *Store) SetRole(ctx context.Context, actor *Admin, username string, r R
 // transactions touch each other's items. A transaction cancelled by a
 // TransactionConflict (the other one was in flight) is refused with ErrConflict,
 // never reported as success. With no actor (the operator CLI) it counts the
-// active masters first. removesMaster says the change may take a master away.
+// active master that will survive, and then runs the same transaction with it as the actor, so a
+// master removed between the check and the write makes the write fail. removesMaster says the change may take a master away.
 func (st *Store) guarded(ctx context.Context, actor *Admin, username, expr string, names map[string]string, vals item, removesMaster bool) error {
 	if actor == nil {
-		if removesMaster {
-			if err := st.keepOneMaster(ctx, username); err != nil {
-				return err
-			}
+		if !removesMaster {
+			return st.mapNotFound(st.update(ctx, username, expr, exists, names, vals), "update admin")
 		}
-		return st.mapNotFound(st.update(ctx, username, expr, exists, names, vals), "update admin")
+		survivor, err := st.survivor(ctx, username)
+		if err != nil {
+			return err
+		}
+		if survivor == nil { // the target is no active master: nothing to protect
+			return st.mapNotFound(st.update(ctx, username, expr, exists, names, vals), "update admin")
+		}
+		if st.afterSurvivor != nil {
+			st.afterSurvivor()
+		}
+		actor = survivor
 	}
 	if actor.Username == username {
 		return ErrConflict
@@ -388,27 +400,34 @@ func contains(l []string, v string) bool {
 	return false
 }
 
-// keepOneMaster refuses a change that would leave no active master.
-func (st *Store) keepOneMaster(ctx context.Context, username string) error {
+// survivor returns another active master than username, to act as the guard
+// when username is itself an active master. It returns nil when username is not
+// an active master, and ErrConflict when it is the last one.
+func (st *Store) survivor(ctx context.Context, username string) (*Admin, error) {
 	all, err := st.ListAdmins(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	others, targetMaster := 0, false
-	for _, a := range all {
+	var other *Admin
+	targetMaster := false
+	for i := range all {
+		a := all[i]
 		if a.Role != RoleMaster || a.DisabledAt != nil {
 			continue
 		}
 		if a.Username == username {
 			targetMaster = true
-		} else {
-			others++
+		} else if other == nil {
+			other = &a
 		}
 	}
-	if targetMaster && others == 0 {
-		return ErrConflict
+	if !targetMaster {
+		return nil, nil
 	}
-	return nil
+	if other == nil {
+		return nil, ErrConflict
+	}
+	return other, nil
 }
 
 // ---- sessions ----

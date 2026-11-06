@@ -182,10 +182,10 @@ func TestDisabledAdminEndsSessionAtOnce(t *testing.T) {
 	if err := g.st.SetDisabled(ctx, &master, "huy", &at); err != nil {
 		t.Fatal(err)
 	}
-	g.expect(t, "/full", tok, 401, "unauthorized")
 	if err := g.st.SetDisabled(ctx, &master, "huy", nil); err != nil {
 		t.Fatal(err)
 	}
+	// The first call comes after enabling, so only the epoch can refuse it.
 	g.expect(t, "/full", tok, 401, "unauthorized")
 }
 

@@ -166,3 +166,32 @@ func TestMutualDisableCannotRemoveBothMasters(t *testing.T) {
 		}
 	}
 }
+
+// Why: the CLI must not disable a master that a concurrent web action has just made the last one.
+func TestCLIDisableLosesRaceWithWebDisable(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	a, b := mkAdmin(t, st, "a", RoleMaster), mkAdmin(t, st, "b", RoleMaster)
+	at := time.Now()
+	// Between the CLI choosing its survivor and writing, A disables B on the web.
+	st.afterSurvivor = func() {
+		st.afterSurvivor = nil
+		if err := st.SetDisabled(ctx, &a, "b", &at); err != nil {
+			t.Errorf("web disable: %v", err)
+		}
+	}
+	if err := st.SetDisabled(ctx, nil, "a", &at); !errors.Is(err, ErrConflict) {
+		t.Fatalf("cli disable = %v, want ErrConflict", err)
+	}
+	if x, _ := st.GetAdmin(ctx, "a"); x.DisabledAt != nil {
+		t.Fatal("last active master was disabled")
+	}
+	// The last master is also refused plainly, for disable and demote.
+	if err := st.SetDisabled(ctx, nil, "a", &at); !errors.Is(err, ErrConflict) {
+		t.Fatalf("plain cli disable = %v", err)
+	}
+	if err := st.SetRole(ctx, nil, "a", RoleAdmin); !errors.Is(err, ErrConflict) {
+		t.Fatalf("plain cli demote = %v", err)
+	}
+	_ = b
+}
