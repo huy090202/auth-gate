@@ -23,6 +23,9 @@ var (
 	ErrUnauthorized = errors.New("client: unauthorized")
 	// ErrBadCursor is returned for a list cursor that does not decode to a client id.
 	ErrBadCursor = errors.New("client: bad cursor")
+	// ErrRotateConflict is returned when another rotate changed the client's keys
+	// between this rotate's read and its write. Nothing was changed; the caller may retry.
+	ErrRotateConflict = errors.New("client: rotate conflict")
 )
 
 const (
@@ -255,7 +258,13 @@ func (s *Service) RotateKey(ctx context.Context, clientID string) (string, error
 		}
 		retired[old] = expireAt.Truncate(time.Second)
 	}
-	if err := s.Store.SetKeys(ctx, c.ID, []string{hash}, retired); err != nil {
+	if err := s.Store.SetKeys(ctx, c.ID, c.KeyHashes, []string{hash}, retired); err != nil {
+		if errors.Is(err, ErrRotateConflict) || errors.Is(err, ErrNotFound) {
+			// The new key item must not outlive the failed rotate: nothing records it.
+			if derr := s.Store.DeleteKey(ctx, hash); derr != nil {
+				return "", derr
+			}
+		}
 		return "", err
 	}
 	return raw, nil
@@ -271,16 +280,19 @@ func (s *Service) RevokePreviousKeys(ctx context.Context, clientID string) (int,
 	}
 	now := s.now()
 	revoked := 0
+	hashes := make([]string, 0, len(c.RetiredKeys))
 	for h, exp := range c.RetiredKeys {
 		if err := s.Store.DeleteKey(ctx, h); err != nil {
 			return 0, err
 		}
+		hashes = append(hashes, h)
 		if exp.After(now) {
 			revoked++
 		}
 	}
-	if len(c.RetiredKeys) > 0 {
-		if err := s.Store.ClearRetiredKeys(ctx, c.ID); err != nil {
+	// Remove only the entries read above: a rotate that ran meanwhile added others.
+	if len(hashes) > 0 {
+		if err := s.Store.ClearRetiredKeys(ctx, c.ID, hashes); err != nil {
 			return 0, err
 		}
 	}

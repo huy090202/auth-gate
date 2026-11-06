@@ -283,3 +283,113 @@ func TestRotateDropsExpiredRetiredKeys(t *testing.T) {
 		t.Fatal("expired k1 is still recorded")
 	}
 }
+
+// seamStore runs afterGet once, right after the next GetClient has read, so a
+// test can interleave a second operation between a first one's read and write.
+type seamStore struct {
+	client.Store
+	afterGet func()
+}
+
+func (s *seamStore) GetClient(ctx context.Context, id string) (client.Client, error) {
+	c, err := s.Store.GetClient(ctx, id)
+	if f := s.afterGet; f != nil && err == nil {
+		s.afterGet = nil
+		f()
+	}
+	return c, err
+}
+
+func TestConcurrentRotateLoserGetsConflict(t *testing.T) {
+	c, table := dynamotest.NewTable(t)
+	ctx := context.Background()
+	seam := &seamStore{Store: client.NewDynamoStore(c, table)}
+	svc := &client.Service{Store: seam}
+	cl, _ := mustCreate(t, svc)
+	var winner string
+	seam.afterGet = func() {
+		var err error
+		if winner, err = svc.RotateKey(ctx, cl.ID); err != nil {
+			t.Error(err)
+		}
+	}
+	loser, err := svc.RotateKey(ctx, cl.ID)
+	if !errors.Is(err, client.ErrRotateConflict) || loser != "" {
+		t.Fatalf("loser got key %q, err %v; want ErrRotateConflict", loser, err)
+	}
+	if _, err := svc.Authenticate(ctx, winner); err != nil {
+		t.Fatalf("winner's key: %v", err)
+	}
+	// Only the first key, the winner's and nothing else are key items: the loser's was deleted.
+	out, err := c.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String(table), FilterExpression: aws.String("begins_with(pk, :p)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":p": &types.AttributeValueMemberS{Value: "K#"}}})
+	if err != nil || out.Count != 2 {
+		t.Fatalf("key items: %v %v, want 2 (first and winner's)", out.Count, err)
+	}
+}
+
+func TestRevokeKeepsEntriesItNeverRead(t *testing.T) {
+	c, table := dynamotest.NewTable(t)
+	ctx := context.Background()
+	seam := &seamStore{Store: client.NewDynamoStore(c, table)}
+	svc := &client.Service{Store: seam}
+	cl, _ := mustCreate(t, svc)
+	if _, err := svc.RotateKey(ctx, cl.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The key the interleaved rotate will retire is the current one now.
+	got, err := svc.Get(ctx, cl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur := got.KeyHashes[0]
+	// Revoke reads retired={k0}; a rotate then adds cur before revoke writes.
+	seam.afterGet = func() {
+		if _, err := svc.RotateKey(ctx, cl.ID); err != nil {
+			t.Error(err)
+		}
+	}
+	if n, err := svc.RevokePreviousKeys(ctx, cl.ID); err != nil || n != 1 {
+		t.Fatalf("first revoke: %d %v", n, err)
+	}
+	m, _ := rawItem(t, c, table, "C#"+cl.ID)["retiredKeys"].(*types.AttributeValueMemberM)
+	if m == nil {
+		t.Fatal("retiredKeys gone: the entry revoke never read was erased")
+	}
+	if _, ok := m.Value[cur]; !ok || len(m.Value) != 1 {
+		t.Fatalf("retiredKeys %v, want only %s", m.Value, cur)
+	}
+	if n, err := svc.RevokePreviousKeys(ctx, cl.ID); err != nil || n != 1 {
+		t.Fatalf("second revoke: %d %v, want 1", n, err)
+	}
+	if _, _, err := seam.GetKey(ctx, cur); !errors.Is(err, client.ErrNotFound) {
+		t.Fatalf("the interleaved key item still exists: %v", err)
+	}
+}
+
+func TestDisableKeepsIndexName(t *testing.T) {
+	svc, db, table := newSvc(t)
+	cl, _ := mustCreate(t, svc)
+	ctx := context.Background()
+	idx := dynamo.Key("CLIENTS", "C#"+cl.ID)
+	if _, err := db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(table), Key: idx,
+		UpdateExpression:          aws.String("SET #n = :v"),
+		ExpressionAttributeNames:  map[string]string{"#n": "name"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":v": &types.AttributeValueMemberS{Value: "renamed meanwhile"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, act := range []func(context.Context, string) (client.Client, error){svc.Disable, svc.Enable} {
+		if _, err := act(ctx, cl.ID); err != nil {
+			t.Fatal(err)
+		}
+		out, err := db.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(table), Key: idx, ConsistentRead: aws.Bool(true)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v, _ := out.Item["name"].(*types.AttributeValueMemberS); v == nil || v.Value != "renamed meanwhile" {
+			t.Fatalf("index name %v, want it kept", out.Item["name"])
+		}
+	}
+}

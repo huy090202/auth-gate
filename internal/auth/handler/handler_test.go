@@ -522,3 +522,49 @@ func TestRevokeUnknownClient(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
+
+func TestMalformedDisabledAtDeniesKey(t *testing.T) {
+	e := newEnv(t)
+	c, key := e.newClient(t, fast())
+	for _, v := range []types.AttributeValue{
+		&types.AttributeValueMemberS{Value: "not a time"},
+		&types.AttributeValueMemberN{Value: "1"},
+	} {
+		if _, err := e.db.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+			TableName: aws.String(e.table), Key: dynamo.Key("C#"+c.ID, "META"),
+			UpdateExpression:          aws.String("SET disabledAt = :v"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{":v": v},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if w := e.call(key); w.Code != http.StatusUnauthorized {
+			t.Fatalf("disabledAt %v: key answered %d, want 401", v, w.Code)
+		}
+	}
+}
+
+type afterGetStore struct {
+	client.Store
+	f func()
+}
+
+func (s *afterGetStore) GetClient(ctx context.Context, id string) (client.Client, error) {
+	c, err := s.Store.GetClient(ctx, id)
+	if f := s.f; f != nil && err == nil {
+		s.f = nil
+		f()
+	}
+	return c, err
+}
+
+func TestRotateConflictAnswers409(t *testing.T) {
+	e := newEnv(t)
+	seam := &afterGetStore{Store: e.clients.Store}
+	e.clients.Store = seam
+	c, _ := e.newClient(t, fast())
+	seam.f = func() { e.rotate(t, c.ID) }
+	w := e.admin_(http.MethodPost, "/api/clients/"+c.ID+"/keys", "")
+	if w.Code != http.StatusConflict || w.Body.String() != "{\"error\":\"rotate_conflict\"}\n" {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}

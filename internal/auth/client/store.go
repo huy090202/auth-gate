@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -30,10 +31,13 @@ type Store interface {
 	UpdateClient(ctx context.Context, c Client, p Patch) error
 	// SetDisabled sets disabledAt to at (keeping an earlier value), or clears it when at is nil.
 	SetDisabled(ctx context.Context, c Client, at *time.Time) error
-	// SetKeys replaces keyHashes and retiredKeys and nothing else; a missing client is ErrNotFound.
-	SetKeys(ctx context.Context, id string, hashes []string, retired map[string]time.Time) error
-	// ClearRetiredKeys removes retiredKeys; a missing client is ErrNotFound.
-	ClearRetiredKeys(ctx context.Context, id string) error
+	// SetKeys replaces keyHashes and retiredKeys and nothing else, but only while
+	// keyHashes still equals expected. A missing client is ErrNotFound; a changed
+	// keyHashes is ErrRotateConflict.
+	SetKeys(ctx context.Context, id string, expected, hashes []string, retired map[string]time.Time) error
+	// ClearRetiredKeys removes the retiredKeys entries for the given hashes and
+	// nothing else; a missing client is ErrNotFound.
+	ClearRetiredKeys(ctx context.Context, id string, hashes []string) error
 	// PutKey stores a key item; a nil expiresAt means the key is active.
 	PutKey(ctx context.Context, hash, clientID string, expiresAt *time.Time) error
 	GetKey(ctx context.Context, hash string) (clientID string, expiresAt *time.Time, err error)
@@ -140,6 +144,11 @@ func (s *dynamoStore) GetClient(ctx context.Context, id string) (Client, error) 
 	if err != nil {
 		return Client{}, fmt.Errorf("client %s: bad createdAt: %w", id, err)
 	}
+	// A disabledAt that is present but unreadable must not mean "enabled".
+	disabled, err := disabledOf(it)
+	if err != nil {
+		return Client{}, fmt.Errorf("client %s: %w", id, err)
+	}
 	return Client{
 		ID:      id,
 		Name:    getS(it, "name"),
@@ -155,7 +164,7 @@ func (s *dynamoStore) GetClient(ctx context.Context, id string) (Client, error) 
 		CreatedAt:   created,
 		KeyHashes:   getSS(it, "keyHashes"),
 		RetiredKeys: retiredOf(it),
-		DisabledAt:  getT(it, "disabledAt"),
+		DisabledAt:  disabled,
 	}, nil
 }
 
@@ -245,11 +254,11 @@ func (s *dynamoStore) txError(err error, what string) error {
 }
 
 func (s *dynamoStore) SetDisabled(ctx context.Context, c Client, at *time.Time) error {
-	clientExpr, idxExpr := "REMOVE disabledAt", "SET #name = :n, rpId = if_not_exists(rpId, :r), createdAt = if_not_exists(createdAt, :c) REMOVE disabledAt"
+	clientExpr, idxExpr := "REMOVE disabledAt", "SET #name = if_not_exists(#name, :n), rpId = if_not_exists(rpId, :r), createdAt = if_not_exists(createdAt, :c) REMOVE disabledAt"
 	vals := map[string]types.AttributeValue{}
 	if at != nil {
 		clientExpr = "SET disabledAt = if_not_exists(disabledAt, :now)"
-		idxExpr = "SET #name = :n, rpId = if_not_exists(rpId, :r), createdAt = if_not_exists(createdAt, :c), disabledAt = if_not_exists(disabledAt, :now)"
+		idxExpr = "SET #name = if_not_exists(#name, :n), rpId = if_not_exists(rpId, :r), createdAt = if_not_exists(createdAt, :c), disabledAt = if_not_exists(disabledAt, :now)"
 		vals[":now"] = ts(*at)
 	}
 	upd := &types.Update{
@@ -263,19 +272,48 @@ func (s *dynamoStore) SetDisabled(ctx context.Context, c Client, at *time.Time) 
 	return s.txError(err, "set disabled")
 }
 
-func (s *dynamoStore) SetKeys(ctx context.Context, id string, hashes []string, retired map[string]time.Time) error {
+func (s *dynamoStore) SetKeys(ctx context.Context, id string, expected, hashes []string, retired map[string]time.Time) error {
 	r := make(map[string]types.AttributeValue, len(retired))
 	for h, exp := range retired {
 		r[h] = &types.AttributeValueMemberN{Value: strconv.FormatInt(exp.Unix(), 10)}
 	}
-	return s.update(ctx, id, "SET keyHashes = :h, retiredKeys = :r", nil, map[string]types.AttributeValue{
+	vals := map[string]types.AttributeValue{
 		":h": &types.AttributeValueMemberSS{Value: hashes},
 		":r": &types.AttributeValueMemberM{Value: r},
-	}, "set keys")
+	}
+	cond := "attribute_exists(pk) AND attribute_not_exists(keyHashes)"
+	if len(expected) > 0 {
+		cond = "attribute_exists(pk) AND keyHashes = :old"
+		vals[":old"] = &types.AttributeValueMemberSS{Value: expected}
+	}
+	_, err := s.c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: clientKey(id),
+		UpdateExpression:          aws.String("SET keyHashes = :h, retiredKeys = :r"),
+		ConditionExpression:       aws.String(cond),
+		ExpressionAttributeValues: vals,
+	})
+	if dynamo.IsConditionFailed(err) {
+		// Either the client is gone or its keys changed; look to tell which.
+		if _, gerr := s.GetClient(ctx, id); gerr != nil {
+			return gerr
+		}
+		return ErrRotateConflict
+	}
+	if err != nil {
+		return fmt.Errorf("set keys: %w", err)
+	}
+	return nil
 }
 
-func (s *dynamoStore) ClearRetiredKeys(ctx context.Context, id string) error {
-	return s.update(ctx, id, "REMOVE retiredKeys", nil, nil, "clear retired keys")
+func (s *dynamoStore) ClearRetiredKeys(ctx context.Context, id string, hashes []string) error {
+	names := make(map[string]string, len(hashes))
+	paths := make([]string, 0, len(hashes))
+	for i, h := range hashes {
+		ph := "#h" + strconv.Itoa(i)
+		names[ph] = h
+		paths = append(paths, "retiredKeys."+ph)
+	}
+	return s.update(ctx, id, "REMOVE "+strings.Join(paths, ", "), names, nil, "clear retired keys")
 }
 
 // update runs a conditional UpdateItem on a client item.
@@ -370,6 +408,24 @@ func retiredOf(it map[string]types.AttributeValue) map[string]time.Time {
 	return out
 }
 
+// disabledOf reads disabledAt: absent is nil, present but not an RFC 3339 string is an error.
+func disabledOf(it map[string]types.AttributeValue) (*time.Time, error) {
+	v, ok := it["disabledAt"]
+	if !ok {
+		return nil, nil
+	}
+	sv, ok := v.(*types.AttributeValueMemberS)
+	if !ok {
+		return nil, errors.New("bad disabledAt: not a string")
+	}
+	t, err := time.Parse(time.RFC3339, sv.Value)
+	if err != nil {
+		return nil, fmt.Errorf("bad disabledAt: %w", err)
+	}
+	return &t, nil
+}
+
+// getT is lenient: it is for the list view, where one bad item should not hide the rest.
 func getT(it map[string]types.AttributeValue, k string) *time.Time {
 	if t, err := time.Parse(time.RFC3339, getS(it, k)); err == nil {
 		return &t
