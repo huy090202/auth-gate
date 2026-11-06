@@ -37,6 +37,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusBadRequest, "wrong_factor", nil)
 	case errors.Is(err, client.ErrInvalid):
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_client", nil)
+	case errors.Is(err, client.ErrBadCursor):
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_cursor", nil)
 	case errors.Is(err, client.ErrNotFound):
 		httpx.WriteError(w, http.StatusNotFound, "client_not_found", nil)
 	case errors.Is(err, service.ErrFactorNotFound):

@@ -226,3 +226,60 @@ func TestRotateKeepsRateLimit(t *testing.T) {
 		t.Fatalf("keyHashes %v, want only the new hash", out.Item["keyHashes"])
 	}
 }
+
+func rawItem(t *testing.T, db *dynamodb.Client, table, pk string) map[string]types.AttributeValue {
+	t.Helper()
+	out, err := db.GetItem(context.Background(), &dynamodb.GetItemInput{TableName: aws.String(table), Key: dynamo.Key(pk, "META"), ConsistentRead: aws.Bool(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out.Item
+}
+
+func TestCreateWritesIndexInOneTransaction(t *testing.T) {
+	svc, db, table := newSvc(t)
+	cl, _ := mustCreate(t, svc)
+	out, err := db.GetItem(context.Background(), &dynamodb.GetItemInput{TableName: aws.String(table), Key: dynamo.Key("CLIENTS", "C#"+cl.ID), ConsistentRead: aws.Bool(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := func(k string) string {
+		v, _ := out.Item[k].(*types.AttributeValueMemberS)
+		if v == nil {
+			return ""
+		}
+		return v.Value
+	}
+	if s("name") != "shop" || s("rpId") != "example.com" || s("createdAt") != cl.CreatedAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("index item %v", out.Item)
+	}
+}
+
+func TestRotateDropsExpiredRetiredKeys(t *testing.T) {
+	c, table := dynamotest.NewTable(t)
+	ctx := context.Background()
+	now := time.Now()
+	svc := &client.Service{Store: client.NewDynamoStore(c, table), Now: func() time.Time { return now }}
+	cl, k1, err := svc.Create(ctx, client.CreateInput{Name: "shop", RPID: "example.com", Origins: []string{"https://app.example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k2, err := svc.RotateKey(ctx, cl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(25 * time.Hour) // k1's grace is over
+	if _, err := svc.RotateKey(ctx, cl.ID); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := rawItem(t, c, table, "C#"+cl.ID)["retiredKeys"].(*types.AttributeValueMemberM)
+	if m == nil || len(m.Value) != 1 {
+		t.Fatalf("retiredKeys %v, want only k2", m)
+	}
+	if _, ok := m.Value[client.HashKey(k2)]; !ok {
+		t.Fatalf("retiredKeys %v lacks k2", m.Value)
+	}
+	if _, ok := m.Value[client.HashKey(k1)]; ok {
+		t.Fatal("expired k1 is still recorded")
+	}
+}
