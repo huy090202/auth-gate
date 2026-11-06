@@ -97,19 +97,27 @@ keyed by clientId. Admin and JWKS routes are not limited.
 
 - Item `RL#<clientId>` / `META`: `tokens`, `updatedAt`. Lambda instances share nothing, so the
   bucket has to live in the table.
-- Each request reads the item, refills `min(burst, tokens + elapsed * perSecond)`, and writes
-  `tokens - 1` with the condition `updatedAt = <the value read>`.
-- Lost the condition: retry up to twice with jitter, then `429`. Fewer than one token: `429`.
+- `updatedAt` marks the start of the refill window nobody has claimed yet. Each request reads the
+  item and computes `have = min(burst, tokens + elapsed * perSecond)`. Fewer than one token: `429`,
+  with no write.
+- The first writer on an unclaimed window claims it, even when it earns nothing: with
+  `refill = have - tokens`, it writes `tokens + (refill - 1)` and `updatedAt = max(now, read + 1)`
+  with the condition `updatedAt = <the value read> AND tokens >= 1 - refill`.
+- A writer that lost the claim, or found no window to claim, spends with `tokens - 1` and the
+  condition `tokens >= 1`. Lost that too: `429`. There is no retry loop.
+- Product owner's decision, 2026-11-06: this replaces the earlier condition and retry rule. On a
+  full bucket of 100, 100 simultaneous calls allowed only 11 to 22 under them, so callers got `429`
+  while tokens remained.
 - `429 {"error": "rate_limited"}` with `Retry-After` in whole seconds.
 - A DynamoDB error on the limiter logs and lets the request continue. The request needs the same
   table anyway, so failing here adds no protection.
 - Settings on the client: `rateLimit {burst, perSecond}`, default burst 100 and 50 per second,
   changed through `PATCH /api/clients/{id}`. `perSecond: 0` is rejected; there is no unlimited mode.
 
-Cost: one extra read and write per request, billed by use, so no fixed monthly charge. Known limit: one item takes conditional writes in series,
-so this suits tens to low hundreds of requests per second per client. The build measures the
-default against DynamoDB Local with concurrent callers; shards are the next step if a client
-outgrows it.
+Cost: one extra read and at most two writes per allowed request, billed by use, so no fixed monthly
+charge. A failed conditional write still consumes write capacity. Known limit: one item still has
+DynamoDB's per-item write limit. The build measures the default against DynamoDB Local with
+concurrent callers; shards are the next step if a client outgrows it.
 
 **Console, per IP.** The same bucket on `/api/auth/*`, in the Console table, burst 10 and 1 per 6
 seconds. The IP comes from `CloudFront-Viewer-Address` through an origin request policy, because
@@ -265,4 +273,6 @@ Proposed in this draft and accepted by the product owner on 2026-11-06.
 2. Two roles, with `admin` managing clients and only `master` managing accounts.
 3. Rate limit defaults: AuthGate burst 100 and 50 per second per client; Console login burst 10 and
    1 per 6 seconds per IP.
-4. On repeated write conflicts the limiter answers `429` rather than letting the request through.
+4. A caller that loses its conditional writes because no token is left gets `429` rather than being
+   let through. Amended by the product owner on 2026-11-06 with §5's atomic spend: there are no
+   repeated attempts.
