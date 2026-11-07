@@ -66,6 +66,11 @@ var (
 	// longer an active master, targeted itself, would remove the last active
 	// master, or lost a race with another transaction.
 	ErrConflict = errors.New("console: conflict")
+	// ErrBusy is a transaction cancelled by TransactionConflict: another write was
+	// in flight on the same items and no guard was judged. It wraps ErrConflict so
+	// callers that only refuse stay correct; a caller that can answer truthfully
+	// checks it first, because a retry may well succeed.
+	ErrBusy = fmt.Errorf("%w: another write was in flight, retry", ErrConflict)
 )
 
 const (
@@ -466,7 +471,7 @@ func (st *Store) guarded(ctx context.Context, actor *Admin, username, expr strin
 		case len(codes) == 2 && codes[1] == "ConditionalCheckFailed":
 			return ErrAdminNotFound
 		case contains(codes, "TransactionConflict"):
-			return ErrConflict
+			return ErrBusy
 		}
 	}
 	return fmt.Errorf("update admin: %w", err)

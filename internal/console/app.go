@@ -29,6 +29,10 @@ type App struct {
 
 	// verifyPassword is VerifyPassword; a field so a test can count the calls.
 	verifyPassword func(password, stored string) bool
+
+	// beforeAdminWrite, when set, runs after an /admins action spent its token and
+	// before it writes. Tests use it to interleave.
+	beforeAdminWrite func()
 }
 
 // authLimit is the per-IP bucket on /api/auth/*: 10 at once, then one per 6 seconds.
@@ -47,11 +51,7 @@ func (a *App) handler() http.Handler {
 	a.meRoutes(mux)
 	a.stepUpRoutes(mux)
 	a.clientRoutes(mux)
-	// Admin routes arrive with their own task; until then a session at the wrong
-	// stage is still answered the way the real ones will.
-	for _, p := range []string{"/api/admins", "/api/admins/"} {
-		mux.Handle(p, a.session(StageFull)(http.HandlerFunc(notFound)))
-	}
+	a.adminRoutes(mux)
 	mux.HandleFunc("/api/", notFound)
 	return noStore(requireJSON(mux))
 }

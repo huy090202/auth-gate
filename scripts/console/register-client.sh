@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Register the Console as a client of auth-gate: POST /api/clients with the admin key.
+#   local: rpId localhost, origin http://localhost:5173; writes .env.console
+#          (AUTHGATE_CLIENT_ID, CLIENT_KEY, ADMIN_KEY).
+#   stg:   rpId and origin from the stack's BaseUrl; writes the key to SSM
+#          (SecureString) and prints the client id for deploy.
+# The admin key is read from SSM (stg) or is dev-admin (local). The client key is
+# shown once by auth-gate, so this refuses to overwrite a key that is already stored.
+set -euo pipefail
+target="${1:-}"
+case "$target" in
+  local) STAGE=local ;;
+  stg) STAGE=stg ;;
+  *) echo "usage: $0 stg|local" >&2; exit 2 ;;
+esac
+export STAGE
+# shellcheck source=lib.sh
+# shellcheck source-path=SCRIPTDIR
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+command -v jq >/dev/null || die "jq is required"
+env_file="$ROOT/.env.console"
+name="auth-gate-console-$STAGE"
+
+if [[ "$target" == local ]]; then
+  base="${AUTHGATE_BASE_URL:-http://localhost:8080}"
+  admin_key="dev-admin"
+  if [[ -f "$env_file" ]] && grep -Eq '^CLIENT_KEY=.+' "$env_file"; then
+    die "$env_file already has CLIENT_KEY; remove it first to register again"
+  fi
+  rp_id="localhost"
+  origin="http://localhost:5173"
+else
+  aws sts get-caller-identity --region "$REGION" >/dev/null || die "no AWS credentials for profile $AWS_PROFILE"
+  # Only ParameterNotFound means absent; any other error stops before registering.
+  if err="$(aws ssm get-parameter --region "$REGION" --name "$PARAM_PREFIX/authgate-client-key" 2>&1 >/dev/null)"; then
+    die "$PARAM_PREFIX/authgate-client-key already exists; delete it first to register again"
+  elif [[ "$err" != *ParameterNotFound* ]]; then
+    die "cannot read $PARAM_PREFIX/authgate-client-key: $err"
+  fi
+  base="$(output "$AUTHGATE_STACK" BaseUrl)"
+  [[ -n "$base" ]] || die "stack $AUTHGATE_STACK has no BaseUrl output"
+  admin_key="$(aws ssm get-parameter --region "$REGION" --name "/credo/auth-gate/$STAGE/admin-key" \
+    --with-decryption --query Parameter.Value --output text)"
+  [[ -n "$admin_key" ]] || die "/credo/auth-gate/$STAGE/admin-key is empty"
+  origin="$(output "$STACK" BaseUrl)"
+  [[ -n "$origin" ]] || die "stack $STACK has no BaseUrl output; deploy it first"
+  origin="${origin%/}"
+  rp_id="${origin#*://}"
+  rp_id="${rp_id%%[/:]*}"
+fi
+base="${base%/}"
+
+# Secrets go through 0600 temp files, never argv.
+tmpdir="$(mktemp -d)"
+chmod 700 "$tmpdir"
+trap 'rm -rf "$tmpdir"' EXIT
+printf 'x-internal-access-key: %s\n' "$admin_key" >"$tmpdir/headers"
+jq -n --arg name "$name" --arg rp "$rp_id" --arg origin "$origin" \
+  '{name: $name, rpId: $rp, origins: [$origin]}' >"$tmpdir/body"
+status="$(curl -sS -o "$tmpdir/resp" -w '%{http_code}' -X POST "$base/api/clients" \
+  -H @"$tmpdir/headers" -H 'content-type: application/json' \
+  --data-binary @"$tmpdir/body")" || die "POST $base/api/clients: network error"
+if [[ "$status" != 201 ]]; then
+  # Status and error code only: the body is not echoed.
+  die "POST $base/api/clients -> $status $(jq -r '.error // empty' "$tmpdir/resp" 2>/dev/null || true)"
+fi
+client_id="$(jq -r '.clientId // empty' "$tmpdir/resp")"
+access_key="$(jq -r '.accessKey // empty' "$tmpdir/resp")"
+[[ -n "$client_id" && -n "$access_key" ]] || die "unexpected response from auth-gate"
+
+if [[ "$target" == local ]]; then
+  touch "$env_file"
+  tmp="$(mktemp)"
+  chmod 600 "$tmp"
+  grep -Ev '^(AUTHGATE_CLIENT_ID|CLIENT_KEY|ADMIN_KEY)=' "$env_file" >"$tmp" || true
+  {
+    echo "AUTHGATE_CLIENT_ID=$client_id"
+    echo "CLIENT_KEY=$access_key"
+    echo "ADMIN_KEY=$admin_key"
+  } >>"$tmp"
+  mv "$tmp" "$env_file"
+  chmod 600 "$env_file"
+  echo "registered $name ($client_id); wrote $env_file"
+else
+  jq -n --arg n "$PARAM_PREFIX/authgate-client-key" --arg v "$access_key" \
+    '{Name: $n, Type: "SecureString", Value: $v}' >"$tmpdir/param"
+  if ! aws ssm put-parameter --region "$REGION" --cli-input-json "file://$tmpdir/param" >/dev/null; then
+    {
+      echo "error: registered client $client_id but could not write $PARAM_PREFIX/authgate-client-key."
+      echo "The client key is not recoverable from auth-gate. Rotate it with"
+      echo "  POST $base/api/clients/$client_id/keys (admin key header)"
+      echo "and store the returned accessKey in $PARAM_PREFIX/authgate-client-key (SecureString)."
+    } >&2
+    exit 1
+  fi
+  echo "registered $name; wrote $PARAM_PREFIX/authgate-client-key (SecureString)"
+  echo "AUTHGATE_CLIENT_ID=$client_id   # pass this to the console deploy"
+fi

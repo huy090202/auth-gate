@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -23,6 +25,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "admin" {
+		if err := runAdmin(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	cfg, err := console.LoadConfig(os.Getenv)
 	if err != nil {
 		log.Fatal(err)
@@ -86,4 +95,56 @@ func mustSecret(ctx context.Context, awsCfg aws.Config, name string) string {
 		log.Fatalf("ssm parameter %s is empty", name)
 	}
 	return v
+}
+
+// runAdmin runs an operator command with the caller's AWS profile. It needs the
+// table, and for clear-factors AuthGate's address, the Console's client id and
+// the admin key (ADMIN_KEY with CONSOLE_DEV=1, otherwise the SSM parameter
+// ADMIN_KEY_PARAM). The key is read only by clear-factors.
+func runAdmin(args []string) error {
+	ctx := context.Background()
+	table := os.Getenv("TABLE_NAME")
+	if table == "" {
+		return errors.New("TABLE_NAME is required")
+	}
+	endpoint, dev := os.Getenv("DYNAMO_ENDPOINT"), os.Getenv("CONSOLE_DEV") == "1"
+	db, err := dynamo.New(ctx, endpoint)
+	if err != nil {
+		return err
+	}
+	if dev && endpoint != "" {
+		if err := dynamo.EnsureTable(ctx, db, table); err != nil {
+			return err
+		}
+	}
+	d := console.CLIDeps{
+		Store:           &console.Store{DB: db, Table: table},
+		ConsoleClientID: os.Getenv("AUTHGATE_CLIENT_ID"),
+		Now:             time.Now,
+		AuthGate: func(ctx context.Context) (*authgate.Client, error) {
+			base := os.Getenv("AUTHGATE_BASE_URL")
+			if base == "" || os.Getenv("AUTHGATE_CLIENT_ID") == "" {
+				return nil, errors.New("AUTHGATE_BASE_URL and AUTHGATE_CLIENT_ID are required")
+			}
+			key := os.Getenv("ADMIN_KEY")
+			if !dev {
+				param := os.Getenv("ADMIN_KEY_PARAM")
+				if param == "" {
+					return nil, errors.New("ADMIN_KEY_PARAM is required")
+				}
+				awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(os.Getenv("AWS_REGION")))
+				if err != nil {
+					return nil, fmt.Errorf("load aws config: %w", err)
+				}
+				if key, err = ssmx.GetSecureString(ctx, awsCfg, param); err != nil {
+					return nil, err
+				}
+			}
+			if key == "" {
+				return nil, errors.New("the admin key is empty")
+			}
+			return &authgate.Client{BaseURL: base, AdminKey: key, HTTP: &http.Client{Timeout: 10 * time.Second}}, nil
+		},
+	}
+	return console.RunAdmin(ctx, args, os.Stdin, os.Stdout, d)
 }
