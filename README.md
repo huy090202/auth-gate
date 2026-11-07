@@ -168,18 +168,24 @@ confirmation.
 `auth-gate-boundary` is a ceiling on what any `auth-gate-*` role can do, whatever is attached
 to it. The deployer can create or change such a role only if the role carries that boundary,
 so a right added to a Lambda role must also go into `infra/role-boundary.json`, followed by
-`00-deployer.sh`, or the function is denied it at run time.
+`00-deployer.sh`, or the function is denied it at run time. If the boundary turns out too small,
+edit that JSON and rerun `00-deployer.sh`: the new default version applies without CloudFormation.
 
-Order matters when the boundary first reaches a stage whose stack already exists. The new
-deployer policy cannot change AuthGate's existing roles until the template has set the boundary
-on them, so run, in this order: `00-deployer.sh`; then `02-build.sh` and `03-deploy.sh` for
-AuthGate, from a tree whose template has the boundary; then `scripts/console/deploy.sh`.
+When the boundary first reaches a stage whose stack already exists, one AuthGate deploy runs
+under an admin profile. The deployer may change only roles that already carry the boundary, and
+AuthGate's do not yet. If CloudFormation calls `PutRolePolicy` or `AttachRolePolicy` before it
+sets the boundary, the deployer is refused; and if that update fails after any role has the
+boundary, rollback must remove it, which the deployer may not do. So run, in this order:
 
-If that first AuthGate deploy fails, rollback tries to remove the boundary, which the deployer
-may not do, and the stack stops at `UPDATE_ROLLBACK_FAILED`. Finish it with an admin profile:
-`aws cloudformation continue-update-rollback --profile <admin> --stack-name auth-gate-<stage>`,
-then deploy again. Tearing down a stack whose roles never got the boundary needs an admin
-profile too.
+1. `00-deployer.sh`, then wait one minute: IAM changes take a moment to apply everywhere.
+2. `02-build.sh`, then `AWS_PROFILE=<admin> scripts/setup-and-deploy/03-deploy.sh`, from a tree
+   whose template has the boundary.
+3. `scripts/console/deploy.sh`, under the deployer. So is every later deploy.
+
+If a deployer-run update stops at `UPDATE_ROLLBACK_FAILED` because it could not remove a
+boundary, finish it with an admin profile, then deploy again:
+`aws cloudformation continue-update-rollback --profile <admin> --region <region> --stack-name auth-gate-<stage>`.
+Tearing down a stack whose roles never got the boundary needs an admin profile too.
 
 ## Repository layout
 
