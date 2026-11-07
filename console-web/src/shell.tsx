@@ -2,7 +2,7 @@ import { Anchor, Menu } from '@mantine/core';
 import { useState, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router';
 import { Brand } from './brand';
-import { AccountIcon, AdminsIcon, AuditIcon, ClientsIcon, ChevronIcon, SignOutIcon } from './icons';
+import { AccountIcon, AdminsIcon, AuditIcon, ClientsIcon, PanelLeftIcon, SignOutIcon } from './icons';
 import { api } from './lib/api';
 import { fmt, useStrings } from './lib/i18n';
 import { useMe, type Me } from './session';
@@ -65,7 +65,7 @@ export function Shell({ me, children, collapsed: initial }: { me: Me; children: 
           <button type="button" className="sidebar-collapse" onClick={toggle} aria-expanded={!collapsed}
             aria-label={collapsed ? t.common.expandSidebar : t.common.collapseSidebar}
             title={collapsed ? t.common.expandSidebar : t.common.collapseSidebar}>
-            <ChevronIcon dir={collapsed ? 'right' : 'left'} />
+            <PanelLeftIcon />
             <span className="nav-label">{t.common.collapse}</span>
           </button>
         </div>

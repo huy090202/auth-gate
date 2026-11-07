@@ -134,18 +134,18 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 .shell-content { padding: 32px clamp(16px, 4vw, 40px) 96px; }
 .shell-container { width: 100%; max-width: var(--content-max); margin-inline: auto; }
 
+/* Wide screens: the width animates; icons keep one fixed column (the side padding is the same in both
+   states), labels stay in the flow, clipped by the sidebar, and only fade. */
 @media (min-width: 769px) {
-  .sidebar[data-collapsed='true'] { width: var(--rail-w); padding-inline: 10px; align-items: center; }
-  .sidebar[data-collapsed='true'] .sidebar-brand { padding: 0; }
-  .sidebar[data-collapsed='true'] .brand .word { display: none; }
-  .sidebar[data-collapsed='true'] .sidebar-nav .nav-link { justify-content: center; padding: 10px; }
-  .sidebar[data-collapsed='true'] .sidebar-nav { align-items: stretch; }
-  /* Visually hidden, still the link's accessible name. */
-  .sidebar[data-collapsed='true'] .nav-label {
-    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
-  }
-  .sidebar[data-collapsed='true'] .sidebar-foot { width: 100%; }
-  .sidebar[data-collapsed='true'] .sidebar-collapse { justify-content: center; padding: 10px; }
+  .sidebar { padding-inline: 10px; transition: width 200ms ease; }
+  .sidebar-brand { padding: 0 8px; }
+  .brand, .brand .word, .nav-label { white-space: nowrap; }
+  .brand .word, .nav-label { transition: opacity 140ms ease; }
+  .sidebar[data-collapsed='true'] { width: var(--rail-w); }
+  .sidebar[data-collapsed='true'] .brand .word, .sidebar[data-collapsed='true'] .nav-label { opacity: 0; pointer-events: none; }
+}
+@media (min-width: 769px) and (prefers-reduced-motion: reduce) {
+  .sidebar, .brand .word, .nav-label { transition: none; }
 }
 
 @media (max-width: 768px) {
