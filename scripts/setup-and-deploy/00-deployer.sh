@@ -43,10 +43,19 @@ if aws configure get aws_access_key_id --profile "$USER_NAME" >/dev/null 2>&1; t
   exit 0
 fi
 
-read -r key_id secret < <(aws iam create-access-key "${admin[@]}" --user-name "$USER_NAME" \
-  --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text)
-aws configure set aws_access_key_id "$key_id" --profile "$USER_NAME"
-aws configure set aws_secret_access_key "$secret" --profile "$USER_NAME"
+# IAM returns the secret only once, so everything that can fail first goes before create-access-key.
+# lib.sh and this script set no other EXIT trap, so this one overwrites nothing.
+csv="$(mktemp)"
+trap 'rm -f "$csv"' EXIT
 aws configure set region "$REGION" --profile "$USER_NAME"
 aws configure set output json --profile "$USER_NAME"
+
+read -r key_id secret < <(aws iam create-access-key "${admin[@]}" --user-name "$USER_NAME" \
+  --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text)
+# Imported from a file because aws configure set would put the secret on argv. printf is a builtin,
+# mktemp makes the file 0600, and import names the profile after the User Name column.
+if ! { printf 'User Name,Access key ID,Secret access key\n%s,%s,%s\n' "$USER_NAME" "$key_id" "$secret" >"$csv" \
+  && aws configure import --csv "file://$csv" >/dev/null; }; then
+  die "access key $key_id exists in IAM but its secret was not saved and is lost. Delete the key, then rerun this script: aws iam delete-access-key ${admin[*]} --user-name $USER_NAME --access-key-id $key_id"
+fi
 echo "configured profile $USER_NAME (key $key_id)"
