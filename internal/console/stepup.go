@@ -42,7 +42,7 @@ const (
 var stepUpTargets = map[string]targetKind{
 	"rotate-key": clientTarget, "revoke-previous-keys": clientTarget, "disable-client": clientTarget, "update-client": clientTarget,
 	"purge-subject": subjectTarget,
-	"admin-create":  userTarget, "admin-reset-password": userTarget, "admin-clear-factors": userTarget,
+	"admin-create":  userRoleTarget, "admin-reset-password": userTarget, "admin-clear-factors": userTarget,
 	"admin-disable": userTarget, "admin-enable": userTarget,
 	"admin-role": userRoleTarget,
 }
@@ -171,9 +171,11 @@ func (a *App) stepUpStart(w http.ResponseWriter, r *http.Request) error {
 	if _, ok := stepUpActions[in.Action]; !ok {
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_action"}
 	}
+	// The purpose is worked out first and its error held, so the answer order stays
+	// forbidden, invalid_factor, invalid_target. Only what has passed its check is
+	// recorded: people paste passwords into the wrong box, and the audit is read by others.
+	purpose, target, perr := stepUpPurpose(in.Action, in.Target)
 	setAuditDetail(r.Context(), "action", in.Action)
-	setAuditDetail(r.Context(), "factor", truncate(in.Factor, 16))
-	setAuditDetail(r.Context(), "target", truncate(in.Target, maxAuditTarget))
 	setAuditTarget(r.Context(), in.Action)
 	if strings.HasPrefix(in.Action, "admin-") && admin.Role != RoleMaster {
 		return &apiError{Status: http.StatusForbidden, Code: "forbidden"}
@@ -181,10 +183,11 @@ func (a *App) stepUpStart(w http.ResponseWriter, r *http.Request) error {
 	if in.Factor != "pin" && in.Factor != "webauthn" {
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_factor"}
 	}
-	purpose, target, err := stepUpPurpose(in.Action, in.Target)
-	if err != nil {
-		return err
+	setAuditDetail(r.Context(), "factor", in.Factor)
+	if perr != nil {
+		return perr
 	}
+	setAuditDetail(r.Context(), "target", truncate(target, maxAuditTarget))
 	ch, err := a.AuthGate.CreateChallenge(r.Context(), admin.ID, purpose, in.Factor)
 	if err != nil {
 		return agError(err)

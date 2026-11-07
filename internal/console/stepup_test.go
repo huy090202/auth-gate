@@ -108,7 +108,7 @@ func TestStepUpTokenRejections(t *testing.T) {
 	h := consoletest.New(t)
 	b, a := fullAdmin(t, h, "ada", console.RoleAdmin)
 	other, _ := fullAdmin(t, h, "bob", console.RoleAdmin)
-	id, _ := newClient(t, b, "app")
+	id, keyA := newClient(t, b, "app")
 	path := "/api/clients/" + id + "/disable"
 	before := clientOf(t, h, id)
 
@@ -129,7 +129,24 @@ func TestStepUpTokenRejections(t *testing.T) {
 	}
 
 	// A token is for what it approved: the same action on another target, or with another role, is refused.
-	idB, _ := newClient(t, b, "other app")
+	idB, keyB := newClient(t, b, "other app")
+	// Real subjects, so that a purge that wrongly went through would show.
+	enrol := func(clientKey, subject string) {
+		c := *h.AuthGate
+		c.ClientKey = clientKey
+		if err := c.SetPIN(context.Background(), subject, "482916"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hasPIN := func(clientKey, subject string) bool {
+		c := *h.AuthGate
+		c.ClientKey = clientKey
+		f, err := c.Factors(context.Background(), subject)
+		return err == nil && f.PIN
+	}
+	enrol(keyA, "s2")
+	enrol(keyB, "s1")
+	clientBBefore := clientOf(t, h, idB)
 	m, _ := fullAdmin(t, h, "mia", console.RoleMaster)
 	h.CreateAdmin("dan", pw, console.RoleAdmin, false)
 	h.CreateAdmin("cat", pw, console.RoleAdmin, false)
@@ -139,6 +156,7 @@ func TestStepUpTokenRejections(t *testing.T) {
 	tokPurge := b.StepUp("purge-subject", id+"/s1")
 	tokDisable := m.StepUp("admin-disable", "dan")
 	tokRole := m.StepUp("admin-role", "dan/admin")
+	tokCreate := m.StepUp("admin-create", "eve/admin")
 	other2 := []struct {
 		name, method, path string
 		br                 *consoletest.Browser
@@ -150,6 +168,7 @@ func TestStepUpTokenRejections(t *testing.T) {
 		{"purge-subject for one client used on another", "DELETE", subj(idB, "s1"), b, nil, tokPurge},
 		{"admin-disable for dan used on cat", "POST", "/api/admins/cat/disable", m, struct{}{}, tokDisable},
 		{"admin-role approved as admin used to make a master", "POST", "/api/admins/dan/role", m, map[string]string{"role": "master"}, tokRole},
+		{"admin-create approved as admin used to create a master", "POST", "/api/admins", m, map[string]string{"username": "eve", "role": "master"}, tokCreate},
 	}
 	for _, c := range other2 {
 		want(t, c.br.Do(c.method, c.path, c.body, tokHeader, c.tok), 403, "step_up_required")
@@ -157,11 +176,23 @@ func TestStepUpTokenRejections(t *testing.T) {
 	if !reflect.DeepEqual(danBefore, getAdmin(t, h, "dan")) || !reflect.DeepEqual(catBefore, getAdmin(t, h, "cat")) {
 		t.Fatal("an admin changed under a token for something else")
 	}
+	if _, err := h.Store().GetAdmin(context.Background(), "eve"); err == nil {
+		t.Fatal("eve was created under a token for another role")
+	}
+	if !reflect.DeepEqual(clientBBefore, clientOf(t, h, idB)) {
+		t.Fatal("client B changed under a token for client A")
+	}
+	if !hasPIN(keyA, "s2") || !hasPIN(keyB, "s1") {
+		t.Fatal("a subject was purged under a token for another subject or client")
+	}
 	// The refusals did not cost the tokens: each still works for what it approved.
 	want(t, b.Do("POST", "/api/clients/"+id+"/keys", struct{}{}, tokHeader, tokA), 201, "")
 	want(t, b.Do("DELETE", subj(id, "s1"), nil, tokHeader, tokPurge), 204, "")
 	want(t, m.Do("POST", "/api/admins/dan/disable", struct{}{}, tokHeader, tokDisable), 200, "")
 	want(t, m.Do("POST", "/api/admins/dan/role", map[string]string{"role": "admin"}, tokHeader, tokRole), 200, "")
+	want(t, m.Do("POST", "/api/admins", map[string]string{"username": "eve", "role": "admin"}, tokHeader, tokCreate), 201, "")
+	// The target is normalized: approved as DAN, used on dan.
+	want(t, m.Do("POST", "/api/admins/dan/enable", struct{}{}, tokHeader, m.StepUp("admin-enable", "DAN")), 200, "")
 
 	// A token works once: after the disable, the same token cannot disable again.
 	tok := b.StepUp("disable-client", id)
@@ -238,7 +269,7 @@ func TestStartRefusesUnknownAction(t *testing.T) {
 		{"rotate-key", ""}, {"rotate-key", "abc"}, {"update-client", "../x"}, {"disable-client", strings.ToLower(cid)},
 		{"revoke-previous-keys", cid + "/s1"},
 		{"purge-subject", cid}, {"purge-subject", cid + "/"}, {"purge-subject", cid + "/a/b"}, {"purge-subject", "abc/s1"},
-		{"admin-create", ""}, {"admin-create", "a b"}, {"admin-disable", "bob/admin"}, {"admin-reset-password", "x"},
+		{"admin-create", ""}, {"admin-create", "newbie"}, {"admin-create", "a b/admin"}, {"admin-create", "newbie/root"}, {"admin-disable", "bob/admin"}, {"admin-reset-password", "x"},
 		{"admin-role", "bob"}, {"admin-role", "bob/root"}, {"admin-role", "bob/"}, {"admin-role", "/admin"},
 		{"change-password", "ada"}, {"add-factor", "x"}, {"remove-factor", cid},
 	} {
@@ -326,6 +357,12 @@ func TestSecretsAbsentFromAuditAndLogs(t *testing.T) {
 	// Failures that carry secrets in their request: a wrong PIN, a wrong password, a bad token, a replay.
 	bad := "000111"
 	secrets = append(secrets, bad)
+	// Values typed into the wrong box reach /stepup/start before anything is checked.
+	pasted := "Tr0ub4dor&3 my password!"
+	secrets = append(secrets, pasted)
+	want(t, b.Do("POST", "/api/stepup/start", map[string]string{"action": "rotate-key", "factor": "pin", "target": pasted}), 400, "invalid_target")
+	want(t, b.Do("POST", "/api/stepup/start", map[string]string{"action": "rotate-key", "factor": pin1, "target": id}), 400, "invalid_factor")
+	want(t, b.Do("POST", "/api/stepup/start", map[string]string{"action": "admin-disable", "factor": "pin", "target": pasted}), 403, "forbidden")
 	st := b.Do("POST", "/api/stepup/start", map[string]string{"action": "rotate-key", "factor": "pin", "target": id})
 	want(t, st, 200, "")
 	want(t, b.Do("POST", "/api/stepup/verify", map[string]string{"challengeId": st.Str("challengeId"), "pin": bad}), 400, "verification_failed")

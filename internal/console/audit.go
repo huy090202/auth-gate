@@ -271,7 +271,7 @@ func (a *App) listAudit(w http.ResponseWriter, r *http.Request) error {
 		Result   string            `json:"result"`
 		IP       string            `json:"ip"`
 		Source   string            `json:"source"`
-		Detail   map[string]string `json:"detail"`
+		Detail   map[string]string `json:"detail,omitempty"`
 		At       time.Time         `json:"at"`
 	}
 	out := make([]view, 0, len(entries))

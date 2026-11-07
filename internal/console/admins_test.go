@@ -93,7 +93,7 @@ func TestCreateAdminShowsTempPasswordOnce(t *testing.T) {
 	body := map[string]string{"username": "Newbie", "role": "admin"}
 
 	want(t, b.Do("POST", "/api/admins", body), 403, "step_up_required")
-	r := b.Do("POST", "/api/admins", body, tokHeader, b.StepUp("admin-create", "newbie"))
+	r := b.Do("POST", "/api/admins", body, tokHeader, b.StepUp("admin-create", "newbie/admin"))
 	want(t, r, 201, "")
 	temp := r.Str("temporaryPassword")
 	raw, err := base64.RawURLEncoding.DecodeString(temp)
@@ -121,9 +121,9 @@ func TestCreateAdminShowsTempPasswordOnce(t *testing.T) {
 		t.Fatalf("list %s audit %s", list.Body, audit.Body)
 	}
 
-	want(t, b.Do("POST", "/api/admins", body, tokHeader, b.StepUp("admin-create", "newbie")), 409, "username_taken")
-	want(t, b.Do("POST", "/api/admins", map[string]string{"username": "a b", "role": "admin"}, tokHeader, b.StepUp("admin-create", "carol")), 400, "invalid_username")
-	want(t, b.Do("POST", "/api/admins", map[string]string{"username": "carol", "role": "boss"}, tokHeader, b.StepUp("admin-create", "carol")), 400, "invalid_role")
+	want(t, b.Do("POST", "/api/admins", body, tokHeader, b.StepUp("admin-create", "newbie/admin")), 409, "username_taken")
+	want(t, b.Do("POST", "/api/admins", map[string]string{"username": "a b", "role": "admin"}, tokHeader, b.StepUp("admin-create", "carol/admin")), 400, "invalid_username")
+	want(t, b.Do("POST", "/api/admins", map[string]string{"username": "carol", "role": "boss"}, tokHeader, b.StepUp("admin-create", "carol/admin")), 400, "invalid_role")
 
 	n := h.NewBrowser()
 	l := n.Login("newbie", temp)

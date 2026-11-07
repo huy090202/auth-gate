@@ -51,8 +51,9 @@ function StepUpBody({ action, target, onToken }: { action: StepUpAction; target?
  * is refused with step_up_required (spent or expired) the modal opens once more; any other error
  * (including 503 busy, which wants a new step-up on the next click) reaches the caller.
  * `target` is what the token is bound to (a client id, `<clientId>/<subjectId>`, a username or
- * `<username>/<role>`; see the spec); omit it for the self-service actions. After a `wrong_password` the token is still valid, but the caller prompts again: simpler than
- * carrying a token across the form.
+ * `<username>/<role>` for admin-create and admin-role; see the spec); omit it for the self-service
+ * actions. After a `wrong_password` the token is still valid, but the caller prompts again: simpler
+ * than carrying a token across the form.
  */
 export function useStepUp(): {
   stepUp: <T>(action: StepUpAction, run: (token: string) => Promise<T>, target?: string) => Promise<T | undefined>;

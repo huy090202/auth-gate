@@ -1,12 +1,16 @@
 package console_test
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"os/user"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
 	"github.com/huy090202/auth-gate/internal/console"
 	"github.com/huy090202/auth-gate/internal/console/authgate"
@@ -149,6 +153,13 @@ func TestCLICommandsAreAudited(t *testing.T) {
 	if err := run("", "disable", "--username", "ada"); err == nil { // the last active master
 		t.Fatal("the last master was disabled")
 	}
+	failed := "failed-command-password"
+	if err := run(failed+"\n", "reset-password", "--username", "nobody"); err == nil {
+		t.Fatal("reset of a missing admin worked")
+	}
+	if err := run("short\n", "create", "--username", "yan", "--role", "master"); err == nil {
+		t.Fatal("a weak password was accepted")
+	}
 
 	entries, _ := auditOf(t, b, "")
 	var cli []auditView
@@ -159,6 +170,7 @@ func TestCLICommandsAreAudited(t *testing.T) {
 	}
 	type row struct{ action, target, result string }
 	want := []row{ // newest first
+		{"admin-create", "yan", "failed:invalid_password"}, {"admin-reset-password", "nobody", "failed:not_found"},
 		{"admin-disable", "ada", "failed:last_master"}, {"admin-clear-factors", "zed", "success"},
 		{"admin-disable", "zed", "success"}, {"admin-reset-password", "zed", "success"}, {"admin-create", "zed", "success"},
 	}
@@ -170,11 +182,52 @@ func TestCLICommandsAreAudited(t *testing.T) {
 			t.Errorf("entry %d = %+v, want %v as %s", i, e, want[i], who)
 		}
 	}
-	detailIs(t, cli[4], map[string]string{"role": "admin"})
+	detailIs(t, cli[6], map[string]string{"role": "admin"})
 	items := scanTable(t, h)
-	for _, s := range []string{secret, next} {
+	for _, s := range []string{secret, next, failed, "short"} {
 		if strings.Contains(items, s) {
 			t.Errorf("a command's password was stored")
 		}
 	}
 }
+
+// Why: the audit write must never turn a command that worked into a failure, or the operator reruns it, but the gap must be visible.
+func TestCLIAuditWriteFailureIsOnlyAWarning(t *testing.T) {
+	h := consoletest.New(t)
+	ctx := context.Background()
+	h.CreateAdmin("ada", pw, console.RoleMaster, false)
+	h.CreateAdmin("zed", pw, console.RoleAdmin, false)
+	opts := h.Store().DB.Options()
+	base := opts.HTTPClient
+	opts.HTTPClient = httpDo(func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.Header.Get("X-Amz-Target"), ".PutItem") {
+			raw, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(raw))
+			if bytes.Contains(raw, []byte("AUDIT#")) {
+				return &http.Response{StatusCode: 400, Header: http.Header{"Content-Type": {"application/x-amz-json-1.0"}},
+					Body: io.NopCloser(strings.NewReader(`{"__type":"com.amazon.coral.validate#ValidationException","message":"no"}`))}, nil
+			}
+		}
+		return base.Do(r)
+	})
+	d := cliDeps(h)
+	d.Store = &console.Store{DB: dynamodb.New(opts), Table: h.Deps.Config.Table}
+	var stderr strings.Builder
+	d.Stderr = &stderr
+
+	if err := console.RunAdmin(ctx, []string{"disable", "--username", "zed"}, strings.NewReader(""), &strings.Builder{}, d); err != nil {
+		t.Fatalf("a failed audit write changed the outcome: %v", err)
+	}
+	if getAdmin(t, h, "zed").DisabledAt == nil || !strings.Contains(stderr.String(), "warning") {
+		t.Fatalf("zed disabled %v, stderr %q", getAdmin(t, h, "zed").DisabledAt != nil, stderr.String())
+	}
+	// A command that fails keeps its own error, not the audit's.
+	err := console.RunAdmin(ctx, []string{"disable", "--username", "ada"}, strings.NewReader(""), &strings.Builder{}, d)
+	if err == nil || !strings.Contains(err.Error(), "last active master") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+type httpDo func(*http.Request) (*http.Response, error)
+
+func (f httpDo) Do(r *http.Request) (*http.Response, error) { return f(r) }

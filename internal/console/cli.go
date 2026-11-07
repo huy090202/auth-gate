@@ -89,7 +89,7 @@ func RunAdmin(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	}
 	if action, ok := cliActions[cmd]; ok {
 		e := AuditEntry{Username: cliActor(), Action: action, Target: name, Result: "success", Source: "cli", At: now().UTC()}
-		if cmd == "create" {
+		if cmd == "create" && validRole(Role(*role)) {
 			e.Detail = map[string]string{"role": *role}
 		}
 		if err != nil {

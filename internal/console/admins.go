@@ -117,11 +117,11 @@ func (a *App) createAdmin(w http.ResponseWriter, r *http.Request) error {
 	if nameErr != nil {
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_username"}
 	}
-	setAuditDetail(r.Context(), "role", truncate(string(in.Role), 16))
 	if !validRole(in.Role) {
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_role"}
 	}
-	tok, err := a.checkStepUp(r, x, "admin-create", name)
+	setAuditDetail(r.Context(), "role", string(in.Role))
+	tok, err := a.checkStepUp(r, x, "admin-create", name+"/"+string(in.Role))
 	if err != nil {
 		return err
 	}
@@ -280,10 +280,10 @@ func (a *App) setAdminRole(w http.ResponseWriter, r *http.Request) error {
 		if err := decodeBody(r, &in); err != nil {
 			return "", err
 		}
-		setAuditDetail(r.Context(), "role", truncate(string(in.Role), 16))
 		if !validRole(in.Role) {
 			return "", &apiError{Status: http.StatusBadRequest, Code: "invalid_role"}
 		}
+		setAuditDetail(r.Context(), "role", string(in.Role))
 		return string(in.Role), nil
 	})
 	if err != nil {

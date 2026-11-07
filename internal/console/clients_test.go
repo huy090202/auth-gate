@@ -483,13 +483,16 @@ func TestAuditDetailIsAnAllowList(t *testing.T) {
 	want(t, rot, 201, "")
 	secrets = append(secrets, rot.Str("accessKey"))
 	want(t, b.Do("DELETE", "/api/clients/"+id+"/keys/previous", nil, tokHeader, b.StepUp("revoke-previous-keys", id)), 200, "")
-	nu := b.Do("POST", "/api/admins", map[string]string{"username": "Newbie", "role": "admin"}, tokHeader, b.StepUp("admin-create", "newbie"))
+	nu := b.Do("POST", "/api/admins", map[string]string{"username": "Newbie", "role": "admin"}, tokHeader, b.StepUp("admin-create", "Newbie/admin"))
 	want(t, nu, 201, "")
 	secrets = append(secrets, nu.Str("temporaryPassword"))
 	h.CreateAdmin("bob", pw, console.RoleAdmin, false)
 	want(t, b.Do("POST", "/api/admins/bob/role", map[string]string{"role": "master"}, tokHeader, b.StepUp("admin-role", "bob/master")), 200, "")
 
-	entries, _ := auditOf(t, b, "")
+	entries, raw := auditOf(t, b, "")
+	if strings.Contains(string(raw.Body), `"detail":null`) {
+		t.Fatal("an empty detail is sent as null")
+	}
 	detailIs(t, findAudit(t, entries, "create-client", id), map[string]string{"name": "app", "rpId": "app.test", "origins": "https://app.test,https://b.app.test"})
 	detailIs(t, findAudit(t, entries, "update-client", id), map[string]string{
 		"fields": "name,origins,tokenTtlSec", "name": "renamed", "origins": "https://c.app.test", "tokenTtlSec": "900"})
@@ -498,6 +501,7 @@ func TestAuditDetailIsAnAllowList(t *testing.T) {
 		t.Fatalf("rotate detail = %v", e.Detail)
 	}
 	detailIs(t, findAudit(t, entries, "admin-create", "newbie"), map[string]string{"role": "admin"})
+	detailIs(t, findAudit(t, entries, "stepup-start", "admin-create"), map[string]string{"action": "admin-create", "factor": "pin", "target": "newbie/admin"}) // normalized
 	detailIs(t, findAudit(t, entries, "admin-role", "bob"), map[string]string{"role": "master"})
 	detailIs(t, findAudit(t, entries, "stepup-start", "admin-role"), map[string]string{"action": "admin-role", "factor": "pin", "target": "bob/master"})
 	detailIs(t, findAudit(t, entries, "stepup-verify", ""), map[string]string{"action": "admin-role", "factor": "pin", "target": "bob/master"})

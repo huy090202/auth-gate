@@ -199,7 +199,8 @@ where a replay works until `exp`.
 the action's purpose, then `:` and the first 32 hex characters of `sha256(target)` for an action that
 takes a target. A token approved for `rotate-key` on client A does not work on client B. The target is
 the client id for the client actions, `<clientId>/<subjectId>` for `purge-subject`, the normalized
-username for the `admin-*` actions, `<username>/<role>` for `admin-role`; `change-password`,
+username for the other `admin-*` actions, `<username>/<role>` for `admin-create` and `admin-role`, so an approval
+to create an `admin` cannot create a `master`; `change-password`,
 `add-factor` and `remove-factor` act on the session's own admin and take none. `POST /stepup/start`
 takes `target` and answers `400 invalid_target`, before any AuthGate call, when a targeted action has
 none or a malformed one, or an untargeted action has one. **The limit:** the binding is to the target,
@@ -239,7 +240,7 @@ All under `/api`, JSON. Error envelope `{"error": "<snake_case>", ...}`.
 | `POST /me/password` | enroll, full + step-up | Current and new password. No step-up in `enroll`. |
 | `POST /me/pin`, `DELETE /me/pin` | enroll, full + step-up | Delete refused for the last factor. No step-up in `enroll`. |
 | `POST /me/passkeys/start`, `/finish`, `DELETE /me/passkeys/{id}` | enroll, full + step-up | No step-up in `enroll`. The session moves to `full` once the password is changed and a factor exists. |
-| `POST /stepup/start`, `/verify` | full | Action must be in the allow-list. |
+| `POST /stepup/start`, `/verify` | full | Action must be in the allow-list. `start` takes the `target` the token is bound to (§6); `400 invalid_target` otherwise. |
 | `GET /clients`, `GET /clients/{id}` | full | |
 | `POST /clients` | full | Key returned once. |
 | `PATCH /clients/{id}` | full; + step-up unless only `name` changes | |
