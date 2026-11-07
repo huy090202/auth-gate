@@ -1,9 +1,9 @@
-import { Badge, Button, Group, Text } from '@mantine/core';
+import { Badge, Button, Group, SegmentedControl, Text, useMantineColorScheme } from '@mantine/core';
 import { useState } from 'react';
 import { consoleTitle, useTitle } from '../brand';
 import { api } from '../lib/api';
 import { formatDate } from '../lib/format';
-import { fmt, useStrings } from '../lib/i18n';
+import { fmt, useLang, useStrings, type Lang } from '../lib/i18n';
 import { monoFont } from '../theme';
 import { Shell } from '../shell';
 import { SessionGuard, passkeyCount, type Me, type Passkey } from '../session';
@@ -20,6 +20,29 @@ function KeyIcon() {
 }
 
 type Props = { me: Me; reload: () => Promise<void>; stepUp: ReturnType<typeof useStepUp>['stepUp'] };
+
+function PreferencesSection() {
+  const t = useStrings();
+  const [lang, setLang] = useLang();
+  // keepTransitions: Mantine would otherwise append a <style> element on every change, which the CSP blocks.
+  const { colorScheme, setColorScheme } = useMantineColorScheme({ keepTransitions: true });
+  return (
+    <section className="panel glass">
+      <h2>{t.account.preferencesTitle}</h2>
+      <div className="pref-row">
+        <Text fz="sm" id="pref-lang">{t.account.language}</Text>
+        <SegmentedControl size="sm" radius="md" value={lang} onChange={(v) => setLang(v as Lang)} aria-labelledby="pref-lang"
+          data={[{ label: 'English', value: 'en' }, { label: 'Tiếng Việt', value: 'vi' }]} />
+      </div>
+      <div className="pref-row">
+        <Text fz="sm" id="pref-scheme">{t.account.appearance}</Text>
+        <SegmentedControl size="sm" radius="md" value={colorScheme} onChange={(v) => setColorScheme(v as 'light' | 'dark' | 'auto')}
+          aria-labelledby="pref-scheme"
+          data={[{ label: t.account.light, value: 'light' }, { label: t.account.dark, value: 'dark' }, { label: t.account.system, value: 'auto' }]} />
+      </div>
+    </section>
+  );
+}
 
 function PasswordSection({ reload, stepUp }: Props) {
   const t = useStrings();
@@ -163,6 +186,7 @@ function AccountBody({ me, reload }: { me: Me; reload: () => Promise<void> }) {
         <Text c="dimmed" fz="sm">{fmt(t.account.intro, { username: me.username })}</Text>
       </div>
       <div className="panel-stack">
+        <PreferencesSection />
         <PasswordSection {...props} />
         <PinSection {...props} />
         <PasskeySection {...props} />

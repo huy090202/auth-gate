@@ -1,11 +1,10 @@
-import { ActionIcon, Anchor, Button, Text } from '@mantine/core';
+import { Anchor, Menu } from '@mantine/core';
 import { useState, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router';
 import { Brand } from './brand';
-import { LangSwitch, SchemeToggle } from './controls';
-import { AccountIcon, AdminsIcon, AuditIcon, ClientsIcon, CollapseIcon } from './icons';
+import { AccountIcon, AdminsIcon, AuditIcon, ClientsIcon, ChevronIcon, SignOutIcon } from './icons';
 import { api } from './lib/api';
-import { useStrings } from './lib/i18n';
+import { fmt, useStrings } from './lib/i18n';
 import { useMe, type Me } from './session';
 
 const KEY = 'console.sidebar';
@@ -27,7 +26,6 @@ export function Shell({ me, children, collapsed: initial }: { me: Me; children: 
   const t = useStrings();
   const nav = useNavigate();
   const { clear } = useMe();
-  const [busy, setBusy] = useState(false);
   const [collapsed, setCollapsed] = useState(initial ?? readCollapsed);
   const toggle = () => {
     const next = !collapsed;
@@ -39,7 +37,6 @@ export function Shell({ me, children, collapsed: initial }: { me: Me; children: 
     }
   };
   const signOut = async () => {
-    setBusy(true);
     try {
       await api('/api/auth/logout', { method: 'POST' });
     } catch {
@@ -65,22 +62,29 @@ export function Shell({ me, children, collapsed: initial }: { me: Me; children: 
           {link('/account', t.screens.account, <AccountIcon />)}
         </nav>
         <div className="sidebar-foot">
-          <ActionIcon variant="default" size="lg" radius="md" className="sidebar-collapse" onClick={toggle} aria-expanded={!collapsed}
+          <button type="button" className="sidebar-collapse" onClick={toggle} aria-expanded={!collapsed}
             aria-label={collapsed ? t.common.expandSidebar : t.common.collapseSidebar}
             title={collapsed ? t.common.expandSidebar : t.common.collapseSidebar}>
-            <CollapseIcon collapsed={collapsed} />
-          </ActionIcon>
+            <ChevronIcon dir={collapsed ? 'right' : 'left'} />
+            <span className="nav-label">{t.common.collapse}</span>
+          </button>
         </div>
       </aside>
       <div className="shell-main">
         <header className="content-header glass">
-          <Text fz="sm" className="header-user" title={me.username}>
-            <span className="sidebar-name">{me.username}</span>
-            <span className="sidebar-role">{t.common.role[me.role]}</span>
-          </Text>
-          <LangSwitch />
-          <SchemeToggle />
-          <Button variant="default" size="compact-sm" onClick={() => void signOut()} loading={busy}>{t.common.signOut}</Button>
+          <Menu position="bottom-end" width={220} withinPortal={false}>
+            <Menu.Target>
+              <button type="button" className="avatar-btn" aria-label={fmt(t.common.accountMenu, { username: me.username })}>
+                <span className="avatar" aria-hidden="true">{[...me.username][0]?.toUpperCase()}</span>
+                <span className="avatar-name">{me.username}</span>
+              </button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>{t.common.role[me.role]}</Menu.Label>
+              <Menu.Item component={NavLink} to="/account" leftSection={<AccountIcon />}>{t.screens.account}</Menu.Item>
+              <Menu.Item color="red" leftSection={<SignOutIcon />} onClick={() => void signOut()}>{t.common.signOut}</Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
         </header>
         <div className="shell-content">
           <div className="shell-container">{children}</div>

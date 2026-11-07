@@ -117,7 +117,15 @@ for (const collapsed of [false, true]) test(`the signed-in Shell renders no <sty
   expect(host.querySelector('nav a[aria-current="page"], nav a')).not.toBeNull();
   expect(host.querySelectorAll('nav a').length).toBe(4);
   for (const a of host.querySelectorAll('nav a')) expect(a.getAttribute('title')).toBeTruthy();
-  expect(host.querySelector('[aria-expanded]')?.getAttribute('aria-expanded')).toBe(String(!collapsed));
+  expect(host.querySelector('.sidebar-collapse')?.getAttribute('aria-expanded')).toBe(String(!collapsed));
+  // The avatar menu opens with My account and Sign out, and still renders no <style>.
+  await act(async () => {
+    host.querySelector<HTMLButtonElement>('.avatar-btn')!.click();
+  });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 400)); // the menu's own transition
+  });
+  expect([...document.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent)).toEqual(['My account', 'Sign out']);
   expect(document.querySelectorAll('style').length).toBe(0);
   await act(async () => root.unmount());
 });
