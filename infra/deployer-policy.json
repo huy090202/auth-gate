@@ -170,6 +170,7 @@
         "cloudfront:UpdateResponseHeadersPolicy",
         "cloudfront:DeleteResponseHeadersPolicy",
         "cloudfront:ListResponseHeadersPolicies",
+        "cloudfront:CreateFunction",
         "cloudfront:ListFunctions",
         "cloudfront:CreateInvalidation",
         "cloudfront:GetInvalidation"
@@ -180,7 +181,6 @@
       "Sid": "ManageTheEdgeFunctions",
       "Effect": "Allow",
       "Action": [
-        "cloudfront:CreateFunction",
         "cloudfront:DescribeFunction",
         "cloudfront:GetFunction",
         "cloudfront:UpdateFunction",
