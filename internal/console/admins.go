@@ -25,12 +25,12 @@ var (
 func (a *App) adminRoutes(mux *http.ServeMux) {
 	full := a.session(StageFull)
 	mux.Handle("GET /api/admins", full(handlerFunc(a.listAdmins)))
-	mux.Handle("POST /api/admins", a.audited("admin-create", nil, full(handlerFunc(a.createAdmin))))
-	mux.Handle("POST /api/admins/{username}/reset-password", a.audited("admin-reset-password", nil, full(handlerFunc(a.resetPassword))))
-	mux.Handle("POST /api/admins/{username}/clear-factors", a.audited("admin-clear-factors", nil, full(handlerFunc(a.clearFactors))))
-	mux.Handle("POST /api/admins/{username}/disable", a.audited("admin-disable", nil, full(handlerFunc(a.disableAdmin))))
-	mux.Handle("POST /api/admins/{username}/enable", a.audited("admin-enable", nil, full(handlerFunc(a.enableAdmin))))
-	mux.Handle("POST /api/admins/{username}/role", a.audited("admin-role", nil, full(handlerFunc(a.setAdminRole))))
+	mux.Handle("POST /api/admins", a.audited("admin-create", full(handlerFunc(a.createAdmin))))
+	mux.Handle("POST /api/admins/{username}/reset-password", a.audited("admin-reset-password", full(handlerFunc(a.resetPassword))))
+	mux.Handle("POST /api/admins/{username}/clear-factors", a.audited("admin-clear-factors", full(handlerFunc(a.clearFactors))))
+	mux.Handle("POST /api/admins/{username}/disable", a.audited("admin-disable", full(handlerFunc(a.disableAdmin))))
+	mux.Handle("POST /api/admins/{username}/enable", a.audited("admin-enable", full(handlerFunc(a.enableAdmin))))
+	mux.Handle("POST /api/admins/{username}/role", a.audited("admin-role", full(handlerFunc(a.setAdminRole))))
 	for _, p := range []string{"/api/admins", "/api/admins/"} {
 		mux.Handle(p, full(http.HandlerFunc(notFound)))
 	}

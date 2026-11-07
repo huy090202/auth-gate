@@ -154,8 +154,8 @@ func (a *App) spendStepUp(r *http.Request, t *stepUp) error {
 // needs no token, and a half one has not signed in.
 func (a *App) stepUpRoutes(mux *http.ServeMux) {
 	full := a.session(StageFull)
-	mux.Handle("POST /api/stepup/start", a.audited("stepup-start", nil, full(handlerFunc(a.stepUpStart))))
-	mux.Handle("POST /api/stepup/verify", a.audited("stepup-verify", nil, full(handlerFunc(a.stepUpVerify))))
+	mux.Handle("POST /api/stepup/start", a.audited("stepup-start", full(handlerFunc(a.stepUpStart))))
+	mux.Handle("POST /api/stepup/verify", a.audited("stepup-verify", full(handlerFunc(a.stepUpVerify))))
 }
 
 // stepUpStart opens a challenge for the action's purpose on its target and

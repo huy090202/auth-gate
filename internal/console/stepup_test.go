@@ -376,6 +376,15 @@ func TestSecretsAbsentFromAuditAndLogs(t *testing.T) {
 	st = other.StartSecondFactor("pin")
 	want(t, other.Do("POST", "/api/auth/second-factor/verify", map[string]string{"challengeId": st.Str("challengeId"), "pin": bad}), 400, "verification_failed")
 
+	// Values typed into the wrong box of a refused request: an id or subject that
+	// fails its check, and a name AuthGate refuses, are never recorded.
+	subj, badID, badName, patchName := "Hunter2-pass/word", "Zx9-pass-word", "Qw3rty-pass-name", "Mn8bvc-pass-patch"
+	secrets = append(secrets, subj, "Hunter2-pass", badID, badName, patchName)
+	want(t, b.Do("DELETE", "/api/clients/"+id+"/subjects/Hunter2-pass%2Fword", nil), 400, "invalid_id")
+	want(t, b.Do("POST", "/api/clients/"+badID+"/keys", struct{}{}), 404, "not_found")
+	want(t, b.Do("POST", "/api/clients", map[string]any{"name": badName, "rpId": "not a host!", "origins": []string{"https://app.test"}}), 400, "invalid_client")
+	want(t, b.Do("PATCH", "/api/clients/"+id, map[string]any{"name": patchName, "rpId": "evil.test"}, tokHeader, b.StepUp("update-client", id)), 400, "invalid_client")
+
 	items := scanTable(t, h)
 	if !strings.Contains(items, "AUDIT#") {
 		t.Fatal("scan found no audit item")

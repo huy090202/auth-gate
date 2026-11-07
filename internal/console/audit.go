@@ -171,14 +171,12 @@ const (
 // people type passwords into that field); they are rate limited per address. A
 // write elsewhere without a session is unbounded and unlimited, so it goes to the
 // log as a warning, not to the table. A failed audit write is logged and does not
-// change the answer. The target function names what the action touches; the
-// handler may replace it with setAuditTarget once it knows (a created client's id).
-func (a *App) audited(action string, target func(*http.Request) string, h http.Handler) http.Handler {
+// change the answer. The handler names what the action touches with
+// setAuditTarget, and only once that value has passed its check or been accepted
+// upstream, so a refused request leaves the target empty.
+func (a *App) audited(action string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		note := &auditNote{}
-		if target != nil {
-			note.Target = target(r)
-		}
 		bw := &bufWriter{h: w.Header()}
 		h.ServeHTTP(bw, r.WithContext(context.WithValue(r.Context(), noteKey{}, note)))
 		if bw.status == 0 {

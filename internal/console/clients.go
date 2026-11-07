@@ -12,8 +12,6 @@ import (
 
 var errOwnClient = &apiError{Status: http.StatusConflict, Code: "own_client_protected"}
 
-func pathID(r *http.Request) string { return r.PathValue("id") }
-
 // clientIDRE is the form id.New gives every client: a 26-character ULID in
 // upper-case Crockford base 32.
 var clientIDRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
@@ -56,13 +54,13 @@ func (a *App) clientRoutes(mux *http.ServeMux) {
 	full := a.session(StageFull)
 	mux.Handle("GET /api/clients", full(handlerFunc(a.listClients)))
 	mux.Handle("GET /api/clients/{id}", full(handlerFunc(a.getClient)))
-	mux.Handle("POST /api/clients", a.audited("create-client", nil, full(handlerFunc(a.createClient))))
-	mux.Handle("PATCH /api/clients/{id}", a.audited("update-client", pathID, full(handlerFunc(a.updateClient))))
-	mux.Handle("POST /api/clients/{id}/keys", a.audited("rotate-key", pathID, full(a.clientWrite("rotate-key", http.StatusCreated,
+	mux.Handle("POST /api/clients", a.audited("create-client", full(handlerFunc(a.createClient))))
+	mux.Handle("PATCH /api/clients/{id}", a.audited("update-client", full(handlerFunc(a.updateClient))))
+	mux.Handle("POST /api/clients/{id}/keys", a.audited("rotate-key", full(a.clientWrite("rotate-key", http.StatusCreated,
 		func(ctx context.Context, a *App, id string) (json.RawMessage, error) {
 			return a.AuthGate.RotateKey(ctx, id)
 		}))))
-	mux.Handle("DELETE /api/clients/{id}/keys/previous", a.audited("revoke-previous-keys", pathID, full(a.clientWrite("revoke-previous-keys", http.StatusOK,
+	mux.Handle("DELETE /api/clients/{id}/keys/previous", a.audited("revoke-previous-keys", full(a.clientWrite("revoke-previous-keys", http.StatusOK,
 		func(ctx context.Context, a *App, id string) (json.RawMessage, error) {
 			raw, err := a.AuthGate.RevokePreviousKeys(ctx, id)
 			var out struct {
@@ -73,13 +71,12 @@ func (a *App) clientRoutes(mux *http.ServeMux) {
 			}
 			return raw, err
 		}))))
-	mux.Handle("POST /api/clients/{id}/disable", a.audited("disable-client", pathID, full(a.clientWrite("disable-client", http.StatusOK,
+	mux.Handle("POST /api/clients/{id}/disable", a.audited("disable-client", full(a.clientWrite("disable-client", http.StatusOK,
 		func(ctx context.Context, a *App, id string) (json.RawMessage, error) {
 			return a.AuthGate.DisableClient(ctx, id)
 		}))))
-	mux.Handle("POST /api/clients/{id}/enable", a.audited("enable-client", pathID, full(handlerFunc(a.enableClient))))
-	mux.Handle("DELETE /api/clients/{id}/subjects/{subjectId}", a.audited("purge-subject",
-		func(r *http.Request) string { return r.PathValue("id") + "/" + r.PathValue("subjectId") }, full(handlerFunc(a.purgeSubject))))
+	mux.Handle("POST /api/clients/{id}/enable", a.audited("enable-client", full(handlerFunc(a.enableClient))))
+	mux.Handle("DELETE /api/clients/{id}/subjects/{subjectId}", a.audited("purge-subject", full(handlerFunc(a.purgeSubject))))
 	mux.Handle("GET /api/audit", full(handlerFunc(a.listAudit)))
 	// Not routes yet, or other methods on the routes above: they answer by stage, then 404.
 	for _, p := range []string{"/api/clients", "/api/clients/", "/api/audit"} {
@@ -145,9 +142,6 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	ctx := r.Context()
-	setAuditDetail(ctx, "name", in.Name)
-	setAuditDetail(ctx, "rpId", in.RPID)
-	setAuditDetail(ctx, "origins", strings.Join(in.Origins, ","))
 	body, err := json.Marshal(in)
 	if err != nil {
 		return err
@@ -156,6 +150,10 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return agError(err)
 	}
+	// What was typed is recorded only now that AuthGate has accepted it.
+	setAuditDetail(ctx, "name", in.Name)
+	setAuditDetail(ctx, "rpId", in.RPID)
+	setAuditDetail(ctx, "origins", strings.Join(in.Origins, ","))
 	var out struct {
 		ClientID string `json:"clientId"`
 	}
@@ -176,6 +174,7 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	setAuditTarget(r.Context(), id)
 	var in struct {
 		Name        *string         `json:"name"`
 		Origins     []string        `json:"origins"`
@@ -190,10 +189,11 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 	out := map[string]any{}
 	var fields []string
 	ctx := r.Context()
+	values := map[string]string{} // recorded once AuthGate has accepted the patch
 	if in.Name != nil {
 		out["name"] = in.Name
 		fields = append(fields, "name")
-		setAuditDetail(ctx, "name", *in.Name)
+		values["name"] = *in.Name
 	}
 	sensitive := false
 	set := func(k string, v any) {
@@ -203,19 +203,19 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 	// The detail names what was asked to change and the new values; the old ones are not read.
 	if in.Origins != nil {
 		set("origins", in.Origins)
-		setAuditDetail(ctx, "origins", strings.Join(in.Origins, ","))
+		values["origins"] = strings.Join(in.Origins, ",")
 	}
 	if in.PinPolicy != nil {
 		set("pinPolicy", in.PinPolicy)
-		setAuditDetail(ctx, "pinPolicy", fmt.Sprintf("length=%d,maxAttempts=%d,lockoutSec=%d", in.PinPolicy.Length, in.PinPolicy.MaxAttempts, in.PinPolicy.LockoutSec))
+		values["pinPolicy"] = fmt.Sprintf("length=%d,maxAttempts=%d,lockoutSec=%d", in.PinPolicy.Length, in.PinPolicy.MaxAttempts, in.PinPolicy.LockoutSec)
 	}
 	if in.TokenTTLSec != nil {
 		set("tokenTtlSec", in.TokenTTLSec)
-		setAuditDetail(ctx, "tokenTtlSec", strconv.Itoa(*in.TokenTTLSec))
+		values["tokenTtlSec"] = strconv.Itoa(*in.TokenTTLSec)
 	}
 	if in.RateLimit != nil {
 		set("rateLimit", in.RateLimit)
-		setAuditDetail(ctx, "rateLimit", fmt.Sprintf("burst=%d,perSecond=%g", in.RateLimit.Burst, in.RateLimit.PerSecond))
+		values["rateLimit"] = fmt.Sprintf("burst=%d,perSecond=%g", in.RateLimit.Burst, in.RateLimit.PerSecond)
 	}
 	if in.RPID != nil {
 		set("rpId", in.RPID)
@@ -244,6 +244,9 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return agError(err)
 	}
+	for k, v := range values {
+		setAuditDetail(ctx, k, v)
+	}
 	writeRaw(w, http.StatusOK, raw)
 	return nil
 }
@@ -258,6 +261,7 @@ func (a *App) clientWrite(action string, status int, call func(context.Context, 
 		if err != nil {
 			return err
 		}
+		setAuditTarget(r.Context(), id)
 		x, _ := sessionFrom(r.Context())
 		tok, err := a.checkStepUp(r, x, action, id)
 		if err != nil {
@@ -283,6 +287,7 @@ func (a *App) enableClient(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	setAuditTarget(r.Context(), id)
 	raw, err := a.AuthGate.EnableClient(r.Context(), id)
 	if err != nil {
 		return agError(err)
@@ -300,6 +305,7 @@ func (a *App) purgeSubject(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	setAuditTarget(r.Context(), id+"/"+subject)
 	x, _ := sessionFrom(r.Context())
 	tok, err := a.checkStepUp(r, x, "purge-subject", id+"/"+subject)
 	if err != nil {

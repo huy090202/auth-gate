@@ -22,10 +22,10 @@ var (
 func (a *App) authRoutes() http.Handler {
 	mux := http.NewServeMux()
 	half := a.session(StageHalf)
-	mux.Handle("POST /api/auth/login", a.audited("login", nil, handlerFunc(a.login)))
-	mux.Handle("POST /api/auth/second-factor/start", a.audited("second-factor-start", nil, half(handlerFunc(a.secondFactorStart))))
-	mux.Handle("POST /api/auth/second-factor/verify", a.audited("second-factor-verify", nil, half(handlerFunc(a.secondFactorVerify))))
-	mux.Handle("POST /api/auth/logout", a.audited("logout", nil, a.session(StageHalf, StageEnroll, StageFull)(handlerFunc(a.logout))))
+	mux.Handle("POST /api/auth/login", a.audited("login", handlerFunc(a.login)))
+	mux.Handle("POST /api/auth/second-factor/start", a.audited("second-factor-start", half(handlerFunc(a.secondFactorStart))))
+	mux.Handle("POST /api/auth/second-factor/verify", a.audited("second-factor-verify", half(handlerFunc(a.secondFactorVerify))))
+	mux.Handle("POST /api/auth/logout", a.audited("logout", a.session(StageHalf, StageEnroll, StageFull)(handlerFunc(a.logout))))
 	mux.HandleFunc("/", notFound)
 	return mux
 }
