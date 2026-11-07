@@ -66,6 +66,38 @@ test('Escape, a click on the backdrop and Close before ticking leave it open', a
   expect(document.querySelector('[role="dialog"]')).not.toBeNull();
 });
 
+// Why: Back or a reload would unmount the screen and the only copy of the key with it. Without a
+// guard nothing else would notice: the state is simply gone.
+test('Back is absorbed (a sentinel entry is re-pushed) and a reload asks for confirmation', async () => {
+  const push = vi.spyOn(history, 'pushState');
+  push.mockClear();
+  await act(async () => {
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  expect(push).toHaveBeenCalledTimes(1);
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  const ev = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(ev);
+  expect(ev.defaultPrevented).toBe(true);
+  push.mockRestore();
+});
+
+test('closing normally leaves no stray entry and no guard behind', async () => {
+  const before = history.length;
+  await act(async () => {
+    document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click();
+  });
+  await act(async () => {
+    closeButton().click();
+  });
+  await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  await act(async () => root.unmount());
+  const ev = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(ev);
+  expect(ev.defaultPrevented).toBe(false);
+  expect(history.length).toBeLessThanOrEqual(before);
+});
+
 test('ticking "saved" then Close calls onClose once', async () => {
   const box = document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
   await act(async () => {
@@ -75,5 +107,5 @@ test('ticking "saved" then Close calls onClose once', async () => {
   await act(async () => {
     closeButton().click();
   });
-  expect(onClose).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
 });

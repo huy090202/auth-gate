@@ -37,21 +37,22 @@ function Detail({ me, id }: { me: Me; id: string }) {
   const [form, setForm] = useState<FormState | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const [secret, setSecret] = useState<Secret | null>(null);
-  // The SPA is not told which client is the Console's own (neither /me nor the client carries it),
-  // so it learns from the first 409 own_client_protected and then stays read-only.
-  const [own, setOwn] = useState(false);
+  // The backend marks the Console's own client (`ownClient`) on arrival; a 409 own_client_protected
+  // from a write is the fallback for a backend that did not.
+  const [refused, setRefused] = useState(false);
   const [subject, setSubject] = useState('');
   const settings = useAction();
   const keys = useAction();
   const state = useAction();
   const purge = useAction();
 
-  const load = useCallback(() => {
+  /** `resetForm`: after a save, replace what is typed; a plain reload (enable, disable) keeps unsaved edits. */
+  const load = useCallback((resetForm = false) => {
     setLoadError(null);
     return api<ClientView>(`/api/clients/${encodeURIComponent(id)}`).then(
       (c) => {
         setClient(c);
-        setForm(formFrom(c));
+        setForm((prev) => (resetForm || prev === null ? formFrom(c) : prev));
       },
       (e: unknown) => setLoadError(e ?? new Error('failed')),
     );
@@ -65,12 +66,19 @@ function Detail({ me, id }: { me: Me; id: string }) {
     try {
       return await fn();
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'own_client_protected') setOwn(true);
+      if (e instanceof ApiError && e.code === 'own_client_protected') setRefused(true);
       throw e;
     }
   };
 
-  if (loadError !== null) return <Shell me={me}><LoadFailedInline error={loadError} onRetry={() => void load()} /></Shell>;
+  const own = client?.ownClient === true || refused;
+  const dialogs = (
+    <>
+      {modal}
+      {secret && <ShownOnce title={secret.title} label={secret.label} value={secret.value} onClose={() => setSecret(null)} />}
+    </>
+  );
+  if (loadError !== null) return <Shell me={me}><LoadFailedInline error={loadError} onRetry={() => void load()} />{dialogs}</Shell>;
   if (!client || !form) return <Shell me={me}><InlineLoading /></Shell>;
 
   const path = `/api/clients/${encodeURIComponent(id)}`;
@@ -83,7 +91,7 @@ function Detail({ me, id }: { me: Me; id: string }) {
     if (form.name.trim() === '') e.name = t.clientForm.nameRequired;
     if (origins.length === 0) e.origins = t.clientForm.originsRequired;
     for (const k of ['pinLength', 'pinMaxAttempts', 'pinLockout', 'tokenTtl', 'rateBurst'] as const) {
-      const m = whole(form[k], t, true);
+      const m = whole(form[k], t, true, k);
       if (m) e[k] = m;
     }
     const pm = positive(form.ratePerSecond, t);
@@ -92,10 +100,10 @@ function Detail({ me, id }: { me: Me; id: string }) {
     if (Object.keys(e).length > 0) return;
     // Only what changed goes out, so a name-only edit stays a name-only edit (no step-up).
     const body: Record<string, unknown> = {};
-    const orig = formFrom(client);
     if (form.name.trim() !== client.name) body.name = form.name.trim();
     if (origins.join('\n') !== client.origins.join('\n')) body.origins = origins;
-    if (form.pinLength !== orig.pinLength || form.pinMaxAttempts !== orig.pinMaxAttempts || form.pinLockout !== orig.pinLockout) {
+    if (parseWhole(form.pinLength) !== client.pinPolicy.length || parseWhole(form.pinMaxAttempts) !== client.pinPolicy.maxAttempts
+      || parseWhole(form.pinLockout) !== client.pinPolicy.lockoutSec) {
       body.pinPolicy = { length: parseWhole(form.pinLength), maxAttempts: parseWhole(form.pinMaxAttempts), lockoutSec: parseWhole(form.pinLockout) };
     }
     if (parseWhole(form.tokenTtl) !== client.tokenTtlSec) body.tokenTtlSec = parseWhole(form.tokenTtl);
@@ -112,7 +120,7 @@ function Detail({ me, id }: { me: Me; id: string }) {
         const done = await guard(() => stepUp('update-client', (token) => api(path, { method: 'PATCH', body, stepUpToken: token }), id));
         if (!done) return false;
       }
-      await load();
+      await load(true);
     }, t.clientDetail.saved);
   };
 
@@ -217,8 +225,7 @@ function Detail({ me, id }: { me: Me; id: string }) {
           <Feedback error={purge.error} note={purge.note} />
         </section>
       </div>
-      {modal}
-      {secret && <ShownOnce title={secret.title} label={secret.label} value={secret.value} onClose={() => setSecret(null)} />}
+      {dialogs}
     </Shell>
   );
 }

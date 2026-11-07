@@ -30,7 +30,7 @@ function ClientNewBody({ me }: { me: Me }) {
     if (rpId.trim() === '') e.rpId = t.clientForm.rpIdRequired;
     if (origins.length === 0) e.origins = t.clientForm.originsRequired;
     for (const k of ['pinLength', 'pinMaxAttempts', 'pinLockout', 'tokenTtl'] as const) {
-      const m = whole(form[k], t, false);
+      const m = whole(form[k], t, false, k);
       if (m) e[k] = m;
     }
     setErrors(e);

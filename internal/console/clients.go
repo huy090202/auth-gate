@@ -113,6 +113,16 @@ func (a *App) getClient(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return agError(err)
 	}
+	if id == a.Config.AuthGateClientID {
+		// Tell the SPA up front, so it shows the client read-only instead of learning from a refused write.
+		var m map[string]json.RawMessage
+		if json.Unmarshal(raw, &m) == nil {
+			m["ownClient"] = json.RawMessage("true")
+			if marked, err := json.Marshal(m); err == nil {
+				raw = marked
+			}
+		}
+	}
 	writeRaw(w, http.StatusOK, raw)
 	return nil
 }

@@ -232,6 +232,28 @@ func TestOwnClientIsProtected(t *testing.T) {
 	want(t, b.Do("POST", own+"/enable", struct{}{}), 200, "")
 }
 
+// Why: the SPA must know on arrival that a client is the Console's own, so it does not offer writes that cost a step-up and then fail.
+func TestGetClientMarksOwnClient(t *testing.T) {
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleAdmin)
+	id, _ := newClient(t, b, "app")
+	own := b.Do("GET", "/api/clients/"+h.ClientID, nil)
+	want(t, own, 200, "")
+	var o map[string]any
+	if err := json.Unmarshal(own.Body, &o); err != nil || o["ownClient"] != true || o["clientId"] != h.ClientID {
+		t.Fatalf("own client = %s (%v)", own.Body, err)
+	}
+	other := b.Do("GET", "/api/clients/"+id, nil)
+	want(t, other, 200, "")
+	var x map[string]any
+	if err := json.Unmarshal(other.Body, &x); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := x["ownClient"]; has {
+		t.Fatalf("another client is marked own: %s", other.Body)
+	}
+}
+
 // Why: a refused action must leave a trace, with who asked and from where.
 func TestAuditWrittenOnFailure(t *testing.T) {
 	h := consoletest.New(t)

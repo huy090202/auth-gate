@@ -59,7 +59,6 @@ function AdminsBody({ me }: { me: Me }) {
       if (!r) return false;
       setUsername('');
       setSecret({ title: fmt(t.admins.tempTitle, { username: r.username }), value: r.temporaryPassword });
-      await load();
       return fmt(t.admins.createdNote, { username: r.username });
     });
   };
@@ -76,7 +75,6 @@ function AdminsBody({ me }: { me: Me }) {
             api<{ temporaryPassword: string }>(`${base}/reset-password`, { method: 'POST', stepUpToken: token }), u);
           if (!r) return false;
           setSecret({ title: fmt(t.admins.tempTitle, { username: u }), value: r.temporaryPassword });
-          await load();
           return '';
         }
         case 'clear': {
@@ -217,7 +215,7 @@ function AdminsBody({ me }: { me: Me }) {
           }} />
       )}
       {modal}
-      {secret && <ShownOnce title={secret.title} label={t.admins.tempLabel} value={secret.value} onClose={() => setSecret(null)} />}
+      {secret && <ShownOnce title={secret.title} label={t.admins.tempLabel} value={secret.value} onClose={() => { setSecret(null); void load(); }} />}
     </Shell>
   );
 }

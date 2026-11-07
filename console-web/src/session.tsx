@@ -89,7 +89,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           try {
             await reload();
           } catch {
-            /* a failed refresh leaves the old status; the target screen's guard decides */
+            // A failed refresh means the new status is unknown: stay put (reload() has shown the error
+            // if no page was up) rather than navigate on a stale status and bounce back.
+            return;
           }
           nav(toSecondFactor ? '/sign-in/second-factor' : '/enroll', { replace: true });
         })();

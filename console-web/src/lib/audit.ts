@@ -22,7 +22,7 @@ export function failureOf(result: string): string | null {
 export function failureLabel(code: string, t: Strings): string {
   const http = /^http_(\d{3})$/.exec(code);
   if (http) return fmt(t.audit.httpFailure, { n: http[1]! });
-  return code === '' ? '?' : labelOf(t.audit.failures, code);
+  return labelOf(t.audit.failures, code);
 }
 
 /** "a=1,b=2" as pairs; null when it is not that shape, so the caller shows the raw text. */

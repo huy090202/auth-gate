@@ -57,7 +57,7 @@ function Details({ e, t }: { e: AuditEntry; t: Strings }) {
 function ResultBadge({ result, t }: { result: string; t: Strings }) {
   const code = failureOf(result);
   if (code === null) return <Badge variant="light" color="canopy">{t.audit.success}</Badge>;
-  return <Badge variant="light" color="red" title={result}>{failureLabel(code, t)}</Badge>;
+  return <Badge variant="light" color="red" title={result}>{code === '' ? (result || '?') : failureLabel(code, t)}</Badge>;
 }
 
 function AuditBody({ me }: { me: Me }) {
@@ -111,7 +111,7 @@ function AuditBody({ me }: { me: Me }) {
     const codes = [...new Set(entries.map((e) => failureOf(e.result)).filter((c): c is string => c !== null && c !== ''))];
     return [
       { value: ALL, label: t.audit.all }, { value: 'success', label: t.audit.success }, { value: 'failed', label: t.audit.failedAny },
-      ...codes.map((c) => ({ value: `f:${c}`, label: `${t.audit.failedAny}: ${failureLabel(c, t)}` })),
+      ...codes.map((c) => ({ value: `f:${c}`, label: `${t.audit.failedPrefix}: ${failureLabel(c, t)}` })),
     ];
   }, [entries, t]);
   const actorOptions = useMemo(() => {

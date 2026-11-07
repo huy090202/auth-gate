@@ -6,6 +6,8 @@ export type ClientView = {
   pinPolicy: { length: number; maxAttempts: number; lockoutSec: number };
   tokenTtlSec: number; rateLimit: { burst: number; perSecond: number };
   createdAt: string; disabledAt?: string;
+  /** Set by the Console's backend on the Console's own client, which is read-only here. */
+  ownClient?: boolean;
 };
 
 /** AuthGate lists by cursor only, and smoke clients crowd the list: read every page, at most this many. */
@@ -28,13 +30,19 @@ export function parseWhole(v: string): number | null {
   return /^\d{1,9}$/.test(v.trim()) ? Number(v.trim()) : null;
 }
 
-/** A positive decimal from a text field, or null. */
+/** A positive decimal from a text field (plain or exponent form, as a stored value stringifies), or null. */
 export function parsePositive(v: string): number | null {
   const s = v.trim();
-  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  if (!/^(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$/.test(s)) return null;
   const n = Number(s);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
+
+/** The ranges AuthGate enforces; the form mirrors them so a bad value is caught before a step-up is spent. */
+export const RANGES = {
+  pinLength: [4, 8], pinMaxAttempts: [1, 10], pinLockout: [1, 86400], tokenTtl: [1, 900], rateBurst: [1, 10000],
+} as const;
+export const MAX_PER_SECOND = 5000;
 
 /** The origins typed one per line. */
 export const splitOrigins = (v: string) => v.split('\n').map((l) => l.trim()).filter(Boolean);

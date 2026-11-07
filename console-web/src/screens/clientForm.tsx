@@ -1,7 +1,7 @@
 import { Textarea, TextInput } from '@mantine/core';
 import type { ReactNode } from 'react';
 import type { ClientView } from '../lib/clients';
-import { parsePositive, parseWhole } from '../lib/clients';
+import { MAX_PER_SECOND, RANGES, parsePositive, parseWhole } from '../lib/clients';
 import { fmt, useStrings } from '../lib/i18n';
 import type { Strings } from '../strings';
 
@@ -26,13 +26,18 @@ export const formFrom = (c: ClientView): FormState => ({
   tokenTtl: String(c.tokenTtlSec), rateBurst: String(c.rateLimit.burst), ratePerSecond: String(c.rateLimit.perSecond),
 });
 
-/** A field that may stay empty (create) or must hold a whole number (edit). */
-export function whole(v: string, t: Strings, required: boolean): string | undefined {
+/** A field that may stay empty (create) or must hold a whole number inside AuthGate's range (edit). */
+export function whole(v: string, t: Strings, required: boolean, key: keyof typeof RANGES): string | undefined {
   if (v.trim() === '') return required ? t.clientForm.whole : undefined;
-  return parseWhole(v) === null ? t.clientForm.whole : undefined;
+  const n = parseWhole(v);
+  if (n === null) return t.clientForm.whole;
+  const [min, max] = RANGES[key];
+  return n < min || n > max ? fmt(t.clientForm.range, { min, max }) : undefined;
 }
 export function positive(v: string, t: Strings): string | undefined {
-  return parsePositive(v) === null ? t.clientForm.positive : undefined;
+  const n = parsePositive(v);
+  if (n === null) return t.clientForm.positive;
+  return n > MAX_PER_SECOND ? fmt(t.clientForm.positiveMax, { max: MAX_PER_SECOND }) : undefined;
 }
 
 export function ClientFields({ value, onChange, errors, disabled, withRate, children }: {
