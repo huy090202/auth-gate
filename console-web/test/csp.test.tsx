@@ -4,9 +4,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router';
 import { afterEach, expect, test, vi } from 'vitest';
 import { SchemeToggle } from '../src/App';
 import { mantineVarsCss } from '../src/lib/mantine-vars';
+import { SessionProvider, type Me } from '../src/session';
+import { Shell } from '../src/shell';
 import { theme } from '../src/theme';
 
 const varsFile = join(import.meta.dirname, '../src/mantine-vars.css');
@@ -86,4 +89,33 @@ test('index.html has no inline script', () => {
   }
   expect(html).toMatch(/<script src="\/theme-init\.js"><\/script>\s*<script type="module"/);
   expect(html).not.toMatch(/\son[a-z]+=|style=/i);
+});
+
+test('the signed-in Shell renders no <style> element', async () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: false, media: query, onchange: null,
+    addEventListener: () => {}, removeEventListener: () => {},
+    addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+  }));
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal('fetch', async () => new Response('{"error":"unauthorized"}', { status: 401 }));
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  const me: Me = { username: 'ann', role: 'master', stage: 'full', mustChangePassword: false, factors: { pin: true, webauthn: [] } };
+  await act(async () => {
+    root.render(
+      <MantineProvider withCssVariables={false} withGlobalClasses={false} defaultColorScheme="light" theme={theme}>
+        <MemoryRouter>
+          <SessionProvider>
+            <Shell me={me}>content</Shell>
+          </SessionProvider>
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+  });
+  expect(host.querySelector('nav a[aria-current="page"], nav a')).not.toBeNull();
+  expect(host.querySelectorAll('nav a').length).toBe(4);
+  expect(document.querySelectorAll('style').length).toBe(0);
+  await act(async () => root.unmount());
 });

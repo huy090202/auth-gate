@@ -28,7 +28,7 @@ function PasswordSection({ reload, stepUp }: Props) {
     <section className="panel glass">
       <h2>{t.account.passwordTitle}</h2>
       <Text fz="sm" c="dimmed" mt={6}>{t.account.passwordNote}</Text>
-      <PasswordForm currentLabel={t.password.current} disabled={a.busy || a.waiting}
+      <PasswordForm currentLabel={t.password.current} disabled={a.busy || a.waiting} loading={a.loading('pwd')}
         onSave={(current, next) =>
           a.run(async () => {
             // A wrong current password keeps the token valid, but the next try asks again.
@@ -36,7 +36,7 @@ function PasswordSection({ reload, stepUp }: Props) {
               api('/api/me/password', { body: { currentPassword: current, newPassword: next }, stepUpToken: token }));
             if (!done) return false; // modal closed: not an error, the form keeps its input
             await reload();
-          }, t.password.changed)} />
+          }, t.password.changed, 'pwd')} />
       <Feedback error={a.error} note={a.note} />
     </section>
   );
@@ -54,13 +54,13 @@ function PinSection({ me, reload, stepUp }: Props) {
       if (!done) return false;
       setEditing(false);
       await reload();
-    }, t.pin.saved);
+    }, t.pin.saved, 'save');
   const remove = () =>
     a.run(async () => {
       const done = await stepUp('remove-factor', (token) => api('/api/me/pin', { method: 'DELETE', stepUpToken: token }));
       if (!done) return false;
       await reload();
-    }, t.pin.removed);
+    }, t.pin.removed, 'remove');
   const lastFactor = passkeys === 0;
   const showForm = editing || !hasPin;
   return (
@@ -74,12 +74,12 @@ function PinSection({ me, reload, stepUp }: Props) {
       </Group>
       <Text fz="sm" c="dimmed" mt={6}>{hasPin ? t.account.pinHas : t.account.pinMissing}</Text>
       {showForm && (
-        <PinForm submitLabel={hasPin ? t.pin.save : t.pin.set} disabled={a.busy || a.waiting} onSave={save}
+        <PinForm submitLabel={hasPin ? t.pin.save : t.pin.set} disabled={a.busy || a.waiting} loading={a.loading('save')} onSave={save}
           onCancel={hasPin ? () => setEditing(false) : undefined} />
       )}
       {hasPin && !showForm && (
         <Group mt="sm" gap="sm">
-          <Button variant="subtle" color="red" size="compact-sm" className="flush" disabled={a.busy || lastFactor}
+          <Button variant="subtle" color="red" size="compact-sm" className="flush" loading={a.loading('remove')} disabled={(a.busy && !a.loading('remove')) || lastFactor}
             aria-describedby={lastFactor ? 'pin-last' : undefined} onClick={() => void remove()}>
             {t.pin.remove}
           </Button>
@@ -103,14 +103,14 @@ function PasskeySection({ me, reload, stepUp }: Props) {
       const done = await withRestart(() => stepUp('add-factor', (token) => registerPasskey(token)));
       if (!done) return false;
       await reload();
-    }, t.passkey.added);
+    }, t.passkey.added, 'add');
   const remove = (id: string) =>
     a.run(async () => {
       const done = await stepUp('remove-factor', (token) =>
         api(`/api/me/passkeys/${encodeURIComponent(id)}`, { method: 'DELETE', stepUpToken: token }));
       if (!done) return false;
       await reload();
-    }, t.passkey.removed);
+    }, t.passkey.removed, 'rm:' + id);
   return (
     <section className="panel glass">
       <Group justify="space-between" wrap="nowrap" gap="sm">
@@ -118,7 +118,7 @@ function PasskeySection({ me, reload, stepUp }: Props) {
           <h2>{t.account.passkeysTitle}</h2>
           {keys.length > 0 && <Badge variant="light" size="sm">{keys.length}</Badge>}
         </Group>
-        <Button variant="light" size="sm" onClick={() => void add()} loading={a.busy} disabled={a.waiting}>{t.passkey.add}</Button>
+        <Button variant="light" size="sm" onClick={() => void add()} loading={a.loading('add')} disabled={a.waiting || (a.busy && !a.loading('add'))}>{t.passkey.add}</Button>
       </Group>
       {keys.length === 0 ? (
         <Text fz="sm" c="dimmed" mt={6}>{t.account.passkeysNone}</Text>
@@ -136,7 +136,8 @@ function PasskeySection({ me, reload, stepUp }: Props) {
                   </Text>
                   {lastFactor && <Text fz="xs" c="dimmed">{t.account.lastFactor}</Text>}
                 </div>
-                <Button size="compact-sm" variant="subtle" color="red" disabled={a.busy || lastFactor}
+                <Button size="compact-sm" variant="subtle" color="red" loading={a.loading('rm:' + k.credentialId)}
+                  disabled={(a.busy && !a.loading('rm:' + k.credentialId)) || lastFactor}
                   aria-label={fmt(t.account.removeLabel, { id: short })} onClick={() => void remove(k.credentialId)}>
                   {t.common.remove}
                 </Button>

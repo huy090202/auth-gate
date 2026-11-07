@@ -60,12 +60,12 @@ export function Enroll() {
             <li className="step glass">
               {stepHead(1, t.enroll.stepPassword)}
               <Text fz="sm" c="dimmed" mt={6}>{t.enroll.stepPasswordHint}</Text>
-              <PasswordForm currentLabel={t.password.temporary} disabled={pwd.busy || pwd.waiting}
+              <PasswordForm currentLabel={t.password.temporary} disabled={pwd.busy || pwd.waiting} loading={pwd.loading('pwd')}
                 onSave={(cur, next) =>
                   pwd.run(async () => {
                     await api('/api/me/password', { body: { currentPassword: cur, newPassword: next } });
                     await reload();
-                  })} />
+                  }, '', 'pwd')} />
               <Feedback error={pwd.error} note={pwd.note} />
             </li>
           )}
@@ -73,19 +73,19 @@ export function Enroll() {
             <li className="step glass" aria-current={current === 'factor' ? 'step' : undefined}>
               {stepHead(needPassword ? 2 : 1, t.enroll.stepFactor)}
               <Text fz="sm" c="dimmed" mt={6}>{t.enroll.stepFactorHint}</Text>
-              <PinForm submitLabel={t.pin.set} disabled={factor.busy || factor.waiting}
+              <PinForm submitLabel={t.pin.set} disabled={factor.busy || factor.waiting} loading={factor.loading('pin')}
                 onSave={(pin) =>
                   factor.run(async () => {
                     await api('/api/me/pin', { body: { pin } });
                     await refreshed();
-                  })} />
+                  }, '', 'pin')} />
               <Group mt="sm">
-                <Button variant="default" loading={factor.busy} disabled={factor.waiting}
+                <Button variant="default" loading={factor.loading('passkey')} disabled={factor.waiting || (factor.busy && !factor.loading('passkey'))}
                   onClick={() =>
                     void factor.run(async () => {
                       await withRestart(() => registerPasskey());
                       await refreshed();
-                    })}>
+                    }, '', 'passkey')}>
                   {t.passkey.add}
                 </Button>
               </Group>

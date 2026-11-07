@@ -106,3 +106,35 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 .enroll-col { width: min(100%, 520px); display: grid; gap: 14px; }
 .enroll-out { justify-self: start; }
 .panel-stack { display: grid; gap: 14px; }
+
+/* Signed-in shell: sticky left sidebar and a wide content area. */
+.shell { display: flex; align-items: flex-start; min-height: 100vh; }
+.sidebar {
+  position: sticky; top: 0; z-index: 100; flex: none; width: 240px; height: 100vh;
+  display: flex; flex-direction: column; gap: 20px; padding: 18px 14px;
+  border-width: 0 1px 0 0; border-radius: 0; box-shadow: none; overflow-y: auto;
+}
+.sidebar-brand { padding: 0 6px; }
+.sidebar-nav { display: flex; flex-direction: column; gap: 2px; }
+.sidebar-nav .nav-link { display: block; padding: 9px 12px; border-radius: 8px; color: var(--mantine-color-text); }
+.sidebar-nav .nav-link:hover { background: var(--accent-soft); }
+.sidebar-nav .nav-link[aria-current='page'] { color: var(--accent-text); background: var(--accent-soft); font-weight: 650; box-shadow: inset 3px 0 0 var(--accent-text); }
+.sidebar-foot { margin-top: auto; display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 0 6px; }
+.sidebar-user { display: flex; flex-direction: column; min-width: 0; }
+.sidebar-name { font-weight: 650; overflow-wrap: anywhere; }
+.sidebar-role { color: var(--mantine-color-dimmed); font-size: 0.8125rem; }
+.sidebar-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.shell-content { flex: 1; min-width: 0; padding: 40px clamp(16px, 4vw, 48px) 96px; }
+.shell-content .panel-stack, .shell-content .page-head { max-width: 640px; }
+
+@media (max-width: 768px) {
+  .shell { display: block; }
+  .sidebar {
+    width: auto; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    padding: 10px 16px; border-width: 0 0 1px; overflow: visible;
+  }
+  .sidebar-nav { flex-direction: row; flex-wrap: wrap; order: 3; width: 100%; }
+  .sidebar-foot { margin: 0 0 0 auto; flex-direction: row; align-items: center; flex-wrap: wrap; padding: 0; gap: 8px; }
+  .sidebar-user { display: none; }
+  .shell-content { padding: 24px 16px 64px; }
+}

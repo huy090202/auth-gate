@@ -13,7 +13,7 @@ import { isCancelled } from './SecondFactor';
  */
 export function useAction() {
   const t = useStrings();
-  const [busy, setBusy] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const inFlight = useRef(false);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
@@ -25,11 +25,11 @@ export function useAction() {
    * Runs `fn` once at a time. Resolves true when it finished; false when it threw or `fn`
    * returned false (the user closed the step-up: nothing to report, the form keeps its input).
    */
-  const run = async (fn: () => Promise<unknown>, okNote = ''): Promise<boolean> => {
+  const run = async (fn: () => Promise<unknown>, okNote = '', key = 'action'): Promise<boolean> => {
     // First-factor writes must not double-submit: the first reissues the session, the second would get 401.
     if (inFlight.current) return false;
     inFlight.current = true;
-    setBusy(true);
+    setBusyKey(key);
     setError('');
     setNote('');
     try {
@@ -50,10 +50,11 @@ export function useAction() {
       return false;
     } finally {
       inFlight.current = false;
-      setBusy(false);
+      setBusyKey(null);
     }
   };
-  return { busy, error, note, waiting, run, setError };
+  /** `busy`: some action is in flight (others may be disabled). `loading(key)`: only that action's button spins. */
+  return { busy: busyKey !== null, loading: (key: string) => busyKey === key, error, note, waiting, run, setError };
 }
 
 export function Feedback({ error, note }: { error: string; note: string }) {
@@ -66,9 +67,10 @@ export function Feedback({ error, note }: { error: string; note: string }) {
 }
 
 /** Two matching PIN fields. `onSave` gets the PIN; the form clears when it resolves true. */
-export function PinForm({ submitLabel, onSave, onCancel, disabled }: {
+export function PinForm({ submitLabel, onSave, onCancel, disabled, loading }: {
   submitLabel: string;
   disabled?: boolean;
+  loading?: boolean;
   onSave: (pin: string) => Promise<boolean>;
   onCancel?: () => void;
 }) {
@@ -94,19 +96,23 @@ export function PinForm({ submitLabel, onSave, onCancel, disabled }: {
           inputMode="numeric" autoComplete="new-password" error={mismatch ? t.pin.mismatch : undefined} />
         <Group justify="flex-end" gap="xs">
           {onCancel && <Button variant="subtle" color="gray" onClick={onCancel}>{t.common.cancel}</Button>}
-          <Button type="submit" disabled={disabled}>{submitLabel}</Button>
+          <Button type="submit" disabled={disabled && !loading} loading={loading}>{submitLabel}</Button>
         </Group>
       </Stack>
     </form>
   );
 }
 
+/** True when a new password was typed and equals the current one. */
+export const samePassword = (current: string, next: string) => next !== '' && next === current;
+
 /**
  * Current + new + repeat. `onSave` gets both passwords; fields clear when it resolves true.
  * `currentLabel` is "Temporary password" while enrolling.
  */
-export function PasswordForm({ currentLabel, onSave, disabled }: {
+export function PasswordForm({ currentLabel, onSave, disabled, loading }: {
   currentLabel: string;
+  loading?: boolean;
   onSave: (current: string, next: string) => Promise<boolean>;
   disabled?: boolean;
 }) {
@@ -115,10 +121,13 @@ export function PasswordForm({ currentLabel, onSave, disabled }: {
   const [next, setNext] = useState('');
   const [again, setAgain] = useState('');
   const [mismatch, setMismatch] = useState(false);
+  // Caught here so the user is not sent to the server for a rule it answers with a generic message.
+  const same = samePassword(current, next);
   const submit = async (ev: FormEvent) => {
     ev.preventDefault();
     if (next !== again) return setMismatch(true);
     setMismatch(false);
+    if (same) return;
     if (await onSave(current, next)) {
       setCurrent('');
       setNext('');
@@ -131,11 +140,11 @@ export function PasswordForm({ currentLabel, onSave, disabled }: {
         <PasswordInput label={currentLabel} value={current} onChange={(e) => setCurrent(e.currentTarget.value)} required
           autoComplete="current-password" />
         <PasswordInput label={t.password.new} description={t.password.hint} value={next} onChange={(e) => setNext(e.currentTarget.value)}
-          required autoComplete="new-password" />
+          required autoComplete="new-password" error={same ? t.password.sameAsCurrent : undefined} />
         <PasswordInput label={t.password.repeat} value={again} onChange={(e) => setAgain(e.currentTarget.value)} required
           autoComplete="new-password" error={mismatch ? t.password.mismatch : undefined} />
         <Group justify="flex-end">
-          <Button type="submit" disabled={disabled}>{t.password.save}</Button>
+          <Button type="submit" disabled={disabled && !loading} loading={loading}>{t.password.save}</Button>
         </Group>
       </Stack>
     </form>
