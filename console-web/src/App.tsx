@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router';
-import { Backdrop, Brand } from './brand';
-import { LangSwitch, SchemeToggle } from './controls';
+import { Backdrop } from './brand';
+import { SchemeToggle, SiteHeader } from './controls';
 import { useLang } from './lib/i18n';
 import { AppRoutes } from './routes';
 
@@ -20,15 +20,7 @@ export function App() {
   return (
     <>
       <Backdrop />
-      {header && (
-        <header className="site-header glass">
-          <Brand />
-          <div className="header-tools">
-            <LangSwitch />
-            <SchemeToggle />
-          </div>
-        </header>
-      )}
+      {header && <SiteHeader />}
       <main>
         <AppRoutes />
       </main>

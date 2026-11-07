@@ -91,7 +91,7 @@ test('index.html has no inline script', () => {
   expect(html).not.toMatch(/\son[a-z]+=|style=/i);
 });
 
-test('the signed-in Shell renders no <style> element', async () => {
+for (const collapsed of [false, true]) test(`the signed-in Shell renders no <style> element (collapsed: ${collapsed})`, async () => {
   vi.stubGlobal('matchMedia', (query: string) => ({
     matches: false, media: query, onchange: null,
     addEventListener: () => {}, removeEventListener: () => {},
@@ -108,7 +108,7 @@ test('the signed-in Shell renders no <style> element', async () => {
       <MantineProvider withCssVariables={false} withGlobalClasses={false} defaultColorScheme="light" theme={theme}>
         <MemoryRouter>
           <SessionProvider>
-            <Shell me={me}>content</Shell>
+            <Shell me={me} collapsed={collapsed}>content</Shell>
           </SessionProvider>
         </MemoryRouter>
       </MantineProvider>,
@@ -116,6 +116,8 @@ test('the signed-in Shell renders no <style> element', async () => {
   });
   expect(host.querySelector('nav a[aria-current="page"], nav a')).not.toBeNull();
   expect(host.querySelectorAll('nav a').length).toBe(4);
+  for (const a of host.querySelectorAll('nav a')) expect(a.getAttribute('title')).toBeTruthy();
+  expect(host.querySelector('[aria-expanded]')?.getAttribute('aria-expanded')).toBe(String(!collapsed));
   expect(document.querySelectorAll('style').length).toBe(0);
   await act(async () => root.unmount());
 });

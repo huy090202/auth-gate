@@ -2,6 +2,7 @@ import { Button, Loader, Stack, Text } from '@mantine/core';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 import { ApiError, api, onApiFailure } from './lib/api';
+import { SiteHeader } from './controls';
 import { explain } from './lib/explain';
 import { useStrings } from './lib/i18n';
 
@@ -95,12 +96,16 @@ export function useMe(): { me: Me | null; status: Status; error: unknown; reload
   return c;
 }
 
-export function Loading() {
+/** `header`: also draw the plain header, for guarded screens, whose own frame is not there yet. */
+export function Loading({ header }: { header?: boolean }) {
   const t = useStrings();
   return (
-    <div className="auth-stage">
-      <Loader size="sm" aria-label={t.loading} />
-    </div>
+    <>
+      {header && <SiteHeader />}
+      <div className="auth-stage">
+        <Loader size="sm" aria-label={t.loading} />
+      </div>
+    </>
   );
 }
 
@@ -118,15 +123,18 @@ export function homeFor(status: Status): string {
   }
 }
 
-export function LoadFailed({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+export function LoadFailed({ error, onRetry, header }: { error: unknown; onRetry: () => void; header?: boolean }) {
   const t = useStrings();
   return (
-    <div className="auth-stage">
-      <Stack gap="sm" align="flex-start" className="auth-card glass">
-        <Text c="red.7" fz="sm" role="alert">{explain(error, t)}</Text>
-        <Button size="sm" variant="light" onClick={onRetry}>{t.common.retry}</Button>
-      </Stack>
-    </div>
+    <>
+      {header && <SiteHeader />}
+      <div className="auth-stage">
+        <Stack gap="sm" align="flex-start" className="auth-card glass">
+          <Text c="red.7" fz="sm" role="alert">{explain(error, t)}</Text>
+          <Button size="sm" variant="light" onClick={onRetry}>{t.common.retry}</Button>
+        </Stack>
+      </div>
+    </>
   );
 }
 
@@ -136,8 +144,8 @@ export function SessionGuard({ role, children }: {
   children: (s: { me: Me; reload: () => Promise<void> }) => ReactNode;
 }) {
   const { me, status, error, reload, retry } = useMe();
-  if (status === 'loading') return <Loading />;
-  if (status === 'error') return <LoadFailed error={error} onRetry={retry} />;
+  if (status === 'loading') return <Loading header />;
+  if (status === 'error') return <LoadFailed error={error} onRetry={retry} header />;
   if (status !== 'full' || !me) return <Navigate to={homeFor(status)} replace />;
   if (role === 'master' && me.role !== 'master') return <Navigate to="/clients" replace />;
   return <>{children({ me, reload })}</>;

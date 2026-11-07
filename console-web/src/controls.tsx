@@ -1,4 +1,5 @@
 import { ActionIcon, SegmentedControl, useComputedColorScheme, useMantineColorScheme } from '@mantine/core';
+import { Brand } from './brand';
 import { useLang, useStrings, type Lang } from './lib/i18n';
 
 const icon = { width: 18, height: 18, fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
@@ -30,5 +31,18 @@ export function LangSwitch() {
   return (
     <SegmentedControl size="xs" radius="md" value={lang} onChange={(v) => setLang(v as Lang)} aria-label={t.language}
       data={[{ label: 'EN', value: 'en' }, { label: 'VI', value: 'vi' }]} />
+  );
+}
+
+/** The plain header of screens without the sidebar: brand, language, theme. */
+export function SiteHeader() {
+  return (
+    <header className="site-header glass">
+      <Brand />
+      <div className="header-tools">
+        <LangSwitch />
+        <SchemeToggle />
+      </div>
+    </header>
   );
 }

@@ -74,10 +74,6 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 /* Auth screens centred, signed-in screens as a column of glass panels. */
 .auth-stage { min-height: calc(100vh - var(--header-h)); display: grid; place-items: center; padding: 32px 16px 15vh; }
 .auth-card { width: min(100%, 420px); padding: 32px; border-radius: 16px; }
-.app-stage { padding: 40px 16px 96px; display: flex; justify-content: center; }
-.app-column { width: min(100%, 640px); }
-.app-nav { display: flex; align-items: center; gap: 4px; margin-bottom: 28px; }
-.app-nav .nav-link[aria-current='page'] { color: var(--accent-text); background: var(--accent-soft); font-weight: 650; }
 .page-head { margin-bottom: 8px; }
 .page-head h1 { font-size: 1.75rem; letter-spacing: -0.015em; margin-bottom: 6px; }
 .panel { padding: 22px 24px; border-radius: 14px; }
@@ -98,7 +94,6 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 
 .auth-card h1 { font-size: 1.75rem; letter-spacing: -0.015em; }
 
-.app-nav .nav-link { padding: 6px 10px; border-radius: 8px; }
 .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
 .step { padding: 18px 20px; border-radius: 14px; }
 .step-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -107,34 +102,59 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 .enroll-out { justify-self: start; }
 .panel-stack { display: grid; gap: 14px; }
 
-/* Signed-in shell: sticky left sidebar and a wide content area. */
+/* Signed-in shell: sticky sidebar (collapsible to a rail), sticky header, centred container. */
+:root { --content-max: 1040px; --sidebar-w: 240px; --rail-w: 64px; --nav-hover: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
 .shell { display: flex; align-items: flex-start; min-height: 100vh; }
 .sidebar {
-  position: sticky; top: 0; z-index: 100; flex: none; width: 240px; height: 100vh;
+  position: sticky; top: 0; z-index: 100; flex: none; width: var(--sidebar-w); height: 100vh; height: 100dvh;
   display: flex; flex-direction: column; gap: 20px; padding: 18px 14px;
-  border-width: 0 1px 0 0; border-radius: 0; box-shadow: none; overflow-y: auto;
+  border-width: 0 1px 0 0; border-radius: 0; box-shadow: none; overflow-y: auto; overflow-x: hidden;
 }
 .sidebar-brand { padding: 0 6px; }
 .sidebar-nav { display: flex; flex-direction: column; gap: 2px; }
-.sidebar-nav .nav-link { display: block; padding: 9px 12px; border-radius: 8px; color: var(--mantine-color-text); }
-.sidebar-nav .nav-link:hover { background: var(--accent-soft); }
+.sidebar-nav .nav-link { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: 8px; color: var(--mantine-color-text); }
+.sidebar-nav .nav-link svg { flex: none; }
+/* Hover and focus are a faint tint; the active item is the full tint plus an edge bar. */
+.sidebar-nav .nav-link:hover, .sidebar-nav .nav-link:focus-visible { background: var(--nav-hover); }
 .sidebar-nav .nav-link[aria-current='page'] { color: var(--accent-text); background: var(--accent-soft); font-weight: 650; box-shadow: inset 3px 0 0 var(--accent-text); }
-.sidebar-foot { margin-top: auto; display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 0 6px; }
-.sidebar-user { display: flex; flex-direction: column; min-width: 0; }
+.sidebar-nav .nav-link[aria-current='page']:hover { background: var(--accent-soft); }
+.sidebar-foot { margin-top: auto; display: flex; padding: 0 6px; }
 .sidebar-name { font-weight: 650; overflow-wrap: anywhere; }
 .sidebar-role { color: var(--mantine-color-dimmed); font-size: 0.8125rem; }
-.sidebar-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.shell-content { flex: 1; min-width: 0; padding: 40px clamp(16px, 4vw, 48px) 96px; }
-.shell-content .panel-stack, .shell-content .page-head { max-width: 640px; }
+
+.shell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.content-header {
+  position: sticky; top: 0; z-index: 90; display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  min-height: var(--header-h); padding: 8px clamp(16px, 4vw, 32px); border-width: 0 0 1px; border-radius: 0; box-shadow: none;
+}
+.header-user { display: flex; flex-direction: column; align-items: flex-end; min-width: 0; line-height: 1.25; margin-right: 6px; }
+.shell-content { padding: 32px clamp(16px, 4vw, 40px) 96px; }
+.shell-container { width: 100%; max-width: var(--content-max); margin-inline: auto; }
+
+@media (min-width: 769px) {
+  .sidebar[data-collapsed='true'] { width: var(--rail-w); padding-inline: 10px; align-items: center; }
+  .sidebar[data-collapsed='true'] .sidebar-brand { padding: 0; }
+  .sidebar[data-collapsed='true'] .brand .word { display: none; }
+  .sidebar[data-collapsed='true'] .sidebar-nav .nav-link { justify-content: center; padding: 10px; }
+  .sidebar[data-collapsed='true'] .sidebar-nav { align-items: stretch; }
+  /* Visually hidden, still the link's accessible name. */
+  .sidebar[data-collapsed='true'] .nav-label {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  .sidebar[data-collapsed='true'] .sidebar-foot { padding: 0; }
+}
 
 @media (max-width: 768px) {
   .shell { display: block; }
   .sidebar {
-    width: auto; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    position: static; width: auto; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 12px;
     padding: 10px 16px; border-width: 0 0 1px; overflow: visible;
   }
   .sidebar-nav { flex-direction: row; flex-wrap: wrap; order: 3; width: 100%; }
-  .sidebar-foot { margin: 0 0 0 auto; flex-direction: row; align-items: center; flex-wrap: wrap; padding: 0; gap: 8px; }
-  .sidebar-user { display: none; }
+  .sidebar-foot { display: none; }
   .shell-content { padding: 24px 16px 64px; }
 }
+@media (max-width: 520px) { .header-user { display: none; } }
+
+/* One PIN field at full width with its button below it, wherever FactorForm is used. */
+.factor-pin { display: grid; gap: 12px; }

@@ -93,12 +93,10 @@ export function FactorForm<T>({ factors, start, verify, onDone }: {
   return (
     <Stack>
       {factors.pin && (
-        <form onSubmit={submitPin}>
-          <Group align="flex-end">
-            <PasswordInput label={t.factor.pin} value={pin} onChange={(e) => setPin(e.currentTarget.value)} required
-              inputMode="numeric" autoComplete="one-time-code" disabled={busy !== null} />
-            <Button type="submit" loading={busy === 'pin'} disabled={busy === 'webauthn'}>{t.factor.verifyPin}</Button>
-          </Group>
+        <form onSubmit={submitPin} className="factor-pin">
+          <PasswordInput label={t.factor.pin} value={pin} onChange={(e) => setPin(e.currentTarget.value)} required
+            inputMode="numeric" autoComplete="one-time-code" disabled={busy !== null} />
+          <Button type="submit" loading={busy === 'pin'} disabled={busy === 'webauthn'}>{t.factor.verifyPin}</Button>
         </form>
       )}
       {factors.pin && factors.webauthn && <Text c="dimmed" fz="sm">{t.factor.or}</Text>}
