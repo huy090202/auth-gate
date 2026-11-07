@@ -3,8 +3,10 @@ package console_test
 import (
 	"context"
 	"net/http"
+	"os/user"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huy090202/auth-gate/internal/console"
 	"github.com/huy090202/auth-gate/internal/console/authgate"
@@ -113,5 +115,66 @@ func TestCLIClearFactorsCallsAuthGate(t *testing.T) {
 	}
 	if getAdmin(t, h, "bob").SessionEpoch != e {
 		t.Fatal("sessions were ended although AuthGate was out of reach")
+	}
+}
+
+// Why: the commands are the only way in when the web is out of reach, so they must leave a trace, whoever ran them and whatever came of it.
+func TestCLICommandsAreAudited(t *testing.T) {
+	h := consoletest.New(t)
+	ctx := context.Background()
+	b, _ := fullAdmin(t, h, "ada", console.RoleMaster)
+	d := cliDeps(h)
+	who := "cli:unknown"
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		who = "cli:" + u.Username
+	}
+	secret := "cli-audit-secret-password"
+	next := "cli-audit-next-password"
+	run := func(stdin string, args ...string) error {
+		return console.RunAdmin(ctx, args, strings.NewReader(stdin), &strings.Builder{}, d)
+	}
+	h.Clock.Advance(time.Second)
+	if err := run(secret+"\n", "create", "--username", "Zed", "--role", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(next+"\n", "reset-password", "--username", "zed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := run("", "disable", "--username", "zed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := run("", "clear-factors", "--username", "zed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := run("", "disable", "--username", "ada"); err == nil { // the last active master
+		t.Fatal("the last master was disabled")
+	}
+
+	entries, _ := auditOf(t, b, "")
+	var cli []auditView
+	for _, e := range entries {
+		if e.Source == "cli" {
+			cli = append(cli, e)
+		}
+	}
+	type row struct{ action, target, result string }
+	want := []row{ // newest first
+		{"admin-disable", "ada", "failed:last_master"}, {"admin-clear-factors", "zed", "success"},
+		{"admin-disable", "zed", "success"}, {"admin-reset-password", "zed", "success"}, {"admin-create", "zed", "success"},
+	}
+	if len(cli) != len(want) {
+		t.Fatalf("%d cli entries, want %d: %+v", len(cli), len(want), cli)
+	}
+	for i, e := range cli {
+		if (row{e.Action, e.Target, e.Result}) != want[i] || e.Username != who || e.AdminID != "" || e.IP != "" {
+			t.Errorf("entry %d = %+v, want %v as %s", i, e, want[i], who)
+		}
+	}
+	detailIs(t, cli[4], map[string]string{"role": "admin"})
+	items := scanTable(t, h)
+	for _, s := range []string{secret, next} {
+		if strings.Contains(items, s) {
+			t.Errorf("a command's password was stored")
+		}
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/user"
 	"strings"
 	"time"
 
@@ -21,13 +23,42 @@ type CLIDeps struct {
 	AuthGate        func(ctx context.Context) (*authgate.Client, error)
 	ConsoleClientID string
 	Now             func() time.Time
+	// Stderr gets the warning when an audit item cannot be written; os.Stderr when nil.
+	Stderr io.Writer
+}
+
+// codedErr is a failure of a command with the short code its audit item records.
+type codedErr struct {
+	code string
+	err  error
+}
+
+func (e codedErr) Error() string { return e.err.Error() }
+func (e codedErr) Unwrap() error { return e.err }
+
+func coded(code string, err error) error { return codedErr{code: code, err: err} }
+
+// cliActions are the commands that are audited, under the action name the web
+// uses for the same thing; the item's source tells them apart.
+var cliActions = map[string]string{
+	"create": "admin-create", "reset-password": "admin-reset-password", "disable": "admin-disable", "clear-factors": "admin-clear-factors",
+}
+
+// cliActor is who an operator command is recorded as: the operating system user.
+func cliActor() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return "cli:" + u.Username
+	}
+	return "cli:unknown"
 }
 
 const usage = "usage: console admin create --username U --role master|admin | reset-password --username U | disable --username U | clear-factors --username U (password on stdin)"
 
 // RunAdmin runs one operator command. Passwords come from stdin only: a flag
 // that names one is refused before anything is read or written. Nothing secret
-// is written to stdout or into an error.
+// is written to stdout or into an error. Each of the four commands writes an
+// audit item, success or failure, with source "cli"; a failed audit write
+// prints a warning on stderr and changes neither the outcome nor the status.
 func RunAdmin(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, d CLIDeps) error {
 	if len(args) == 0 {
 		return errors.New(usage)
@@ -45,32 +76,67 @@ func RunAdmin(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return errors.New(usage)
 	}
-	name, err := NormalizeUsername(*username)
-	if err != nil {
-		return fmt.Errorf("--username: %w", err)
-	}
 	now := time.Now
 	if d.Now != nil {
 		now = d.Now
 	}
+	name, err := NormalizeUsername(*username)
+	if err != nil {
+		err = coded("invalid_username", fmt.Errorf("--username: %w", err))
+		name = ""
+	} else {
+		err = runCommand(ctx, cmd, name, *role, stdin, stdout, d, now)
+	}
+	if action, ok := cliActions[cmd]; ok {
+		e := AuditEntry{Username: cliActor(), Action: action, Target: name, Result: "success", Source: "cli", At: now().UTC()}
+		if cmd == "create" {
+			e.Detail = map[string]string{"role": *role}
+		}
+		if err != nil {
+			e.Result = "failed:error"
+			var ce codedErr
+			if errors.As(err, &ce) {
+				e.Result = "failed:" + ce.code
+			}
+		}
+		d.audit(ctx, e)
+	}
+	return err
+}
+
+// audit stores the item. It never fails the command.
+func (d CLIDeps) audit(ctx context.Context, e AuditEntry) {
+	e.Target = truncate(e.Target, maxAuditTarget)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditWriteTimeout)
+	defer cancel()
+	if err := d.Store.PutAudit(ctx, e); err != nil {
+		w := d.Stderr
+		if w == nil {
+			w = os.Stderr
+		}
+		_, _ = fmt.Fprintf(w, "warning: the audit item for %s was not written: %v\n", e.Action, err)
+	}
+}
+
+func runCommand(ctx context.Context, cmd, name, role string, stdin io.Reader, stdout io.Writer, d CLIDeps, now func() time.Time) error {
 	switch cmd {
 	case "create":
-		if !validRole(Role(*role)) {
-			return errors.New("--role must be master or admin")
+		if !validRole(Role(role)) {
+			return coded("invalid_role", errors.New("--role must be master or admin"))
 		}
 		hash, err := hashFromStdin(stdin)
 		if err != nil {
 			return err
 		}
-		err = d.Store.CreateAdmin(ctx, Admin{ID: id.New(), Username: name, Role: Role(*role), PasswordHash: hash,
+		err = d.Store.CreateAdmin(ctx, Admin{ID: id.New(), Username: name, Role: Role(role), PasswordHash: hash,
 			MustChangePassword: true, CreatedAt: now().UTC()})
 		if errors.Is(err, ErrUsernameTaken) {
-			return fmt.Errorf("%s already exists", name)
+			return coded("username_taken", fmt.Errorf("%s already exists", name))
 		}
 		if err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(stdout, "created %s %s; the password must be changed at first sign-in\n", *role, name)
+		_, _ = fmt.Fprintf(stdout, "created %s %s; the password must be changed at first sign-in\n", role, name)
 	case "reset-password":
 		hash, err := hashFromStdin(stdin)
 		if err != nil {
@@ -98,11 +164,11 @@ func RunAdmin(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 // client is obtained first, so a missing key changes nothing.
 func cliClearFactors(ctx context.Context, stdout io.Writer, d CLIDeps, name string) error {
 	if d.AuthGate == nil {
-		return errors.New("no AuthGate client configured")
+		return coded("authgate_unavailable", errors.New("no AuthGate client configured"))
 	}
 	ag, err := d.AuthGate(ctx)
 	if err != nil {
-		return fmt.Errorf("authgate client: %w", err)
+		return coded("authgate_unavailable", fmt.Errorf("authgate client: %w", err))
 	}
 	ad, err := d.Store.GetAdmin(ctx, name)
 	if err != nil {
@@ -112,7 +178,7 @@ func cliClearFactors(ctx context.Context, stdout io.Writer, d CLIDeps, name stri
 		return cliStoreError(err, name)
 	}
 	if err := ag.PurgeSubject(ctx, d.ConsoleClientID, ad.ID); err != nil {
-		return fmt.Errorf("purge factors at AuthGate: %w (sessions of %s were ended; run it again)", err, name)
+		return coded("authgate_unavailable", fmt.Errorf("purge factors at AuthGate: %w (sessions of %s were ended; run it again)", err, name))
 	}
 	if err := d.Store.EndSessions(ctx, name); err != nil {
 		return cliStoreError(err, name)
@@ -124,11 +190,11 @@ func cliClearFactors(ctx context.Context, stdout io.Writer, d CLIDeps, name stri
 func cliStoreError(err error, name string) error {
 	switch {
 	case errors.Is(err, ErrBusy):
-		return errors.New("another write was in flight; run the command again")
+		return coded("busy", errors.New("another write was in flight; run the command again"))
 	case errors.Is(err, ErrConflict):
-		return fmt.Errorf("refused: %s is the last active master", name)
+		return coded("last_master", fmt.Errorf("refused: %s is the last active master", name))
 	case errors.Is(err, ErrAdminNotFound):
-		return fmt.Errorf("no admin %s", name)
+		return coded("not_found", fmt.Errorf("no admin %s", name))
 	}
 	return err
 }
@@ -141,10 +207,10 @@ func hashFromStdin(stdin io.Reader) (string, error) {
 	}
 	p := strings.TrimRight(line, "\r\n")
 	if p == "" {
-		return "", errors.New("the password goes on stdin")
+		return "", coded("invalid_password", errors.New("the password goes on stdin"))
 	}
 	if err := ValidatePassword(p); err != nil {
-		return "", err
+		return "", coded("invalid_password", err)
 	}
 	return HashPassword(p)
 }

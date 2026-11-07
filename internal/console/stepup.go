@@ -171,6 +171,9 @@ func (a *App) stepUpStart(w http.ResponseWriter, r *http.Request) error {
 	if _, ok := stepUpActions[in.Action]; !ok {
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_action"}
 	}
+	setAuditDetail(r.Context(), "action", in.Action)
+	setAuditDetail(r.Context(), "factor", truncate(in.Factor, 16))
+	setAuditDetail(r.Context(), "target", truncate(in.Target, maxAuditTarget))
 	setAuditTarget(r.Context(), in.Action)
 	if strings.HasPrefix(in.Action, "admin-") && admin.Role != RoleMaster {
 		return &apiError{Status: http.StatusForbidden, Code: "forbidden"}
@@ -178,7 +181,7 @@ func (a *App) stepUpStart(w http.ResponseWriter, r *http.Request) error {
 	if in.Factor != "pin" && in.Factor != "webauthn" {
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_factor"}
 	}
-	purpose, _, err := stepUpPurpose(in.Action, in.Target)
+	purpose, target, err := stepUpPurpose(in.Action, in.Target)
 	if err != nil {
 		return err
 	}
@@ -186,7 +189,7 @@ func (a *App) stepUpStart(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return agError(err)
 	}
-	if err := a.Store.SetChallenge(r.Context(), x.Hash, ch.ID); err != nil {
+	if err := a.Store.SetStepUpChallenge(r.Context(), x.Hash, ch.ID, in.Action, in.Factor, target); err != nil {
 		return sessionGone(err)
 	}
 	out := map[string]any{"challengeId": ch.ID, "expiresAt": ch.ExpiresAt}
@@ -211,6 +214,11 @@ func (a *App) stepUpVerify(w http.ResponseWriter, r *http.Request) error {
 	}
 	if x.ChallengeID == "" || in.ChallengeID != x.ChallengeID {
 		return errChallengeGone
+	}
+	for k, v := range map[string]string{"action": x.ChallengeAction, "factor": x.ChallengeFactor, "target": x.ChallengeTarget} {
+		if v != "" {
+			setAuditDetail(r.Context(), k, v)
+		}
 	}
 	tok, err := a.AuthGate.VerifyChallenge(r.Context(), in.ChallengeID, in.PIN, in.Credential)
 	if err != nil {

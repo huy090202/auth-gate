@@ -3,8 +3,10 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -62,7 +64,14 @@ func (a *App) clientRoutes(mux *http.ServeMux) {
 		}))))
 	mux.Handle("DELETE /api/clients/{id}/keys/previous", a.audited("revoke-previous-keys", pathID, full(a.clientWrite("revoke-previous-keys", http.StatusOK,
 		func(ctx context.Context, a *App, id string) (json.RawMessage, error) {
-			return a.AuthGate.RevokePreviousKeys(ctx, id)
+			raw, err := a.AuthGate.RevokePreviousKeys(ctx, id)
+			var out struct {
+				Revoked int `json:"revoked"`
+			}
+			if err == nil && json.Unmarshal(raw, &out) == nil {
+				setAuditDetail(ctx, "revoked", strconv.Itoa(out.Revoked))
+			}
+			return raw, err
 		}))))
 	mux.Handle("POST /api/clients/{id}/disable", a.audited("disable-client", pathID, full(a.clientWrite("disable-client", http.StatusOK,
 		func(ctx context.Context, a *App, id string) (json.RawMessage, error) {
@@ -135,6 +144,10 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) error {
 	if err := decodeBody(r, &in); err != nil {
 		return err
 	}
+	ctx := r.Context()
+	setAuditDetail(ctx, "name", in.Name)
+	setAuditDetail(ctx, "rpId", in.RPID)
+	setAuditDetail(ctx, "origins", strings.Join(in.Origins, ","))
 	body, err := json.Marshal(in)
 	if err != nil {
 		return err
@@ -175,25 +188,40 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	out := map[string]any{}
+	var fields []string
+	ctx := r.Context()
 	if in.Name != nil {
 		out["name"] = in.Name
+		fields = append(fields, "name")
+		setAuditDetail(ctx, "name", *in.Name)
 	}
 	sensitive := false
-	set := func(k string, v any) { out[k], sensitive = v, true }
+	set := func(k string, v any) {
+		out[k], sensitive = v, true
+		fields = append(fields, k)
+	}
+	// The detail names what was asked to change and the new values; the old ones are not read.
 	if in.Origins != nil {
 		set("origins", in.Origins)
+		setAuditDetail(ctx, "origins", strings.Join(in.Origins, ","))
 	}
 	if in.PinPolicy != nil {
 		set("pinPolicy", in.PinPolicy)
+		setAuditDetail(ctx, "pinPolicy", fmt.Sprintf("length=%d,maxAttempts=%d,lockoutSec=%d", in.PinPolicy.Length, in.PinPolicy.MaxAttempts, in.PinPolicy.LockoutSec))
 	}
 	if in.TokenTTLSec != nil {
 		set("tokenTtlSec", in.TokenTTLSec)
+		setAuditDetail(ctx, "tokenTtlSec", strconv.Itoa(*in.TokenTTLSec))
 	}
 	if in.RateLimit != nil {
 		set("rateLimit", in.RateLimit)
+		setAuditDetail(ctx, "rateLimit", fmt.Sprintf("burst=%d,perSecond=%g", in.RateLimit.Burst, in.RateLimit.PerSecond))
 	}
 	if in.RPID != nil {
 		set("rpId", in.RPID)
+	}
+	if len(fields) > 0 {
+		setAuditDetail(ctx, "fields", strings.Join(fields, ","))
 	}
 	var tok *stepUp
 	if sensitive {

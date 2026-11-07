@@ -70,6 +70,8 @@ func (a *App) limitAuth(next http.Handler) http.Handler {
 		key := a.clientKey(r)
 		d := a.Limiter.Allow(r.Context(), key, authLimit)
 		if !d.Allowed {
+			// A refusal is not stored (it is unbounded), so the log is the only trace.
+			slog.Warn("console: auth request rate limited", "ip", key, "route", r.Method+" "+r.URL.Path)
 			writeErr(w, &apiError{Status: http.StatusTooManyRequests, Code: "rate_limited", RetryAfter: d.RetryAfterSec})
 			return
 		}

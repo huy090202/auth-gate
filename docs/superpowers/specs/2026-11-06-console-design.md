@@ -221,7 +221,7 @@ last remaining factor cannot be removed.
 **Operator commands** (`console admin create|reset-password|disable|clear-factors`) create the first
 master and recover a locked-out one. They read secrets from stdin, never argv, and write to the table
 with the operator's AWS profile. A forgotten password goes to a master, or to these commands if the
-master is the one locked out, because there is no email system.
+master is the one locked out, because there is no email system. Each command writes an audit item, success or failure, with source `cli`, the actor `cli:<operating system user>`, the username as target and, for `create`, the role; the password is never recorded, and a failed audit write is a warning on stderr that changes neither the outcome nor the exit status.
 
 **If AuthGate is down,** nobody can sign in to the Console. The scripts that use the admin key
 directly remain the documented emergency path.
@@ -253,7 +253,7 @@ All under `/api`, JSON. Error envelope `{"error": "<snake_case>", ...}`.
 | `POST /admins` | master + step-up | Temporary password returned once. |
 | `POST /admins/{username}/reset-password`, `/clear-factors`, `/disable`, `/enable`, `/role` | master + step-up | Guards in §6. Other roles get `403 forbidden`. |
 
-Every write records an audit item, success or failure; a failed write with no session (other than under `/auth`, where it is stored with empty identity) is logged, not stored. Audit items and logs never contain a key,
+Every write records an audit item, success or failure, with its source (`web` or `cli`) and a small allow-listed detail (for example the fields a patch changed and their new values, or the reason a sign-in failed: `wrong_password`, `locked`, `disabled`, `unknown_user`); a failed write with no session (other than under `/auth`, where it is stored with empty identity) is logged, not stored. Audit items and logs never contain a key,
 PIN, password or token. Responses carrying a key are `Cache-Control: no-store`.
 
 ## 8. Screens

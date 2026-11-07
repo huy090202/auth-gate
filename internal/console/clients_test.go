@@ -63,12 +63,7 @@ func scanTable(t *testing.T, h *consoletest.Harness) string {
 		for _, it := range out.Items {
 			for k, v := range it {
 				sb.WriteString(k + "=")
-				switch v := v.(type) {
-				case *types.AttributeValueMemberS:
-					sb.WriteString(v.Value)
-				case *types.AttributeValueMemberN:
-					sb.WriteString(v.Value)
-				}
+				writeAttr(&sb, v)
 				sb.WriteByte(' ')
 			}
 			sb.WriteByte('\n')
@@ -80,10 +75,34 @@ func scanTable(t *testing.T, h *consoletest.Harness) string {
 	}
 }
 
+// writeAttr renders a stored value as text, maps and lists included, so a secret cannot hide inside one.
+func writeAttr(sb *strings.Builder, v types.AttributeValue) {
+	switch v := v.(type) {
+	case *types.AttributeValueMemberS:
+		sb.WriteString(v.Value)
+	case *types.AttributeValueMemberN:
+		sb.WriteString(v.Value)
+	case *types.AttributeValueMemberM:
+		sb.WriteByte('{')
+		for k, e := range v.Value {
+			sb.WriteString(k + ":")
+			writeAttr(sb, e)
+			sb.WriteByte(',')
+		}
+		sb.WriteByte('}')
+	case *types.AttributeValueMemberL:
+		for _, e := range v.Value {
+			writeAttr(sb, e)
+			sb.WriteByte(',')
+		}
+	}
+}
+
 const viewerHdr = "CloudFront-Viewer-Address"
 
 type auditView struct {
-	AdminID, Username, Action, Target, Result, IP string
+	AdminID, Username, Action, Target, Result, IP, Source string
+	Detail                                                map[string]string
 }
 
 func auditOf(t *testing.T, b *consoletest.Browser, query string) ([]auditView, consoletest.Response) {
@@ -423,5 +442,152 @@ func TestNoSessionWriteIsLoggedNotStored(t *testing.T) {
 	}
 	if l := logs.String(); !strings.Contains(l, "write without a session") || !strings.Contains(l, "198.51.100.9") || !strings.Contains(l, "failed:unauthorized") {
 		t.Fatalf("no warning in the logs:\n%s", l)
+	}
+}
+
+// find returns the newest entry with the action and target.
+func findAudit(t *testing.T, entries []auditView, action, target string) auditView {
+	t.Helper()
+	for _, e := range entries {
+		if e.Action == action && e.Target == target {
+			return e
+		}
+	}
+	t.Fatalf("no %s entry for %q in %+v", action, target, entries)
+	return auditView{}
+}
+
+func detailIs(t *testing.T, e auditView, want map[string]string) {
+	t.Helper()
+	if !reflect.DeepEqual(e.Detail, want) {
+		t.Fatalf("%s detail = %v, want %v", e.Action, e.Detail, want)
+	}
+}
+
+// Why: detail is built field by field at each action; if it ever copied a body, a key, PIN, token or password would sit in the table for good.
+func TestAuditDetailIsAnAllowList(t *testing.T) {
+	logs := captureLogs(t)
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleMaster)
+	secrets := []string{pin1, pw, pw2}
+
+	c := b.Do("POST", "/api/clients", map[string]any{"name": "app", "rpId": "app.test", "origins": []string{"https://app.test", "https://b.app.test"}})
+	want(t, c, 201, "")
+	id, key := c.Str("clientId"), c.Str("accessKey")
+	secrets = append(secrets, key)
+
+	tok := b.StepUp("update-client", id)
+	secrets = append(secrets, tok)
+	want(t, b.Do("PATCH", "/api/clients/"+id, map[string]any{"name": "renamed", "origins": []string{"https://c.app.test"}, "tokenTtlSec": 900}, tokHeader, tok), 200, "")
+	rot := b.Do("POST", "/api/clients/"+id+"/keys", struct{}{}, tokHeader, b.StepUp("rotate-key", id))
+	want(t, rot, 201, "")
+	secrets = append(secrets, rot.Str("accessKey"))
+	want(t, b.Do("DELETE", "/api/clients/"+id+"/keys/previous", nil, tokHeader, b.StepUp("revoke-previous-keys", id)), 200, "")
+	nu := b.Do("POST", "/api/admins", map[string]string{"username": "Newbie", "role": "admin"}, tokHeader, b.StepUp("admin-create", "newbie"))
+	want(t, nu, 201, "")
+	secrets = append(secrets, nu.Str("temporaryPassword"))
+	h.CreateAdmin("bob", pw, console.RoleAdmin, false)
+	want(t, b.Do("POST", "/api/admins/bob/role", map[string]string{"role": "master"}, tokHeader, b.StepUp("admin-role", "bob/master")), 200, "")
+
+	entries, _ := auditOf(t, b, "")
+	detailIs(t, findAudit(t, entries, "create-client", id), map[string]string{"name": "app", "rpId": "app.test", "origins": "https://app.test,https://b.app.test"})
+	detailIs(t, findAudit(t, entries, "update-client", id), map[string]string{
+		"fields": "name,origins,tokenTtlSec", "name": "renamed", "origins": "https://c.app.test", "tokenTtlSec": "900"})
+	detailIs(t, findAudit(t, entries, "revoke-previous-keys", id), map[string]string{"revoked": "1"})
+	if e := findAudit(t, entries, "rotate-key", id); len(e.Detail) != 0 {
+		t.Fatalf("rotate detail = %v", e.Detail)
+	}
+	detailIs(t, findAudit(t, entries, "admin-create", "newbie"), map[string]string{"role": "admin"})
+	detailIs(t, findAudit(t, entries, "admin-role", "bob"), map[string]string{"role": "master"})
+	detailIs(t, findAudit(t, entries, "stepup-start", "admin-role"), map[string]string{"action": "admin-role", "factor": "pin", "target": "bob/master"})
+	detailIs(t, findAudit(t, entries, "stepup-verify", ""), map[string]string{"action": "admin-role", "factor": "pin", "target": "bob/master"})
+	for _, e := range entries {
+		if e.Source != "web" {
+			t.Fatalf("source of %s = %q", e.Action, e.Source)
+		}
+	}
+
+	items := scanTable(t, h)
+	for _, s := range secrets {
+		if strings.Contains(items, s) || strings.Contains(logs.String(), s) {
+			t.Errorf("a secret of %d bytes was stored or logged", len(s))
+		}
+	}
+	if !strings.Contains(items, "https://c.app.test") {
+		t.Fatal("the raw items do not hold the detail the API shows")
+	}
+}
+
+// Why: the reason helps the operator and must reach the log without telling the caller which of the four it was.
+func TestFailedLoginRecordsItsReason(t *testing.T) {
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleMaster)
+	ctx := context.Background()
+	h.CreateAdmin("wrongpw", pw, console.RoleAdmin, false)
+	h.CreateAdmin("lockedu", pw, console.RoleAdmin, false)
+	h.CreateAdmin("disabledu", pw, console.RoleAdmin, false)
+	for range 5 {
+		if err := h.Store().RecordLoginFailure(ctx, "lockedu", h.Clock.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := h.Clock.Now().UTC()
+	if err := h.Store().SetDisabled(ctx, nil, "disabledu", &at); err != nil {
+		t.Fatal(err)
+	}
+	typed := "ghostly-typed-name"
+
+	tries := []struct{ name, user, reason string }{
+		{"wrong password", "wrongpw", "wrong_password"}, {"locked", "lockedu", "locked"},
+		{"disabled", "disabledu", "disabled"}, {"unknown", typed, "unknown_user"},
+	}
+	var first consoletest.Response
+	for i, c := range tries {
+		r := h.NewBrowser().Login(c.user, pw+"-nope")
+		want(t, r, 401, "invalid_credentials")
+		if i == 0 {
+			first = r
+		} else if !bytes.Equal(r.Body, first.Body) || r.Header.Get("Content-Type") != first.Header.Get("Content-Type") || r.Header.Get("Set-Cookie") != first.Header.Get("Set-Cookie") {
+			t.Fatalf("%s answered differently: %q vs %q", c.name, r.Body, first.Body)
+		}
+	}
+	entries, _ := auditOf(t, b, "")
+	got := map[string]string{}
+	for _, e := range entries {
+		if e.Action != "login" || e.Result != "failed:invalid_credentials" {
+			continue
+		}
+		who := e.Username
+		if who == "" {
+			who = "(none)"
+		}
+		got[who] = e.Detail["reason"]
+		if len(e.Detail) != 1 {
+			t.Fatalf("login detail = %v", e.Detail)
+		}
+	}
+	wantReasons := map[string]string{"wrongpw": "wrong_password", "lockedu": "locked", "disabledu": "disabled", "(none)": "unknown_user"}
+	if !reflect.DeepEqual(got, wantReasons) {
+		t.Fatalf("reasons = %v, want %v", got, wantReasons)
+	}
+	if strings.Contains(scanTable(t, h), typed) {
+		t.Fatal("the unknown user's name was stored")
+	}
+}
+
+// Why: a refused attempt on another admin's account is the one worth reading later, and it must say whose account.
+func TestRefusedAdminAttemptRecordsTarget(t *testing.T) {
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleAdmin)
+	h.CreateAdmin("bob", pw, console.RoleAdmin, false)
+	want(t, b.Do("POST", "/api/admins", map[string]string{"username": "Newbie", "role": "admin"}), 403, "forbidden")
+	want(t, b.Do("POST", "/api/admins/BOB/disable", struct{}{}), 403, "forbidden")
+	want(t, b.Do("POST", "/api/admins/bob/role", map[string]string{"role": "master"}), 403, "forbidden")
+	entries, _ := auditOf(t, b, "")
+	for _, c := range [][2]string{{"admin-create", "newbie"}, {"admin-disable", "bob"}, {"admin-role", "bob"}} {
+		e := findAudit(t, entries, c[0], c[1])
+		if e.Result != "failed:forbidden" {
+			t.Fatalf("%s result = %q", c[0], e.Result)
+		}
 	}
 }

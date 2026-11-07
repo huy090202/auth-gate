@@ -14,15 +14,20 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/id"
 )
 
-// AuditEntry is one line of the audit log. It never holds a key, PIN, password or token.
+// AuditEntry is one line of the audit log. It never holds a key, PIN, password
+// or token, nor a hash of one. Source is "web" or "cli". Detail is a small
+// allow-listed set of facts about the action, built field by field where the
+// action runs; its values are cut like Target.
 type AuditEntry struct {
-	AdminID, Username, Action, Target, Result, IP string
-	At                                            time.Time
+	AdminID, Username, Action, Target, Result, IP, Source string
+	Detail                                                map[string]string
+	At                                                    time.Time
 }
 
 var monthRE = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
@@ -33,7 +38,14 @@ func (st *Store) PutAudit(ctx context.Context, e AuditEntry) error {
 	it := item{
 		"pk": s("AUDIT#" + at.Format("2006-01")), "sk": s(ts(at) + "#" + id.New()),
 		"adminId": s(e.AdminID), "username": s(e.Username), "action": s(e.Action),
-		"target": s(e.Target), "result": s(e.Result), "ip": s(e.IP),
+		"target": s(e.Target), "result": s(e.Result), "ip": s(e.IP), "source": s(e.Source),
+	}
+	if len(e.Detail) > 0 {
+		m := make(map[string]types.AttributeValue, len(e.Detail))
+		for k, v := range e.Detail {
+			m[k] = s(truncate(v, maxAuditTarget))
+		}
+		it["detail"] = &types.AttributeValueMemberM{Value: m}
 	}
 	if _, err := st.DB.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(st.Table), Item: it}); err != nil {
 		return fmt.Errorf("put audit: %w", err)
@@ -70,8 +82,15 @@ func (st *Store) ListAudit(ctx context.Context, month, cursor string) ([]AuditEn
 		}
 		entries = append(entries, AuditEntry{
 			AdminID: getS(it, "adminId"), Username: getS(it, "username"), Action: getS(it, "action"),
-			Target: getS(it, "target"), Result: getS(it, "result"), IP: getS(it, "ip"), At: t,
+			Target: getS(it, "target"), Result: getS(it, "result"), IP: getS(it, "ip"), Source: getS(it, "source"), At: t,
 		})
+		if m, ok := it["detail"].(*types.AttributeValueMemberM); ok {
+			e := &entries[len(entries)-1]
+			e.Detail = make(map[string]string, len(m.Value))
+			for k := range m.Value {
+				e.Detail[k] = getS(m.Value, k)
+			}
+		}
 	}
 	next := ""
 	if len(out.LastEvaluatedKey) > 0 {
@@ -82,9 +101,13 @@ func (st *Store) ListAudit(ctx context.Context, month, cursor string) ([]AuditEn
 
 // auditNote is what a request tells the audit log about itself while it runs:
 // who the session is (filled by the session middleware, or by sign-in for the
-// account it was tried against) and what the action touched. It never holds a
-// secret; the request body and the response are not read for it.
-type auditNote struct{ AdminID, Username, Target string }
+// account it was tried against), what the action touched and a few facts about
+// it. It never holds a secret; the request body and the response are not read
+// for it, and each detail is set by the handler from a field it decoded.
+type auditNote struct {
+	AdminID, Username, Target string
+	Detail                    map[string]string
+}
 
 type noteKey struct{}
 
@@ -102,6 +125,18 @@ func setAuditActor(ctx context.Context, adminID, username string) {
 func setAuditTarget(ctx context.Context, target string) {
 	if n := noteFrom(ctx); n != nil {
 		n.Target = target
+	}
+}
+
+// setAuditDetail records one fact about the action. Keys are fixed names in the
+// handler; the value comes from a decoded field, never from a raw body, an
+// upstream error or a credential.
+func setAuditDetail(ctx context.Context, k, v string) {
+	if n := noteFrom(ctx); n != nil {
+		if n.Detail == nil {
+			n.Detail = map[string]string{}
+		}
+		n.Detail[k] = v
 	}
 }
 
@@ -164,7 +199,8 @@ func (a *App) audited(action string, target func(*http.Request) string, h http.H
 		case note.AdminID != "" || strings.HasPrefix(r.URL.Path, "/api/auth/"):
 			a.writeAudit(r, AuditEntry{
 				AdminID: note.AdminID, Username: note.Username, Action: action,
-				Target: truncate(note.Target, maxAuditTarget), Result: result, IP: a.auditIP(r), At: a.now(),
+				Target: truncate(note.Target, maxAuditTarget), Result: result, IP: a.auditIP(r), Source: "web",
+				Detail: note.Detail, At: a.now(),
 			})
 		default:
 			slog.Warn("console: write without a session", "route", r.Method+" "+r.URL.Path, "ip", a.auditIP(r), "result", result)
@@ -228,13 +264,15 @@ func (a *App) listAudit(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	type view struct {
-		AdminID  string    `json:"adminId"`
-		Username string    `json:"username"`
-		Action   string    `json:"action"`
-		Target   string    `json:"target"`
-		Result   string    `json:"result"`
-		IP       string    `json:"ip"`
-		At       time.Time `json:"at"`
+		AdminID  string            `json:"adminId"`
+		Username string            `json:"username"`
+		Action   string            `json:"action"`
+		Target   string            `json:"target"`
+		Result   string            `json:"result"`
+		IP       string            `json:"ip"`
+		Source   string            `json:"source"`
+		Detail   map[string]string `json:"detail"`
+		At       time.Time         `json:"at"`
 	}
 	out := make([]view, 0, len(entries))
 	for _, e := range entries {

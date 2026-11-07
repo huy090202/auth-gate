@@ -98,21 +98,26 @@ func tempPasswordBody(w http.ResponseWriter, status int, username, temp string) 
 
 func (a *App) createAdmin(w http.ResponseWriter, r *http.Request) error {
 	x, actor := sessionFrom(r.Context())
-	if actor.Role != RoleMaster {
-		return errForbidden
-	}
 	var in struct {
 		Username string `json:"username"`
 		Role     Role   `json:"role"`
 	}
-	if err := decodeBody(r, &in); err != nil {
-		return err
+	// Decoded first so that a refusal below still records whose account was asked for.
+	decErr := decodeBody(r, &in)
+	name, nameErr := NormalizeUsername(in.Username)
+	if decErr == nil && nameErr == nil {
+		setAuditTarget(r.Context(), name)
 	}
-	name, err := NormalizeUsername(in.Username)
-	if err != nil {
+	if actor.Role != RoleMaster {
+		return errForbidden
+	}
+	if decErr != nil {
+		return decErr
+	}
+	if nameErr != nil {
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_username"}
 	}
-	setAuditTarget(r.Context(), name)
+	setAuditDetail(r.Context(), "role", truncate(string(in.Role), 16))
 	if !validRole(in.Role) {
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_role"}
 	}
@@ -151,14 +156,16 @@ func (a *App) createAdmin(w http.ResponseWriter, r *http.Request) error {
 // right before it writes.
 func (a *App) adminTarget(r *http.Request, action string, qualify func() (string, error)) (*stepUp, Admin, Admin, error) {
 	x, actor := sessionFrom(r.Context())
+	name, err := NormalizeUsername(r.PathValue("username"))
+	if err == nil {
+		setAuditTarget(r.Context(), name) // recorded for a refusal by the role check too
+	}
 	if actor.Role != RoleMaster {
 		return nil, Admin{}, Admin{}, errForbidden
 	}
-	name, err := NormalizeUsername(r.PathValue("username"))
 	if err != nil {
 		return nil, Admin{}, Admin{}, &apiError{Status: http.StatusBadRequest, Code: "invalid_username"}
 	}
-	setAuditTarget(r.Context(), name)
 	if name == actor.Username {
 		return nil, Admin{}, Admin{}, errSelf
 	}
@@ -273,6 +280,7 @@ func (a *App) setAdminRole(w http.ResponseWriter, r *http.Request) error {
 		if err := decodeBody(r, &in); err != nil {
 			return "", err
 		}
+		setAuditDetail(r.Context(), "role", truncate(string(in.Role), 16))
 		if !validRole(in.Role) {
 			return "", &apiError{Status: http.StatusBadRequest, Code: "invalid_role"}
 		}

@@ -52,9 +52,11 @@ type Session struct {
 	Stage                   Stage
 	Epoch                   int
 	ChallengeID             string
-	RegistrationID          string
-	FactorProved            bool
-	CreatedAt, LastSeenAt   time.Time
+	// The step-up the open challenge was started for, so its verify can be audited.
+	ChallengeAction, ChallengeFactor, ChallengeTarget string
+	RegistrationID                                    string
+	FactorProved                                      bool
+	CreatedAt, LastSeenAt                             time.Time
 }
 
 var (
@@ -613,6 +615,7 @@ func (st *Store) GetSession(ctx context.Context, hash string) (Session, error) {
 		Hash: hash, AdminID: getS(it, "adminId"), Username: getS(it, "username"),
 		Stage: Stage(getS(it, "stage")), Epoch: getN(it, "epoch"),
 		ChallengeID: getS(it, "challengeId"), RegistrationID: getS(it, "registrationId"),
+		ChallengeAction: getS(it, "challengeAction"), ChallengeFactor: getS(it, "challengeFactor"), ChallengeTarget: getS(it, "challengeTarget"),
 	}
 	if v, ok := it["factorProved"].(*types.AttributeValueMemberBOOL); ok {
 		x.FactorProved = v.Value
@@ -672,6 +675,24 @@ func (st *Store) UseJTI(ctx context.Context, jti string, exp time.Time) error {
 // SetChallenge records the session's open login or step-up challenge.
 func (st *Store) SetChallenge(ctx context.Context, hash, challengeID string) error {
 	return st.setSessionRef(ctx, hash, "challengeId", s(challengeID))
+}
+
+// SetStepUpChallenge records a step-up challenge with what it was started for
+// (action, factor and target, none of them secret), for the audit of its verify.
+func (st *Store) SetStepUpChallenge(ctx context.Context, hash, challengeID, action, factor, target string) error {
+	_, err := st.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(st.Table), Key: sesKey(hash),
+		UpdateExpression:          aws.String("SET challengeId = :c, challengeAction = :a, challengeFactor = :f, challengeTarget = :t"),
+		ConditionExpression:       aws.String(exists),
+		ExpressionAttributeValues: item{":c": s(challengeID), ":a": s(action), ":f": s(factor), ":t": s(target)},
+	})
+	if dynamo.IsConditionFailed(err) {
+		return ErrSessionNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("set step-up challenge: %w", err)
+	}
+	return nil
 }
 
 // SetRegistration records the session's open passkey registration.

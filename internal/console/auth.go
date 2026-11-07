@@ -58,6 +58,17 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) error {
 	now := a.now()
 	live := found && admin.DisabledAt == nil && (admin.LockedUntil == nil || !now.Before(*admin.LockedUntil))
 	if !good || !live {
+		// The reason is for the audit item only; the answer is the same four ways.
+		reason := "wrong_password"
+		switch {
+		case !found:
+			reason = "unknown_user"
+		case admin.DisabledAt != nil:
+			reason = "disabled"
+		case !live:
+			reason = "locked"
+		}
+		setAuditDetail(ctx, "reason", reason)
 		if live { // a wrong password on a live account
 			if err := a.Store.RecordLoginFailure(ctx, admin.Username, now); err != nil && !errors.Is(err, ErrAdminNotFound) {
 				return err
