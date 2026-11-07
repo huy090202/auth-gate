@@ -1,4 +1,4 @@
-.PHONY: build test test-store lint check dev console-dev
+.PHONY: build test test-store lint check dev console-dev console-build
 
 build:
 	go build -o bin/auth-gate ./cmd/auth-gate
@@ -28,3 +28,10 @@ console-dev:
 	docker compose up -d dynamodb
 	@test -f .env.console || { echo ".env.console is missing (ADMIN_KEY, CLIENT_KEY, AUTHGATE_CLIENT_ID)" >&2; exit 1; }
 	set -a && . ./.env.console && set +a && CONSOLE_DEV=1 TABLE_NAME=console-dev DYNAMO_ENDPOINT=http://localhost:8000 AUTHGATE_BASE_URL=http://localhost:8080 go run ./cmd/console
+
+# Same flags as scripts/setup-and-deploy/02-build.sh: linux/arm64, static, zipped for SAM.
+console-build:
+	mkdir -p bin/console
+	rm -f bin/console/bootstrap bin/console/bootstrap.zip
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/console/bootstrap ./cmd/console
+	cd bin/console && zip -q bootstrap.zip bootstrap

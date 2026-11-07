@@ -30,6 +30,15 @@
       ]
     },
     {
+      "Sid": "ManageTheConsoleSite",
+      "Effect": "Allow",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::auth-gate-console-*",
+        "arn:aws:s3:::auth-gate-console-*/*"
+      ]
+    },
+    {
       "Sid": "ManageTheFunctions",
       "Effect": "Allow",
       "Action": "lambda:*",
@@ -48,7 +57,9 @@
         "iam:GetRolePolicy",
         "iam:DeleteRolePolicy",
         "iam:AttachRolePolicy",
-        "iam:DetachRolePolicy"
+        "iam:DetachRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies"
       ],
       "Resource": "arn:aws:iam::826113468815:role/auth-gate-*"
     },
@@ -147,7 +158,27 @@
         "cloudfront:DeleteCachePolicy",
         "cloudfront:ListCachePolicies",
         "cloudfront:GetOriginRequestPolicy",
-        "cloudfront:ListOriginRequestPolicies"
+        "cloudfront:ListOriginRequestPolicies",
+        "cloudfront:CreateOriginAccessControl",
+        "cloudfront:GetOriginAccessControl",
+        "cloudfront:GetOriginAccessControlConfig",
+        "cloudfront:UpdateOriginAccessControl",
+        "cloudfront:DeleteOriginAccessControl",
+        "cloudfront:ListOriginAccessControls",
+        "cloudfront:CreateResponseHeadersPolicy",
+        "cloudfront:GetResponseHeadersPolicy",
+        "cloudfront:UpdateResponseHeadersPolicy",
+        "cloudfront:DeleteResponseHeadersPolicy",
+        "cloudfront:ListResponseHeadersPolicies",
+        "cloudfront:CreateFunction",
+        "cloudfront:DescribeFunction",
+        "cloudfront:GetFunction",
+        "cloudfront:UpdateFunction",
+        "cloudfront:PublishFunction",
+        "cloudfront:DeleteFunction",
+        "cloudfront:ListFunctions",
+        "cloudfront:CreateInvalidation",
+        "cloudfront:GetInvalidation"
       ],
       "Resource": "*"
     },
@@ -161,7 +192,10 @@
         "ssm:DeleteParameter",
         "ssm:AddTagsToResource"
       ],
-      "Resource": "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate/*"
+      "Resource": [
+        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate/*",
+        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate-console/*"
+      ]
     },
     {
       "Sid": "OptionalCustomDomain",

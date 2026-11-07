@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Deploy stack auth-gate-console-$STAGE: write origin-verify if absent, build the
+# Lambda and the web app, sam deploy, upload the site, invalidate, print the URLs.
+# Reads AuthGateBaseUrl from the auth-gate stack ($AUTHGATE_STACK). AUTHGATE_CLIENT_ID
+# may be empty on the first pass: deploy, run register-client.sh stg (it needs this
+# stack's BaseUrl), deploy again with AUTHGATE_CLIENT_ID set.
+set -euo pipefail
+# shellcheck source=lib.sh
+# shellcheck source-path=SCRIPTDIR
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+command -v jq >/dev/null || die "jq is required"
+command -v openssl >/dev/null || die "openssl is required"
+client_id="${AUTHGATE_CLIENT_ID:-}"
+
+tmp="$(mktemp -d)"
+chmod 700 "$tmp"
+trap 'rm -rf "$tmp"' EXIT
+
+# origin-verify is a plain String: CloudFront origin headers cannot resolve a
+# SecureString. Never overwritten: only ParameterNotFound means absent. The value
+# goes openssl -> jq stdin -> 0600 file -> --cli-input-json, never through any argv.
+name="$PARAM_PREFIX/origin-verify"
+if err="$(aws ssm get-parameter --region "$REGION" --name "$name" 2>&1 >/dev/null)"; then
+  echo "kept $name (already exists)"
+elif [[ "$err" == *ParameterNotFound* ]]; then
+  (umask 077 && openssl rand -hex 32 | jq -R --arg n "$name" '{Name: $n, Type: "String", Value: .}' >"$tmp/param.json")
+  aws ssm put-parameter --region "$REGION" --cli-input-json "file://$tmp/param.json" >/dev/null
+  rm -f "$tmp/param.json"
+  echo "wrote $name (String)"
+else
+  die "cannot read $name: $err"
+fi
+
+authgate_url="$(output "$AUTHGATE_STACK" BaseUrl)"
+[[ -n "$authgate_url" ]] || die "stack $AUTHGATE_STACK has no BaseUrl output; deploy auth-gate first"
+
+cd "$ROOT"
+make console-build
+pnpm --filter console-web run build
+[[ -f console-web/dist/index.html ]] || die "console-web/dist/index.html missing after the build"
+
+# sam rejects empty overrides ("AuthGateClientId="); the template defaults it to "".
+params=("Stage=$STAGE" "AuthGateBaseUrl=${authgate_url%/}")
+[[ -z "$client_id" ]] || params+=("AuthGateClientId=$client_id")
+sam deploy --template-file "$ROOT/infra/console.yaml" \
+  --stack-name "$STACK" --region "$REGION" \
+  --capabilities CAPABILITY_IAM --resolve-s3 \
+  --no-confirm-changeset --no-fail-on-empty-changeset \
+  --parameter-overrides "${params[@]}"
+
+bucket="$(output "$STACK" SiteBucket)"
+dist="$(output "$STACK" DistributionId)"
+[[ -n "$bucket" && -n "$dist" ]] || die "stack $STACK has no SiteBucket or DistributionId output"
+aws s3 sync "$ROOT/console-web/dist" "s3://$bucket" --delete --region "$REGION"
+aws cloudfront create-invalidation --distribution-id "$dist" --paths '/*' >/dev/null
+echo "invalidated $dist"
+
+echo "BaseUrl: $(output "$STACK" BaseUrl)"
+echo "RawConsoleUrl: $(output "$STACK" RawConsoleUrl)"
+if [[ -z "$client_id" ]]; then
+  echo "AUTHGATE_CLIENT_ID is empty: /api is down until the second pass: run register-client.sh stg and deploy again"
+fi
