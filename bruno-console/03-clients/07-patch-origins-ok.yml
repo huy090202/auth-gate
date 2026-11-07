@@ -1,0 +1,38 @@
+info:
+  name: "Patch origins with the token (200)"
+  type: http
+  seq: 7
+
+http:
+  method: PATCH
+  url: "{{baseUrl}}/api/clients/{{clientId}}"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+    - name: x-step-up-token
+      value: "{{stepUpToken}}"
+  body:
+    type: json
+    data: |-
+      { "origins": ["http://localhost:3000", "http://localhost:3001"] }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+        test("origins changed", function() {
+          expect(res.getBody().origins).to.deep.equal(["http://localhost:3000", "http://localhost:3001"]);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 200.** The token goes in `x-step-up-token` and is spent by this call.

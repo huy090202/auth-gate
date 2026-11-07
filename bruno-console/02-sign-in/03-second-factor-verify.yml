@@ -1,0 +1,38 @@
+info:
+  name: "Second factor verify (PIN)"
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/auth/second-factor/verify"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "challengeId": "{{challengeId}}", "pin": "{{pin}}" }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+        test("the session is full", function() {
+          expect(res.getBody().stage).to.equal("full");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 200 `{"stage":"full"}`.** The cookie is rotated to a full session. A wrong
+  PIN is 401 and counts against AuthGate's attempt limit, so check `pin` before you
+  run this.

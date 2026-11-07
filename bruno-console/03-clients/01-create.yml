@@ -1,0 +1,46 @@
+info:
+  name: "Create a client (201)"
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/clients"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "name": "bruno console demo", "rpId": "localhost", "origins": ["http://localhost:3000"] }
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.getStatus() === 201) {
+          bru.setVar("clientId", res.getBody().clientId);
+        }
+    - type: tests
+      code: |-
+        test("201", function() {
+          expect(res.getStatus()).to.equal(201);
+        });
+
+        test("a ULID client id", function() {
+          expect(res.getBody().clientId).to.match(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+        });
+
+        test("a key is returned, and only here", function() {
+          expect(res.getBody().accessKey).to.be.a("string").and.not.equal("");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 201.** Creates a throwaway client and captures only its `clientId`. The
+  `accessKey` in the answer is shown once; the collection does not keep it.

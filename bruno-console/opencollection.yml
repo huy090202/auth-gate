@@ -1,0 +1,47 @@
+opencollection: 1.0.0
+
+info:
+  name: "[External] Auth Gate Console"
+
+docs:
+  content: |-
+    ## AuthGate Console
+
+    The Console is the admin web app and its API, behind one CloudFront
+    distribution. This collection talks to the API the way the browser does: a
+    session cookie, JSON bodies, and a step-up token for sensitive changes.
+
+    | folder | needs | what it shows |
+    | --- | --- | --- |
+    | `01-boundary` | nothing | what the API refuses; `scripts/console/smoke.sh` runs this one on stg |
+    | `02-sign-in` | an enrolled admin with a PIN | password, second factor, `/api/me` |
+    | `03-clients` | the sign-in above | list, rename, and a step-up for origins |
+
+    ### Variables
+
+    `baseUrl`, `username`, `password`, `pin` come from the environment.
+    `clientId`, `challengeId`, `stepUpToken` are captured at run time. The
+    collection never stores a client key.
+
+    ### Running it
+
+    ```bash
+    pnpm install   # once, at the repo root
+    make dev && make console-dev   # AuthGate on :8080, the Console on :8788
+    cd bruno-console/environments && cp local.example.yml local.yml   # fill in
+    cd .. && ../node_modules/.bin/bru run --env local -r
+    ```
+
+    Use the pinned binary, not `npx`. Order matters: the folders run `01`, `02`,
+    `03`, and `01` must run before `02` puts a cookie in the jar.
+
+    ### Rate limit
+
+    `/api/auth/*` allows a burst of 10, then one request per 6 seconds, per IP
+    (in Dev, the socket address). A full run uses five tokens. Wait a minute
+    before running it again; the limiter is not switched off.
+
+    Real environment files are gitignored. Never commit a password or a PIN.
+  type: text/markdown
+bundled: false
+extensions: {}

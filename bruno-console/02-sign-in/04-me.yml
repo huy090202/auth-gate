@@ -1,0 +1,36 @@
+info:
+  name: "Me (full session)"
+  type: http
+  seq: 4
+
+http:
+  method: GET
+  url: "{{baseUrl}}/api/me"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+        test("the signed-in admin, at the full stage", function() {
+          const b = res.getBody();
+          expect(b.username).to.equal(bru.getEnvVar("username").toLowerCase());
+          expect(b.stage).to.equal("full");
+          expect(b.mustChangePassword).to.equal(false);
+        });
+
+        test("the PIN is a registered factor", function() {
+          expect(res.getBody().factors.pin).to.equal(true);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 200.** Proves the cookie from `01` and `03` is in the jar.

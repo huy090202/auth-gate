@@ -1,0 +1,34 @@
+info:
+  name: "Unknown API path (404)"
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{baseUrl}}/api/nope"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("404", function() {
+          expect(res.getStatus()).to.equal(404);
+        });
+
+        test("JSON, not the SPA page", function() {
+          expect(res.getHeader('content-type')).to.include('application/json');
+        });
+
+        test('body is {"error":"not_found"}', function() {
+          expect(res.getBody()).to.deep.equal({ error: "not_found" });
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 404 and `{"error":"not_found"}`.** An unknown path under `/api/`
+  must not answer with the HTML shell: a client that expects JSON would read a page.

@@ -1,0 +1,25 @@
+info:
+  name: Sign in
+  type: folder
+  seq: 2
+
+request: {}
+
+docs:
+  content: |-
+    ## Password, then a second factor
+
+    Needs an admin who is **already enrolled with a PIN** and has already changed the
+    temporary password. A fresh admin signs in to `{"next":"enroll"}` instead and has
+    to be enrolled in the browser. Fill `username`, `password` and `pin` in your own
+    `environments/local.yml`. The PIN must be non-sequential: AuthGate rejects `123456`.
+
+    The session cookie lives in Bruno's cookie jar, so the requests after `01` are
+    signed in. In Dev mode the cookie is not `Secure`, which is why it works over
+    plain http on localhost.
+
+    This folder spends three tokens of the per-IP limiter on `/api/auth/*`
+    (burst 10, then one per 6 seconds), and `01-boundary` two. A full run stays
+    under the burst; running the collection again straight away may meet a 429, so
+    wait a minute between runs. The limiter is never switched off.
+  type: text/markdown
