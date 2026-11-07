@@ -1,0 +1,36 @@
+{
+  "publicKey": {
+    "rp": {
+      "name": "auth-gate",
+      "id": "localhost"
+    },
+    "user": {
+      "name": "alice",
+      "displayName": "Alice",
+      "id": "ZqUJXpXb6EpQ1yVUn95d1nzO_d4--Rzdt7a-0zDCq_BIZQvncInXBrlz-Rh6N4rqlvwyGmcsW9edyZnSFi3bgw"
+    },
+    "challenge": "Efwq-HaNmttq13xhNZFrqX04oTAu2d_w3Q7YonCP7eU",
+    "pubKeyCredParams": [
+      {
+        "type": "public-key",
+        "alg": -7
+      },
+      {
+        "type": "public-key",
+        "alg": -257
+      }
+    ],
+    "timeout": 300000,
+    "excludeCredentials": [
+      {
+        "type": "public-key",
+        "id": "nKsBnFjbmgthSewC3LOpooLJofvtTl2qmb3w4W3dB6M"
+      }
+    ],
+    "authenticatorSelection": {
+      "residentKey": "preferred",
+      "userVerification": "preferred"
+    },
+    "attestation": "none"
+  }
+}

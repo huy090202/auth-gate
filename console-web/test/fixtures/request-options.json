@@ -1,0 +1,14 @@
+{
+  "publicKey": {
+    "challenge": "eJAYUQowmoAjvTCa5ugpqdtad6jUR-hXKM4UQaGR4IQ",
+    "timeout": 300000,
+    "rpId": "localhost",
+    "allowCredentials": [
+      {
+        "type": "public-key",
+        "id": "x3zaq9ZePW-JPaAuYXsUfPtWK9rXm21y6iwYDQSzjNg"
+      }
+    ],
+    "userVerification": "preferred"
+  }
+}

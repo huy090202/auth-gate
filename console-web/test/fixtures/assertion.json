@@ -1,0 +1,12 @@
+{
+  "id": "x3zaq9ZePW-JPaAuYXsUfPtWK9rXm21y6iwYDQSzjNg",
+  "rawId": "x3zaq9ZePW-JPaAuYXsUfPtWK9rXm21y6iwYDQSzjNg",
+  "type": "public-key",
+  "response": {
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZUpBWVVRb3dtb0FqdlRDYTV1Z3BxZHRhZDZqVVItaFhLTTRVUWFHUjRJUSIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6NTE3MyIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+    "authenticatorData": "tAfthhBDXW1l14-P0uNgtsmulIPMLZ2SwnBxChp6wtFhEp2VIw",
+    "signature": "MEUCIBC1XWLD3i0bz92ttYjPKZgYePx5RzHigQ7-UITdeKIkAiEAf5fG00Yvs7i272RNkPdnKpeIlihfvS-Cp_3cJVOhcmM",
+    "userHandle": null
+  },
+  "clientExtensionResults": {}
+}
