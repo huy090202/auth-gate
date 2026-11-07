@@ -1,4 +1,4 @@
-import { Badge, Button, NativeSelect, Table, Text } from '@mantine/core';
+import { Badge, Button, Select, Table, Text } from '@mantine/core';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { consoleTitle, useTitle } from '../brand';
 import { api } from '../lib/api';
@@ -14,6 +14,7 @@ import type { Strings } from '../strings';
 import { ChevronIcon, IdChip, InlineLoading, LoadFailedInline, PageHead } from '../ui';
 
 const ALL = '__all__';
+const LONG_LIST = 8; // a list longer than this can be searched
 const NONE = '__none__'; // an entry with no actor name (a failed sign-in of an unknown account)
 
 function Value({ k, v, t }: { k: string; v: string; t: Strings }) {
@@ -70,6 +71,7 @@ function AuditBody({ me }: { me: Me }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [open, setOpen] = useState<Set<number>>(new Set());
+  const [seen, setSeen] = useState<Set<number>>(new Set()); // rows opened at least once keep their content for the close animation
   const [fAction, setFAction] = useState(ALL);
   const [fResult, setFResult] = useState(ALL);
   const [fActor, setFActor] = useState(ALL);
@@ -97,6 +99,7 @@ function AuditBody({ me }: { me: Me }) {
     setEntries([]);
     setNext('');
     setOpen(new Set());
+    setSeen(new Set());
     setFAction(ALL);
     setFResult(ALL);
     setFActor(ALL);
@@ -132,24 +135,28 @@ function AuditBody({ me }: { me: Me }) {
     if (fResult.startsWith('f:')) return code === fResult.slice(2);
     return true;
   }
-  const toggle = (i: number) =>
+  const toggle = (i: number) => {
+    setSeen((s) => (s.has(i) ? s : new Set(s).add(i)));
     setOpen((s) => {
       const n = new Set(s);
       if (!n.delete(i)) n.add(i);
       return n;
     });
+  };
 
   return (
     <Shell me={me}>
       <PageHead title={t.screens.audit} intro={t.audit.intro} />
       <section className="panel glass">
         <div className="toolbar">
-          <NativeSelect label={t.audit.month} value={month} onChange={(e) => setMonth(e.currentTarget.value)}
+          <Select label={t.audit.month} value={month} onChange={(v) => v !== null && setMonth(v)}
             data={months.map((m) => ({ value: m, label: monthLabel(m, t) }))} />
-          <NativeSelect label={t.audit.filterAction} value={fAction} onChange={(e) => setFAction(e.currentTarget.value)}
-            data={[{ value: ALL, label: t.audit.all }, ...actionOptions]} />
-          <NativeSelect label={t.audit.filterResult} value={fResult} onChange={(e) => setFResult(e.currentTarget.value)} data={resultOptions} />
-          <NativeSelect label={t.audit.filterActor} value={fActor} onChange={(e) => setFActor(e.currentTarget.value)} data={actorOptions} />
+          <Select label={t.audit.filterAction} value={fAction} onChange={(v) => v !== null && setFAction(v)}
+            data={[{ value: ALL, label: t.audit.all }, ...actionOptions]} searchable={actionOptions.length > LONG_LIST} />
+          <Select label={t.audit.filterResult} value={fResult} onChange={(v) => v !== null && setFResult(v)} data={resultOptions}
+            searchable={resultOptions.length > LONG_LIST} />
+          <Select label={t.audit.filterActor} value={fActor} onChange={(v) => v !== null && setFActor(v)} data={actorOptions}
+            searchable={actorOptions.length > LONG_LIST} />
         </div>
         <Text fz="xs" c="dimmed" mt="sm">{t.audit.filtersNote}</Text>
         {error !== null && entries.length === 0 ? (
@@ -169,11 +176,11 @@ function AuditBody({ me }: { me: Me }) {
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th className="col-toggle"><span className="sr-only">{t.audit.show}</span></Table.Th>
-                      <Table.Th>{t.audit.colTime}</Table.Th>
-                      <Table.Th>{t.audit.colActor}</Table.Th>
+                      <Table.Th className="col-time">{t.audit.colTime}</Table.Th>
+                      <Table.Th className="col-actor">{t.audit.colActor}</Table.Th>
                       <Table.Th>{t.audit.colAction}</Table.Th>
-                      <Table.Th>{t.audit.colTarget}</Table.Th>
-                      <Table.Th>{t.audit.colResult}</Table.Th>
+                      <Table.Th className="col-target">{t.audit.colTarget}</Table.Th>
+                      <Table.Th className="col-result">{t.audit.colResult}</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -206,12 +213,17 @@ function AuditBody({ me }: { me: Me }) {
                             </Table.Td>
                             <Table.Td><ResultBadge result={e.result} t={t} /></Table.Td>
                           </Table.Tr>
-                          {isOpen && (
-                            <Table.Tr className="row-detail" id={`audit-d-${i}`}>
-                              <Table.Td />
-                              <Table.Td colSpan={5}><Details e={e} t={t} /></Table.Td>
-                            </Table.Tr>
-                          )}
+                          {/* Always in the table so the height can transition both ways; the content is built on
+                              the first open, and `inert` keeps a closed one out of reach of keyboard and readers. */}
+                          <Table.Tr className="row-detail" id={`audit-d-${i}`} data-open={isOpen ? 'true' : 'false'}>
+                            <Table.Td colSpan={6}>
+                              <div className="detail-reveal">
+                                <div className="detail-clip" inert={!isOpen}>
+                                  <div className="detail-body">{seen.has(i) && <Details e={e} t={t} />}</div>
+                                </div>
+                              </div>
+                            </Table.Td>
+                          </Table.Tr>
                         </Fragment>
                       );
                     })}

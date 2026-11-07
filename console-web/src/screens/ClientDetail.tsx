@@ -10,6 +10,7 @@ import { SessionGuard, type Me } from '../session';
 import { Shell } from '../shell';
 import { ShownOnce } from '../ShownOnce';
 import { useStepUp } from '../stepup';
+import { useToast } from '../toast';
 import { IdChip, InlineLoading, LoadFailedInline, PageHead, StatusBadge } from '../ui';
 import { ClientFields, formFrom, positive, whole, type FormErrors, type FormState } from './clientForm';
 import { Feedback, useAction } from './factors';
@@ -32,6 +33,7 @@ function Detail({ me, id }: { me: Me; id: string }) {
   const t = useStrings();
   useTitle(consoleTitle(t.screens.clientDetail));
   const { stepUp, modal } = useStepUp();
+  const toast = useToast();
   const [client, setClient] = useState<ClientView | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [form, setForm] = useState<FormState | null>(null);
@@ -111,7 +113,7 @@ function Detail({ me, id }: { me: Me; id: string }) {
       body.rateLimit = { burst: parseWhole(form.rateBurst), perSecond: parsePositive(form.ratePerSecond) };
     }
     const names = Object.keys(body);
-    if (names.length === 0) return void settings.run(async () => t.clientDetail.nothingToSave);
+    if (names.length === 0) return toast(t.clientDetail.nothingToSave, 'info');
     await settings.run(async () => {
       if (names.length === 1 && names[0] === 'name') {
         await guard(() => api(path, { method: 'PATCH', body }));
@@ -141,7 +143,7 @@ function Detail({ me, id }: { me: Me; id: string }) {
           <div className="form-foot">
             <Button type="submit" loading={settings.busy} disabled={own || settings.waiting}>{t.clientDetail.save}</Button>
           </div>
-          <Feedback error={settings.error} note={settings.note} />
+          <Feedback error={settings.error} />
         </form>
 
         <section className="panel glass">
@@ -169,7 +171,7 @@ function Detail({ me, id }: { me: Me; id: string }) {
               {t.clientDetail.revoke}
             </Button>
           </ActionRow>
-          <Feedback error={keys.error} note={keys.note} />
+          <Feedback error={keys.error} />
         </section>
 
         <section className="panel glass">
@@ -196,7 +198,7 @@ function Detail({ me, id }: { me: Me; id: string }) {
               </Button>
             </ActionRow>
           )}
-          <Feedback error={state.error} note={state.note} />
+          <Feedback error={state.error} />
         </section>
 
         <section className="panel glass">
@@ -222,7 +224,7 @@ function Detail({ me, id }: { me: Me; id: string }) {
               </Button>
             </form>
           </ActionRow>
-          <Feedback error={purge.error} note={purge.note} />
+          <Feedback error={purge.error} />
         </section>
       </div>
       {dialogs}

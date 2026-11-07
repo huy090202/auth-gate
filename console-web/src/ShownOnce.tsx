@@ -59,7 +59,7 @@ export function ShownOnce({ title, label, value, onClose }: { title: string; lab
           <Text fz="sm" fw={600} id="shown-once-label" mb={6}>{label}</Text>
           <div className="secret-box">
             <code className="secret-value" aria-labelledby="shown-once-label">{value}</code>
-            <CopyButton value={value} />
+            <CopyButton value={value} autoFocus />
           </div>
         </div>
         <Checkbox label={t.shownOnce.saved} checked={saved} onChange={(e) => setSaved(e.currentTarget.checked)} />

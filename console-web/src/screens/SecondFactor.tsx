@@ -1,5 +1,5 @@
 import { Anchor, Button, Group, PasswordInput, Stack, Text } from '@mantine/core';
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router';
 import { consoleTitle, useTitle } from '../brand';
 import { ApiError, api } from '../lib/api';
@@ -39,6 +39,7 @@ export function FactorForm<T>({ factors, start, verify, onDone }: {
   const [pin, setPin] = useState('');
   const [busy, setBusy] = useState<Factor | null>(null);
   const inFlight = useRef(false);
+  const pinInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState('');
   const [notEnrolled, setNotEnrolled] = useState(false);
   const [lockedUntil, setLockedUntil] = useState<string | null>(null);
@@ -77,6 +78,11 @@ export function FactorForm<T>({ factors, start, verify, onDone }: {
     }
   };
 
+  // The PIN field is disabled while a request runs, which drops its focus; a wrong PIN gets it back.
+  useEffect(() => {
+    if (busy === null && error) pinInput.current?.focus();
+  }, [busy, error]);
+
   const submitPin = (ev: FormEvent) => {
     ev.preventDefault();
     void run('pin');
@@ -94,7 +100,7 @@ export function FactorForm<T>({ factors, start, verify, onDone }: {
     <Stack>
       {factors.pin && (
         <form onSubmit={submitPin} className="factor-pin">
-          <PasswordInput label={t.factor.pin} value={pin} onChange={(e) => setPin(e.currentTarget.value)} required
+          <PasswordInput ref={pinInput} data-autofocus autoFocus label={t.factor.pin} value={pin} onChange={(e) => setPin(e.currentTarget.value)} required
             inputMode="numeric" autoComplete="one-time-code" disabled={busy !== null} />
           <Button type="submit" loading={busy === 'pin'} disabled={busy === 'webauthn'}>{t.factor.verifyPin}</Button>
         </form>
@@ -102,7 +108,8 @@ export function FactorForm<T>({ factors, start, verify, onDone }: {
       {factors.pin && factors.webauthn && <Text c="dimmed" fz="sm">{t.factor.or}</Text>}
       {factors.webauthn && (
         <Group>
-          <Button variant={factors.pin ? 'default' : 'filled'} loading={busy === 'webauthn'} disabled={busy === 'pin'}
+          {/* A passkey-only user has no field: the button takes the focus (it only focuses, the prompt still needs a press). */}
+          <Button data-autofocus={factors.pin ? undefined : true} autoFocus={!factors.pin} variant={factors.pin ? 'default' : 'filled'} loading={busy === 'webauthn'} disabled={busy === 'pin'}
             onClick={() => void run('webauthn')}>
             {t.factor.usePasskey}
           </Button>

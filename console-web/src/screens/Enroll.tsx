@@ -66,7 +66,7 @@ export function Enroll() {
                     await api('/api/me/password', { body: { currentPassword: cur, newPassword: next } });
                     await reload();
                   }, '', 'pwd')} />
-              <Feedback error={pwd.error} note={pwd.note} />
+              <Feedback error={pwd.error} />
             </li>
           )}
           {needFactor && (
@@ -89,7 +89,7 @@ export function Enroll() {
                   {t.passkey.add}
                 </Button>
               </Group>
-              <Feedback error={factor.error} note={factor.note} />
+              <Feedback error={factor.error} />
             </li>
           )}
         </ol>

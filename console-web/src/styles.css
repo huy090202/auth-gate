@@ -222,22 +222,40 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 .chip { padding: 2px 10px; border-radius: 999px; font-size: 0.8125rem; background: var(--accent-soft); color: var(--mantine-color-text); }
 .chip-mono { font-family: var(--mantine-font-family-monospace); font-size: 0.78rem; }
 
-/* Audit: a row opens into labelled pairs. */
-.audit-table .col-toggle { width: 44px; padding-inline: 4px; }
+/* Audit: a row opens into labelled pairs. Fixed layout: the widths below come from the header cells, so
+   no cell's content, however long, and no open row can move another column. */
+.audit-table { table-layout: fixed; min-width: 980px; }
+.audit-table .col-toggle { width: 48px; padding-inline: 4px; }
+.audit-table .col-time { width: 176px; }
+.audit-table .col-actor { width: 176px; }
+.audit-table .col-target { width: 196px; }
+.audit-table .col-result { width: 200px; }
+.audit-table td { overflow-wrap: anywhere; }
+.audit-table .cell-nowrap { white-space: normal; }
+.audit-table .mantine-Badge-root { height: auto; min-height: 22px; padding-block: 3px; white-space: normal; text-align: center; line-height: 1.3; }
+.audit-table .mantine-Badge-label { white-space: normal; }
 .row-toggle {
   display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; cursor: pointer;
   background: transparent; color: var(--mantine-color-dimmed);
 }
 .row-toggle:hover { background: var(--nav-hover); color: var(--mantine-color-text); }
-.row-toggle svg { transition: transform 150ms ease; }
+.row-toggle svg { transition: transform 180ms ease; }
 .row-toggle[aria-expanded='true'] svg { transform: rotate(90deg); }
-@media (prefers-reduced-motion: reduce) { .row-toggle svg { transition: none; } }
 .audit-table .row-open td { border-bottom-color: transparent; }
-.audit-table .row-detail td { padding-block: 4px 20px; background: var(--accent-soft); }
-.audit-table .row-detail td:first-child { background: var(--accent-soft); }
-.detail-grid { display: grid; grid-template-columns: minmax(130px, 220px) 1fr; gap: 12px 24px; margin: 0; padding: 12px 8px 0; }
+/* The detail row is always there. Closed, it is 0 high: no padding or border of its own on the cell. */
+.audit-table .row-detail { border: 0; }
+.audit-table .row-detail td { border: 0; padding: 0; background: var(--accent-soft); }
+.audit-table tbody tr.row-detail:last-child td { border: 0; }
+.detail-reveal { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 180ms ease, visibility 0s linear 180ms; }
+.row-detail[data-open='true'] .detail-reveal { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 180ms ease, visibility 0s; }
+.detail-clip { min-height: 0; overflow: hidden; }
+.detail-body { padding: 8px 16px 20px 52px; border-bottom: 1px solid var(--mantine-color-default-border); }
+@media (prefers-reduced-motion: reduce) {
+  .row-toggle svg, .detail-reveal, .row-detail[data-open='true'] .detail-reveal { transition: none; }
+}
+.detail-grid { display: grid; grid-template-columns: 160px minmax(0, 1fr); align-items: baseline; gap: 10px 24px; margin: 0; padding: 4px 0 0; }
 .detail-grid dt { font-size: 0.8125rem; font-weight: 600; color: var(--mantine-color-dimmed); }
-.detail-grid dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-size: 0.9375rem; }
+.detail-grid dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-size: 0.9375rem; line-height: 1.5; }
 .detail-grid .detail-empty { grid-column: 1 / -1; }
 .more-row { display: flex; justify-content: center; margin-top: 24px; }
 
@@ -262,9 +280,48 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 .secret-value { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; user-select: all; font-family: var(--mantine-font-family-monospace); font-size: 0.9375rem; }
 .panel .mantine-Checkbox-root { margin-top: 2px; }
 
-@media (max-width: 520px) { .table-wrap { margin-inline: -18px; padding-inline: 18px; } .detail-grid { grid-template-columns: 1fr; gap: 4px; } .detail-grid dd { margin-bottom: 10px; } }
+@media (max-width: 520px) { .table-wrap { margin-inline: -18px; padding-inline: 18px; } .detail-grid { grid-template-columns: 1fr; gap: 2px; } .detail-grid dd { margin-bottom: 10px; } .detail-body { padding-left: 16px; } }
 
 .page-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-top: 14px; }
 .data-table .mantine-Badge-root { max-width: none; flex-shrink: 0; white-space: nowrap; }
 .data-table .mantine-Badge-label { overflow: visible; text-overflow: clip; }
 .data-table td:first-child:not(.col-toggle) { min-width: 140px; }
+
+/* Select: Mantine's Combobox, in the glass language. The list is in a portal, so it is styled by its static class. */
+.mantine-Select-input { cursor: pointer; }
+.mantine-Select-dropdown {
+  padding: 6px; border-radius: 12px; border: 1px solid var(--glass-border); outline: 1px solid var(--glass-edge); outline-offset: -1px;
+  background: var(--glass-strong); backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: var(--glass-shadow); min-width: 200px;
+}
+.mantine-Select-options { display: grid; gap: 2px; }
+.mantine-Select-option {
+  min-height: 40px; padding: 8px 12px; border-radius: 8px; font-size: 0.9375rem; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer;
+}
+.mantine-Select-option[data-combobox-selected], .mantine-Select-option:hover { background: var(--nav-hover); color: var(--mantine-color-text); }
+.mantine-Select-option[data-checked] { background: var(--accent-soft); color: var(--accent-text); font-weight: 650; }
+.mantine-Select-option[data-checked] svg { color: var(--accent-text); }
+.mantine-Select-option[data-combobox-disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* Toast: top right, under the sticky header. Enter and exit are CSS animations; reduced motion turns them off. */
+.toast-stack {
+  position: fixed; z-index: 400; top: calc(var(--header-h) + 12px); right: clamp(12px, 3vw, 24px);
+  display: grid; gap: 10px; width: min(380px, calc(100vw - 24px)); pointer-events: none;
+}
+.toast {
+  pointer-events: auto; display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 14px; border-radius: 12px;
+  background: var(--glass-strong); animation: toast-in 180ms ease both;
+}
+.toast[data-leaving='true'] { animation: toast-out 180ms ease both; }
+.toast-icon { flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin-top: 1px; color: var(--accent-text); }
+.toast[data-kind='info'] .toast-icon { color: var(--mantine-color-dimmed); }
+.toast-text { flex: 1; min-width: 0; padding-top: 2px; font-size: 0.9375rem; line-height: 1.45; overflow-wrap: anywhere; }
+.toast-close {
+  flex: none; display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--mantine-color-dimmed);
+}
+.toast-close:hover { background: var(--nav-hover); color: var(--mantine-color-text); }
+@keyframes toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes toast-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(16px); } }
+@media (prefers-reduced-motion: reduce) { .toast, .toast[data-leaving='true'] { animation: none; } }
+@media (max-width: 768px) { .toast-stack { top: calc(var(--header-h) + 8px); } }

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, api } from '../lib/api';
 import { explain, waitSeconds } from '../lib/explain';
 import { useStrings } from '../lib/i18n';
+import { useToast } from '../toast';
 import { serializeCredential, toCreationOptions } from '../lib/webauthn';
 import { isCancelled } from './SecondFactor';
 
@@ -13,10 +14,10 @@ import { isCancelled } from './SecondFactor';
  */
 export function useAction() {
   const t = useStrings();
+  const toast = useToast();
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const inFlight = useRef(false);
   const [error, setError] = useState('');
-  const [note, setNote] = useState('');
   const [waiting, setWaiting] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -31,12 +32,11 @@ export function useAction() {
     inFlight.current = true;
     setBusyKey(key);
     setError('');
-    setNote('');
     try {
       const done = await fn();
       if (done === false) return false;
-      // A step that knows more than the caller did beforehand (a count, say) returns its own note.
-      setNote(typeof done === 'string' ? done : okNote);
+      // A step that knows more than the caller did beforehand (a count, say) returns its own note, shown as a toast.
+      toast(typeof done === 'string' ? done : okNote);
       return true;
     } catch (e) {
       if (isCancelled(e)) return false;
@@ -56,16 +56,12 @@ export function useAction() {
     }
   };
   /** `busy`: some action is in flight (others may be disabled). `loading(key)`: only that action's button spins. */
-  return { busy: busyKey !== null, loading: (key: string) => busyKey === key, error, note, waiting, run, setError };
+  return { busy: busyKey !== null, loading: (key: string) => busyKey === key, error, waiting, run, setError };
 }
 
-export function Feedback({ error, note }: { error: string; note: string }) {
-  return (
-    <>
-      {error && <Text c="red.7" fz="sm" role="alert">{error}</Text>}
-      {note && <Text c="green.8" fz="sm" role="status">{note}</Text>}
-    </>
-  );
+/** The inline error of an action. Success goes to a toast (see toast.tsx), never here. */
+export function Feedback({ error }: { error: string }) {
+  return error ? <Text c="red.7" fz="sm" role="alert">{error}</Text> : null;
 }
 
 /** Two matching PIN fields. `onSave` gets the PIN; the form clears when it resolves true. */

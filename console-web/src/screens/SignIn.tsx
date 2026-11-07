@@ -47,7 +47,7 @@ export function SignIn() {
         <Stack gap="md">
           <h1>{t.screens.signIn}</h1>
           <Text c="dimmed" fz="sm">{t.signIn.intro}</Text>
-          <TextInput label={t.signIn.username} value={username} onChange={(e) => setUsername(e.currentTarget.value)} required
+          <TextInput data-autofocus autoFocus label={t.signIn.username} value={username} onChange={(e) => setUsername(e.currentTarget.value)} required
             autoComplete="username" autoCapitalize="none" spellCheck={false} disabled={busy} />
           <PasswordInput label={t.signIn.password} value={password} onChange={(e) => setPassword(e.currentTarget.value)} required
             autoComplete="current-password" disabled={busy} />

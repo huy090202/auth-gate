@@ -60,7 +60,7 @@ function PasswordSection({ reload, stepUp }: Props) {
             if (!done) return false; // modal closed: not an error, the form keeps its input
             await reload();
           }, t.password.changed, 'pwd')} />
-      <Feedback error={a.error} note={a.note} />
+      <Feedback error={a.error} />
     </section>
   );
 }
@@ -109,7 +109,7 @@ function PinSection({ me, reload, stepUp }: Props) {
           {lastFactor && <Text id="pin-last" fz="xs" c="dimmed">{t.account.lastFactor}</Text>}
         </Group>
       )}
-      <Feedback error={a.error} note={a.note} />
+      <Feedback error={a.error} />
     </section>
   );
 }
@@ -169,7 +169,7 @@ function PasskeySection({ me, reload, stepUp }: Props) {
           })}
         </ul>
       )}
-      <Feedback error={a.error} note={a.note} />
+      <Feedback error={a.error} />
     </section>
   );
 }

@@ -135,6 +135,9 @@ const enStrings = {
     saved: 'I have saved it',
     close: 'Close',
   },
+  toast: {
+    dismiss: 'Dismiss notification',
+  },
   ui: {
     copyId: 'Copy {what}',
     copied: 'Copied',
@@ -574,6 +577,9 @@ export const vi: Strings = {
     copyFailed: 'Không sao chép được. Hãy chọn đoạn văn bản và sao chép thủ công.',
     saved: 'Tôi đã lưu lại',
     close: 'Đóng',
+  },
+  toast: {
+    dismiss: 'Đóng thông báo',
   },
   ui: {
     copyId: 'Sao chép {what}',

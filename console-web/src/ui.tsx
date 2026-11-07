@@ -2,6 +2,7 @@ import { ActionIcon, Badge, Button, Group, Loader, Modal, Stack, Text } from '@m
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { explain } from './lib/explain';
 import { fmt, useStrings } from './lib/i18n';
+import { useToast } from './toast';
 
 const stroke = { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true, focusable: false } as const;
 const CopyIcon = () => <svg {...stroke}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" /></svg>;
@@ -9,7 +10,7 @@ const CheckIcon = () => <svg {...stroke}><path d="m5 12.5 4.5 4.5L19 7.5" /></sv
 export const ChevronIcon = () => <svg {...stroke}><path d="m9 6 6 6-6 6" /></svg>;
 
 /** Copies `value` and says so for two seconds. A blocked clipboard is reported, never silent. */
-export function CopyButton({ value, label }: { value: string; label?: string }) {
+export function CopyButton({ value, label, autoFocus }: { value: string; label?: string; autoFocus?: boolean }) {
   const t = useStrings();
   const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle');
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -28,7 +29,7 @@ export function CopyButton({ value, label }: { value: string; label?: string }) 
   return (
     <>
       <Button size="compact-sm" variant="light" leftSection={state === 'done' ? <CheckIcon /> : <CopyIcon />} onClick={() => void copy()}
-        aria-label={label}>
+        aria-label={label} data-autofocus={autoFocus ? true : undefined}>
         {text}
       </Button>
       {state === 'failed' && <Text fz="xs" c="red.7" role="alert">{t.shownOnce.copyFailed}</Text>}
@@ -42,6 +43,7 @@ export function CopyButton({ value, label }: { value: string; label?: string }) 
  */
 export function IdChip({ id, what }: { id: string; what: string }) {
   const t = useStrings();
+  const toast = useToast();
   const [done, setDone] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -49,6 +51,7 @@ export function IdChip({ id, what }: { id: string; what: string }) {
     void navigator.clipboard.writeText(id).then(
       () => {
         setDone(true);
+        toast(t.ui.copied); // the icon alone is easy to miss
         clearTimeout(timer.current);
         timer.current = setTimeout(() => setDone(false), 2000);
       },
@@ -93,7 +96,8 @@ export function ConfirmDialog({ title, body, confirmLabel, danger, onConfirm, on
       <Stack gap="lg">
         <Text fz="sm">{body}</Text>
         <Group justify="flex-end" gap="sm">
-          <Button variant="default" onClick={onCancel}>{t.ui.cancel}</Button>
+          {/* The safe answer takes the focus: Enter cancels, a destructive confirm needs a deliberate move. */}
+          <Button variant="default" onClick={onCancel} data-autofocus>{t.ui.cancel}</Button>
           <Button color={danger ? 'red' : undefined} onClick={onConfirm}>{confirmLabel}</Button>
         </Group>
       </Stack>

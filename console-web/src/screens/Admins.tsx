@@ -1,4 +1,4 @@
-import { Badge, Button, NativeSelect, Table, Text, TextInput } from '@mantine/core';
+import { Badge, Button, Select, Table, Text, TextInput } from '@mantine/core';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { consoleTitle, useTitle } from '../brand';
 import { api } from '../lib/api';
@@ -127,11 +127,11 @@ function AdminsBody({ me }: { me: Me }) {
             <TextInput className="toolbar-grow" label={t.admins.username} description={t.admins.usernameHint} value={username}
               onChange={(e) => setUsername(e.currentTarget.value)} error={nameError || undefined} disabled={create.busy}
               autoComplete="off" spellCheck={false} required />
-            <NativeSelect label={t.admins.role} value={role} onChange={(e) => setRole(e.currentTarget.value as Role)} disabled={create.busy}
+            <Select label={t.admins.role} value={role} onChange={(v) => v !== null && setRole(v as Role)} disabled={create.busy}
               data={[{ value: 'admin', label: t.common.role.admin }, { value: 'master', label: t.common.role.master }]} />
             <Button type="submit" loading={create.busy} disabled={create.waiting}>{t.admins.create}</Button>
           </div>
-          <Feedback error={create.error} note={create.note} />
+          <Feedback error={create.error} />
         </form>
 
         {loadError !== null ? (
@@ -202,7 +202,7 @@ function AdminsBody({ me }: { me: Me }) {
                 </Table>
               </div>
             )}
-            <Feedback error={rowAction.error} note={rowAction.note} />
+            <Feedback error={rowAction.error} />
           </section>
         )}
       </div>

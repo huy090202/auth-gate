@@ -1,4 +1,4 @@
-import { createTheme, Drawer, Modal, type MantineColorsTuple } from '@mantine/core';
+import { createTheme, Drawer, Modal, Select, type MantineColorsTuple } from '@mantine/core';
 
 /*
  * Design direction: same "Canopy" look as auth-app, in Operate mode throughout.
@@ -54,6 +54,17 @@ export const theme = createTheme({
     // react-remove-scroll injects a <style> element; the strict CSP forbids it.
     Modal: Modal.extend({ defaultProps: { lockScroll: false } }),
     Drawer: Drawer.extend({ defaultProps: { lockScroll: false } }),
+    // The list is Mantine's Combobox in a portal, styled in styles.css (.mantine-Select-*). The value is
+    // always one of the options, so there is nothing to deselect.
+    Select: Select.extend({
+      defaultProps: {
+        allowDeselect: false,
+        searchable: false,
+        checkIconPosition: 'right',
+        maxDropdownHeight: 288,
+        comboboxProps: { shadow: 'md', offset: 6, transitionProps: { transition: 'pop-top-left', duration: 120 } },
+      },
+    }),
   },
 });
 

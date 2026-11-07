@@ -4,6 +4,7 @@ import { Backdrop } from './brand';
 import { SchemeToggle, SiteHeader } from './controls';
 import { useLang } from './lib/i18n';
 import { AppRoutes } from './routes';
+import { ToastProvider } from './toast';
 
 export { SchemeToggle };
 
@@ -18,12 +19,12 @@ export function App() {
   }, [lang]);
   const header = headerPaths.some((p) => pathname === p || pathname.startsWith(p + '/'));
   return (
-    <>
+    <ToastProvider>
       <Backdrop />
       {header && <SiteHeader />}
       <main>
         <AppRoutes />
       </main>
-    </>
+    </ToastProvider>
   );
 }

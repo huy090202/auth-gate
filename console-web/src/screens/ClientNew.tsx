@@ -63,7 +63,7 @@ function ClientNewBody({ me }: { me: Me }) {
         <Group mt="lg" justify="flex-end">
           <Button type="submit" loading={a.busy} disabled={a.waiting || created !== null}>{t.clientNew.submit}</Button>
         </Group>
-        <Feedback error={a.error} note={a.note} />
+        <Feedback error={a.error} />
       </form>
       {created && (
         <ShownOnce title={t.clientNew.keyTitle} label={t.clientNew.keyLabel} value={created.accessKey}

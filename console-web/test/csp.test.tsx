@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { ActionIcon, Button, MantineProvider, Modal, SegmentedControl } from '@mantine/core';
+import { ActionIcon, Button, MantineProvider, Modal, SegmentedControl, Select } from '@mantine/core';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { act } from 'react';
@@ -26,6 +26,8 @@ test('mantine-vars.css matches mantineVarsCss()', () => {
 });
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+// jsdom has no scrollIntoView; the open list of a Select scrolls its active option into view.
+Element.prototype.scrollIntoView = () => {};
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -55,6 +57,31 @@ test('no <style> element is rendered, including with a Modal open', async () => 
     );
   });
   expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  expect(document.querySelectorAll('style').length).toBe(0);
+  await act(async () => root.unmount());
+});
+
+test('a Select renders no <style> element with its dropdown open', async () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: false, media: query, onchange: null,
+    addEventListener: () => {}, removeEventListener: () => {},
+    addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+  }));
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <MantineProvider withCssVariables={false} withGlobalClasses={false} defaultColorScheme="light" theme={theme}>
+        <Select label="Role" value="admin" onChange={() => {}} data={[{ value: 'admin', label: 'Admin' }, { value: 'master', label: 'Master' }]}
+          comboboxProps={{ transitionProps: { duration: 0 } }} defaultDropdownOpened />
+        <Select label="Long" value="a" onChange={() => {}} searchable data={['a', 'b', 'c']} comboboxProps={{ transitionProps: { duration: 0 } }} defaultDropdownOpened />
+      </MantineProvider>,
+    );
+  });
+  expect(document.querySelectorAll('[role="option"]').length).toBeGreaterThanOrEqual(5);
+  expect(document.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain('Admin');
   expect(document.querySelectorAll('style').length).toBe(0);
   await act(async () => root.unmount());
 });
@@ -212,7 +239,7 @@ for (const path of ['/clients', `/clients/${ID}`, '/admins']) test(`the ${path.s
 
 test('the audit screen renders no <style> element, expanded rows included, and falls back to raw values', async () => {
   const { host, root } = await renderAt('/audit');
-  expect(host.querySelectorAll('tbody tr').length).toBe(3);
+  expect(host.querySelectorAll('tbody tr:not(.row-detail)').length).toBe(3);
   for (const b of host.querySelectorAll<HTMLButtonElement>('.row-toggle')) {
     await act(async () => {
       b.click();
@@ -223,8 +250,21 @@ test('the audit screen renders no <style> element, expanded rows included, and f
   expect(text).toContain('Wrong password'); // detail.reason: its label
   expect(text).toContain('brand-new-action'); // an unknown action: the raw value
   expect(text).toContain('brand_new_code'); // an unknown failure: the raw value
-  expect(host.querySelectorAll('.row-detail').length).toBe(3);
+  expect(host.querySelectorAll('.row-detail[data-open="true"]').length).toBe(3);
   expect(document.querySelectorAll('style').length).toBe(0);
+  // Each of the four filters opens its list and picks an option, still with no <style>.
+  const selects = [...host.querySelectorAll<HTMLInputElement>('input.mantine-Select-input')];
+  expect(selects.length).toBe(4);
+  for (const input of selects) {
+    await act(async () => {
+      input.click();
+    });
+    expect(document.querySelectorAll('[role="option"]').length).toBeGreaterThan(1);
+    expect(document.querySelectorAll('style').length).toBe(0);
+    await act(async () => {
+      document.querySelectorAll<HTMLElement>('[role="option"]')[1]!.click();
+    });
+  }
   await act(async () => root.unmount());
 });
 
