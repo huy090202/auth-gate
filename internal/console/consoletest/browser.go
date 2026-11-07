@@ -267,14 +267,18 @@ func (h *Harness) StepUpToken(adminID, purpose, pin string) string {
 }
 
 // StepUp runs /stepup/start and /stepup/verify with the PIN this browser enrolled
-// or signed in with, and returns the token for the action. It fails the test if
-// either call is refused.
-func (b *Browser) StepUp(action string) string {
+// or signed in with, and returns the token for the action on target (empty for
+// an action that takes none). It fails the test if either call is refused.
+func (b *Browser) StepUp(action, target string) string {
 	b.H.T.Helper()
 	if b.pin == "" {
 		b.H.T.Fatal("StepUp: this browser has not used a PIN")
 	}
-	st := b.Do("POST", "/api/stepup/start", map[string]string{"action": action, "factor": "pin"})
+	body := map[string]string{"action": action, "factor": "pin"}
+	if target != "" {
+		body["target"] = target
+	}
+	st := b.Do("POST", "/api/stepup/start", body)
 	if st.Status != http.StatusOK {
 		b.H.T.Fatalf("step-up start: %d %s", st.Status, st.Body)
 	}

@@ -167,6 +167,7 @@ const enStrings = {
     invalid_factor: 'Choose PIN or passkey.',
     enrollment_in_progress: 'Another second-factor setup is in progress. Wait and try again.',
     invalid_role: 'The role is not valid.',
+    invalid_target: 'That confirmation does not fit this action. Try again.',
     busy: 'The service is busy. Confirm again and retry.',
   } satisfies Record<ErrorCode, string>,
 };
@@ -336,6 +337,7 @@ export const vi: Strings = {
     invalid_factor: 'Hãy chọn PIN hoặc khóa truy cập.',
     enrollment_in_progress: 'Đang có một lần thiết lập yếu tố thứ hai khác. Hãy chờ rồi thử lại.',
     invalid_role: 'Vai trò không hợp lệ.',
+    invalid_target: 'Xác nhận này không khớp với thao tác. Hãy thử lại.',
     busy: 'Dịch vụ đang bận. Hãy xác nhận lại rồi thử lại.',
   },
 };

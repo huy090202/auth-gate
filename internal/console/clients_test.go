@@ -131,7 +131,7 @@ func TestPatchCaseVariantKeyStillNeedsStepUp(t *testing.T) {
 		}
 	}
 	// With a token the same spelling is applied, once, under its canonical name.
-	r := b.Do("PATCH", path, json.RawMessage(`{"Origins":["https://b.app.test"],"NAME":"x"}`), tokHeader, b.StepUp("update-client"))
+	r := b.Do("PATCH", path, json.RawMessage(`{"Origins":["https://b.app.test"],"NAME":"x"}`), tokHeader, b.StepUp("update-client", id))
 	want(t, r, 200, "")
 	if c := clientOf(t, h, id); c.Name != "x" || !reflect.DeepEqual(c.Origins, []string{"https://b.app.test"}) {
 		t.Fatalf("client = %+v", c)
@@ -147,7 +147,7 @@ func TestPatchRPIDRefused(t *testing.T) {
 	before := clientOf(t, h, id)
 	for _, body := range []string{`{"rpId":"evil.test"}`, `{"RPID":null}`, `{"name":"x","RpId":"evil.test"}`} {
 		want(t, b.Do("PATCH", path, json.RawMessage(body)), 403, "step_up_required")
-		want(t, b.Do("PATCH", path, json.RawMessage(body), tokHeader, b.StepUp("update-client")), 400, "invalid_client")
+		want(t, b.Do("PATCH", path, json.RawMessage(body), tokHeader, b.StepUp("update-client", id)), 400, "invalid_client")
 		if !reflect.DeepEqual(before, clientOf(t, h, id)) {
 			t.Fatalf("%s changed the client", body)
 		}
@@ -164,7 +164,7 @@ func TestCreateAndRotateReturnKeyOnceWithNoStore(t *testing.T) {
 	if id == "" || key == "" || c.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("create = %d %s cache=%q", c.Status, c.Body, c.Header.Get("Cache-Control"))
 	}
-	r := b.Do("POST", "/api/clients/"+id+"/keys", struct{}{}, tokHeader, b.StepUp("rotate-key"))
+	r := b.Do("POST", "/api/clients/"+id+"/keys", struct{}{}, tokHeader, b.StepUp("rotate-key", id))
 	want(t, r, 201, "")
 	key2 := r.Str("accessKey")
 	if key2 == "" || key2 == key || r.Header.Get("Cache-Control") != "no-store" {
@@ -186,18 +186,19 @@ func TestOwnClientIsProtected(t *testing.T) {
 	own := "/api/clients/" + h.ClientID
 	before := clientOf(t, h, h.ClientID)
 	ops := []struct {
-		action, method, path string
-		body                 any
+		action, target, method, path string
+		body                         any
 	}{
-		{"update-client", "PATCH", own, map[string]any{"origins": []string{"https://evil.test"}}},
-		{"rotate-key", "POST", own + "/keys", struct{}{}},
-		{"revoke-previous-keys", "DELETE", own + "/keys/previous", nil},
-		{"disable-client", "POST", own + "/disable", struct{}{}},
-		{"purge-subject", "DELETE", own + "/subjects/" + a.ID, nil},
+		{"update-client", h.ClientID, "PATCH", own, map[string]any{"origins": []string{"https://evil.test"}}},
+		{"rotate-key", h.ClientID, "POST", own + "/keys", struct{}{}},
+		{"revoke-previous-keys", h.ClientID, "DELETE", own + "/keys/previous", nil},
+		{"disable-client", h.ClientID, "POST", own + "/disable", struct{}{}},
+		{"purge-subject", h.ClientID + "/" + a.ID, "DELETE", own + "/subjects/" + a.ID, nil},
 	}
 	for _, o := range ops {
-		tok := b.StepUp(o.action)
+		tok := b.StepUp(o.action, o.target)
 		want(t, b.Do(o.method, o.path, o.body, tokHeader, tok), 409, "own_client_protected")
+		requireUnspent(t, h, tok) // a refusal costs no token
 	}
 	// Even a rename, which needs no token, is refused.
 	want(t, b.Do("PATCH", own, map[string]any{"name": "mine"}), 409, "own_client_protected")
@@ -207,11 +208,6 @@ func TestOwnClientIsProtected(t *testing.T) {
 	if f, err := h.AuthGate.Factors(context.Background(), a.ID); err != nil || !f.PIN {
 		t.Fatalf("the purge ran: %+v %v", f, err)
 	}
-	// A refusal costs no token: the same one still rotates another client.
-	other, _ := newClient(t, b, "app")
-	tok := b.StepUp("rotate-key")
-	want(t, b.Do("POST", own+"/keys", struct{}{}, tokHeader, tok), 409, "own_client_protected")
-	want(t, b.Do("POST", "/api/clients/"+other+"/keys", struct{}{}, tokHeader, tok), 201, "")
 	// Reading and enabling stay open.
 	want(t, b.Do("GET", own, nil), 200, "")
 	want(t, b.Do("POST", own+"/enable", struct{}{}), 200, "")
@@ -226,7 +222,7 @@ func TestAuditWrittenOnFailure(t *testing.T) {
 	h.Clock.Advance(time.Second)
 	want(t, b.Do("POST", "/api/clients/"+id+"/keys", struct{}{}, viewerHdr, ip), 403, "step_up_required")
 	h.Clock.Advance(time.Second)
-	want(t, b.Do("POST", "/api/clients/"+id+"/keys", struct{}{}, tokHeader, b.StepUp("rotate-key"), viewerHdr, ip), 201, "")
+	want(t, b.Do("POST", "/api/clients/"+id+"/keys", struct{}{}, tokHeader, b.StepUp("rotate-key", id), viewerHdr, ip), 201, "")
 
 	all, _ := auditOf(t, b, "")
 	var entries []auditView // the rotations, newest first
@@ -295,7 +291,7 @@ func TestFullSelfServiceNeedsStepUp(t *testing.T) {
 
 	// With tokens, one of them from a passkey.
 	pk := h.NewPasskey()
-	st := b.Do("POST", "/api/me/passkeys/start", struct{}{}, tokHeader, b.StepUp("add-factor"))
+	st := b.Do("POST", "/api/me/passkeys/start", struct{}{}, tokHeader, b.StepUp("add-factor", ""))
 	want(t, st, 200, "")
 	want(t, b.FinishPasskey(st.Str("registrationId"), pk.Attest(h, st)), 200, "")
 	pk.Authn.AddCredential(pk.Credential)
@@ -340,7 +336,11 @@ func TestMalformedIDsNeverReachAuthGate(t *testing.T) {
 	for _, r := range routes {
 		tok := ""
 		if r.action != "" {
-			tok = b.StepUp(r.action)
+			target := ok
+			if r.action == "purge-subject" {
+				target = ok + "/s1"
+			}
+			tok = b.StepUp(r.action, target)
 		}
 		var body any
 		if r.method != "GET" && r.method != "DELETE" {
@@ -362,7 +362,7 @@ func TestMalformedIDsNeverReachAuthGate(t *testing.T) {
 		}
 	}
 	// The subject of a purge.
-	tok := b.StepUp("purge-subject")
+	tok := b.StepUp("purge-subject", ok+"/s1")
 	calls := rt.n.Load()
 	for _, sub := range []string{"a%2Fb", "a%3Fb", "a%23b", "a%2525b", "%2e%2e", "%2e", "a%00b", "a%0ab", "a%7fb", strings.Repeat("s", 257)} {
 		resp := b.Do("DELETE", "/api/clients/"+ok+"/subjects/"+sub, nil, tokHeader, tok)

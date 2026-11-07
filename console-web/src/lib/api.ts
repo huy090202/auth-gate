@@ -6,7 +6,7 @@ export const errorCodes = [
   'factor_not_enrolled', 'cannot_modify_self', 'last_master', 'own_client_protected', 'invalid_month',
   'authgate_unavailable', 'internal', 'verification_failed', 'locked', 'challenge_gone', 'wrong_factor',
   'pin_rejected', 'registration_failed', 'invalid_client', 'invalid_cursor', 'invalid_id', 'client_not_found',
-  'rotate_conflict', 'invalid_token', 'invalid_factor', 'enrollment_in_progress', 'invalid_role', 'busy',
+  'rotate_conflict', 'invalid_token', 'invalid_factor', 'enrollment_in_progress', 'invalid_role', 'invalid_target', 'busy',
 ] as const;
 export type ErrorCode = (typeof errorCodes)[number];
 

@@ -33,14 +33,18 @@ func clientID(r *http.Request) (string, error) {
 // no '/', '?', '#', '%', control character, and not a dot segment.
 func subjectID(r *http.Request) (string, error) {
 	v := r.PathValue("subjectId")
+	if !validSubject(v) {
+		return "", &apiError{Status: http.StatusBadRequest, Code: "invalid_id"}
+	}
+	return v, nil
+}
+
+func validSubject(v string) bool {
 	bad := v == "" || len(v) > 256 || v == "." || v == ".." || strings.ContainsAny(v, "/?#%")
 	for _, c := range []byte(v) {
 		bad = bad || c < 0x20 || c == 0x7f
 	}
-	if bad {
-		return "", &apiError{Status: http.StatusBadRequest, Code: "invalid_id"}
-	}
-	return v, nil
+	return !bad
 }
 
 // clientRoutes serves /api/clients/* and /api/audit for a full session. The
@@ -194,7 +198,7 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 	var tok *stepUp
 	if sensitive {
 		var err error
-		if tok, err = a.checkStepUp(r, x, "update-client"); err != nil {
+		if tok, err = a.checkStepUp(r, x, "update-client", id); err != nil {
 			return err
 		}
 	}
@@ -227,7 +231,7 @@ func (a *App) clientWrite(action string, status int, call func(context.Context, 
 			return err
 		}
 		x, _ := sessionFrom(r.Context())
-		tok, err := a.checkStepUp(r, x, action)
+		tok, err := a.checkStepUp(r, x, action, id)
 		if err != nil {
 			return err
 		}
@@ -269,7 +273,7 @@ func (a *App) purgeSubject(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	x, _ := sessionFrom(r.Context())
-	tok, err := a.checkStepUp(r, x, "purge-subject")
+	tok, err := a.checkStepUp(r, x, "purge-subject", id+"/"+subject)
 	if err != nil {
 		return err
 	}

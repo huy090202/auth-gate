@@ -2,6 +2,8 @@ package console_test
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -14,6 +16,7 @@ import (
 	"github.com/huy090202/auth-gate/internal/console"
 	"github.com/huy090202/auth-gate/internal/console/authgate"
 	"github.com/huy090202/auth-gate/internal/console/consoletest"
+	"github.com/huy090202/auth-gate/internal/platform/id"
 )
 
 const tokHeader = "x-step-up-token"
@@ -54,21 +57,21 @@ func TestStepUpRequiredExactlyOnTheList(t *testing.T) {
 	base := "/api/clients/" + id
 
 	asks := []struct {
-		action, method, path string
-		body                 any
+		action, target, method, path string
+		body                         any
 	}{
-		{"rotate-key", "POST", base + "/keys", struct{}{}},
-		{"revoke-previous-keys", "DELETE", base + "/keys/previous", nil},
-		{"update-client", "PATCH", base, map[string]any{"origins": []string{"https://app.test", "https://b.app.test"}}},
-		{"update-client", "PATCH", base, map[string]any{"tokenTtlSec": 60}},
-		{"update-client", "PATCH", base, map[string]any{"pinPolicy": map[string]int{"length": 6, "maxAttempts": 5, "lockoutSec": 900}}},
-		{"update-client", "PATCH", base, map[string]any{"rateLimit": map[string]any{"burst": 10, "perSecond": 5}}},
-		{"disable-client", "POST", base + "/disable", struct{}{}},
-		{"purge-subject", "DELETE", base + "/subjects/s1", nil},
+		{"rotate-key", id, "POST", base + "/keys", struct{}{}},
+		{"revoke-previous-keys", id, "DELETE", base + "/keys/previous", nil},
+		{"update-client", id, "PATCH", base, map[string]any{"origins": []string{"https://app.test", "https://b.app.test"}}},
+		{"update-client", id, "PATCH", base, map[string]any{"tokenTtlSec": 60}},
+		{"update-client", id, "PATCH", base, map[string]any{"pinPolicy": map[string]int{"length": 6, "maxAttempts": 5, "lockoutSec": 900}}},
+		{"update-client", id, "PATCH", base, map[string]any{"rateLimit": map[string]any{"burst": 10, "perSecond": 5}}},
+		{"disable-client", id, "POST", base + "/disable", struct{}{}},
+		{"purge-subject", id + "/s1", "DELETE", base + "/subjects/s1", nil},
 	}
 	for _, c := range asks {
 		want(t, b.Do(c.method, c.path, c.body), 403, "step_up_required")
-		tok := b.StepUp(c.action)
+		tok := b.StepUp(c.action, c.target)
 		r := b.Do(c.method, c.path, c.body, tokHeader, tok)
 		if r.Status/100 != 2 {
 			t.Fatalf("%s %s with a token: %d %s", c.method, c.path, r.Status, r.Body)
@@ -80,16 +83,16 @@ func TestStepUpRequiredExactlyOnTheList(t *testing.T) {
 	// Own credentials: add a passkey, remove it, change the password.
 	pk := h.NewPasskey()
 	want(t, b.StartPasskey(), 403, "step_up_required")
-	st := b.Do("POST", "/api/me/passkeys/start", struct{}{}, tokHeader, b.StepUp("add-factor"))
+	st := b.Do("POST", "/api/me/passkeys/start", struct{}{}, tokHeader, b.StepUp("add-factor", ""))
 	want(t, st, 200, "")
 	fin := b.FinishPasskey(st.Str("registrationId"), pk.Attest(h, st))
 	want(t, fin, 200, "")
 	pk.Authn.AddCredential(pk.Credential)
 	del := "/api/me/passkeys/" + fin.Str("credentialId")
 	want(t, b.Do("DELETE", del, nil), 403, "step_up_required")
-	want(t, b.Do("DELETE", del, nil, tokHeader, b.StepUp("remove-factor")), 200, "")
+	want(t, b.Do("DELETE", del, nil, tokHeader, b.StepUp("remove-factor", "")), 200, "")
 	want(t, b.Do("POST", "/api/me/password", passwordBody(pw, pw2)), 403, "step_up_required")
-	want(t, b.Do("POST", "/api/me/password", passwordBody(pw, pw2), tokHeader, b.StepUp("change-password")), 200, "")
+	want(t, b.Do("POST", "/api/me/password", passwordBody(pw, pw2), tokHeader, b.StepUp("change-password", "")), 200, "")
 
 	// Everything else asks for nothing.
 	want(t, b.Do("GET", "/api/clients", nil), 200, "")
@@ -109,11 +112,11 @@ func TestStepUpTokenRejections(t *testing.T) {
 	path := "/api/clients/" + id + "/disable"
 	before := clientOf(t, h, id)
 
-	expired := b.StepUp("disable-client")
+	expired := b.StepUp("disable-client", id)
 	h.Clock.Advance(6 * time.Minute) // past the 300 s token lifetime
 	cases := []struct{ name, tok string }{
-		{"another admin's token", other.StepUp("disable-client")},
-		{"another action's purpose", b.StepUp("rotate-key")},
+		{"another admin's token", other.StepUp("disable-client", id)},
+		{"another action's purpose", b.StepUp("rotate-key", id)},
 		{"expired", expired},
 		{"sign-in token", h.StepUpToken(a.ID, "console-login", pin1)},
 		{"not a token", "abc.def.ghi"},
@@ -125,8 +128,43 @@ func TestStepUpTokenRejections(t *testing.T) {
 		}
 	}
 
+	// A token is for what it approved: the same action on another target, or with another role, is refused.
+	idB, _ := newClient(t, b, "other app")
+	m, _ := fullAdmin(t, h, "mia", console.RoleMaster)
+	h.CreateAdmin("dan", pw, console.RoleAdmin, false)
+	h.CreateAdmin("cat", pw, console.RoleAdmin, false)
+	danBefore, catBefore := getAdmin(t, h, "dan"), getAdmin(t, h, "cat")
+	subj := func(client, s string) string { return "/api/clients/" + client + "/subjects/" + s }
+	tokA := b.StepUp("rotate-key", id)
+	tokPurge := b.StepUp("purge-subject", id+"/s1")
+	tokDisable := m.StepUp("admin-disable", "dan")
+	tokRole := m.StepUp("admin-role", "dan/admin")
+	other2 := []struct {
+		name, method, path string
+		br                 *consoletest.Browser
+		body               any
+		tok                string
+	}{
+		{"rotate-key for client A used on client B", "POST", "/api/clients/" + idB + "/keys", b, struct{}{}, tokA},
+		{"purge-subject for one subject used on another", "DELETE", subj(id, "s2"), b, nil, tokPurge},
+		{"purge-subject for one client used on another", "DELETE", subj(idB, "s1"), b, nil, tokPurge},
+		{"admin-disable for dan used on cat", "POST", "/api/admins/cat/disable", m, struct{}{}, tokDisable},
+		{"admin-role approved as admin used to make a master", "POST", "/api/admins/dan/role", m, map[string]string{"role": "master"}, tokRole},
+	}
+	for _, c := range other2 {
+		want(t, c.br.Do(c.method, c.path, c.body, tokHeader, c.tok), 403, "step_up_required")
+	}
+	if !reflect.DeepEqual(danBefore, getAdmin(t, h, "dan")) || !reflect.DeepEqual(catBefore, getAdmin(t, h, "cat")) {
+		t.Fatal("an admin changed under a token for something else")
+	}
+	// The refusals did not cost the tokens: each still works for what it approved.
+	want(t, b.Do("POST", "/api/clients/"+id+"/keys", struct{}{}, tokHeader, tokA), 201, "")
+	want(t, b.Do("DELETE", subj(id, "s1"), nil, tokHeader, tokPurge), 204, "")
+	want(t, m.Do("POST", "/api/admins/dan/disable", struct{}{}, tokHeader, tokDisable), 200, "")
+	want(t, m.Do("POST", "/api/admins/dan/role", map[string]string{"role": "admin"}, tokHeader, tokRole), 200, "")
+
 	// A token works once: after the disable, the same token cannot disable again.
-	tok := b.StepUp("disable-client")
+	tok := b.StepUp("disable-client", id)
 	want(t, b.Do("POST", path, struct{}{}, tokHeader, tok), 200, "")
 	want(t, b.Do("POST", "/api/clients/"+id+"/enable", struct{}{}), 200, "")
 	want(t, b.Do("POST", path, struct{}{}, tokHeader, tok), 403, "step_up_required")
@@ -135,9 +173,28 @@ func TestStepUpTokenRejections(t *testing.T) {
 	}
 
 	// A challenge started by another admin cannot be answered here.
-	st := other.Do("POST", "/api/stepup/start", map[string]string{"action": "rotate-key", "factor": "pin"})
+	st := other.Do("POST", "/api/stepup/start", map[string]string{"action": "rotate-key", "factor": "pin", "target": id})
 	want(t, st, 200, "")
 	want(t, b.Do("POST", "/api/stepup/verify", map[string]string{"challengeId": st.Str("challengeId"), "pin": pin1}), 410, "challenge_gone")
+}
+
+// requireUnspent fails the test unless the token's jti is still unused, and uses it: a refusal must not cost the token.
+func requireUnspent(t *testing.T, h *consoletest.Harness, tok string) {
+	t.Helper()
+	raw, err := base64.RawURLEncoding.DecodeString(strings.Split(tok, ".")[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		JTI string `json:"jti"`
+		Exp int64  `json:"exp"`
+	}
+	if err := json.Unmarshal(raw, &c); err != nil || c.JTI == "" {
+		t.Fatalf("token claims: %v %s", err, raw)
+	}
+	if err := h.Store().UseJTI(context.Background(), c.JTI, time.Unix(c.Exp, 0)); err != nil {
+		t.Fatalf("the token was spent by a refusal: %v", err)
+	}
 }
 
 type countingRT struct {
@@ -169,6 +226,31 @@ func TestStartRefusesUnknownAction(t *testing.T) {
 	if rt.n.Load() != calls {
 		t.Fatalf("AuthGate was called %d times", rt.n.Load()-calls)
 	}
+	// A targeted action needs a target of its kind; an untargeted one takes none.
+	mia := h.CreateAdmin("mia", pw, console.RoleMaster, false)
+	withPIN(t, h, mia, pin1)
+	m := h.BrowserFor(console.New(deps))
+	want(t, m.Login("mia", pw), 200, "")
+	want(t, m.SignInWithPIN(pin1), 200, "")
+	calls = rt.n.Load()
+	cid := id.New()
+	for _, c := range []struct{ action, target string }{
+		{"rotate-key", ""}, {"rotate-key", "abc"}, {"update-client", "../x"}, {"disable-client", strings.ToLower(cid)},
+		{"revoke-previous-keys", cid + "/s1"},
+		{"purge-subject", cid}, {"purge-subject", cid + "/"}, {"purge-subject", cid + "/a/b"}, {"purge-subject", "abc/s1"},
+		{"admin-create", ""}, {"admin-create", "a b"}, {"admin-disable", "bob/admin"}, {"admin-reset-password", "x"},
+		{"admin-role", "bob"}, {"admin-role", "bob/root"}, {"admin-role", "bob/"}, {"admin-role", "/admin"},
+		{"change-password", "ada"}, {"add-factor", "x"}, {"remove-factor", cid},
+	} {
+		body := map[string]string{"action": c.action, "factor": "pin"}
+		if c.target != "" {
+			body["target"] = c.target
+		}
+		want(t, m.Do("POST", "/api/stepup/start", body), 400, "invalid_target")
+	}
+	if rt.n.Load() != calls {
+		t.Fatalf("AuthGate was called %d times for a bad target", rt.n.Load()-calls)
+	}
 }
 
 // Why: a full session is where the stage rules of spec section 7 meet every route group.
@@ -196,7 +278,7 @@ func TestSessionStageAgainstRouteGroups(t *testing.T) {
 		{"auth start", call{"POST", "/api/auth/second-factor/start"}, map[string]string{"factor": "pin"}, "200", "403 enrollment_required", "409 already_verified"},
 		{"me", call{"GET", "/api/me"}, nil, "200", "200", "200"},
 		{"me write", call{"DELETE", "/api/me/pin"}, nil, "401 second_factor_required", "409 factor_not_enrolled", "403 step_up_required"},
-		{"stepup", call{"POST", "/api/stepup/start"}, map[string]string{"action": "rotate-key", "factor": "pin"}, "401 second_factor_required", "403 enrollment_required", "200"},
+		{"stepup", call{"POST", "/api/stepup/start"}, map[string]string{"action": "rotate-key", "factor": "pin", "target": id.New()}, "401 second_factor_required", "403 enrollment_required", "200"},
 		{"clients", call{"GET", "/api/clients"}, nil, "401 second_factor_required", "403 enrollment_required", "200"},
 		{"clients write", call{"POST", "/api/clients"}, map[string]any{}, "401 second_factor_required", "403 enrollment_required", "400 invalid_client"},
 		{"audit", call{"GET", "/api/audit"}, nil, "401 second_factor_required", "403 enrollment_required", "200"},
@@ -235,7 +317,7 @@ func TestSecretsAbsentFromAuditAndLogs(t *testing.T) {
 
 	id, key := newClient(t, b, "app")
 	secrets = append(secrets, key)
-	tok := b.StepUp("rotate-key")
+	tok := b.StepUp("rotate-key", id)
 	secrets = append(secrets, tok, b.CookieValue())
 	r := b.Do("POST", "/api/clients/"+id+"/keys", struct{}{}, tokHeader, tok)
 	want(t, r, 201, "")
@@ -244,12 +326,12 @@ func TestSecretsAbsentFromAuditAndLogs(t *testing.T) {
 	// Failures that carry secrets in their request: a wrong PIN, a wrong password, a bad token, a replay.
 	bad := "000111"
 	secrets = append(secrets, bad)
-	st := b.Do("POST", "/api/stepup/start", map[string]string{"action": "rotate-key", "factor": "pin"})
+	st := b.Do("POST", "/api/stepup/start", map[string]string{"action": "rotate-key", "factor": "pin", "target": id})
 	want(t, st, 200, "")
 	want(t, b.Do("POST", "/api/stepup/verify", map[string]string{"challengeId": st.Str("challengeId"), "pin": bad}), 400, "verification_failed")
 	want(t, b.Do("POST", "/api/clients/"+id+"/keys", struct{}{}, tokHeader, tok), 403, "step_up_required")
 	want(t, b.Do("POST", "/api/clients/"+id+"/keys", struct{}{}, tokHeader, "eyJhbGciOiJub25lIn0.e30.x"), 403, "step_up_required")
-	want(t, b.Do("POST", "/api/me/password", passwordBody("wrong-wrong-wrong", pw2), tokHeader, b.StepUp("change-password")), 400, "wrong_password")
+	want(t, b.Do("POST", "/api/me/password", passwordBody("wrong-wrong-wrong", pw2), tokHeader, b.StepUp("change-password", "")), 400, "wrong_password")
 	secrets = append(secrets, "wrong-wrong-wrong")
 	want(t, h.NewBrowser().Login("ada", "wrong-wrong-wrong"), 401, "invalid_credentials")
 	other := h.NewBrowser()

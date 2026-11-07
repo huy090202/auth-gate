@@ -11,7 +11,7 @@ export type StepUpAction =
   | 'change-password' | 'add-factor' | 'remove-factor'
   | 'admin-create' | 'admin-reset-password' | 'admin-clear-factors' | 'admin-disable' | 'admin-enable' | 'admin-role';
 
-function StepUpBody({ action, onToken }: { action: StepUpAction; onToken: (token: string) => void }) {
+function StepUpBody({ action, target, onToken }: { action: StepUpAction; target?: string; onToken: (token: string) => void }) {
   const t = useStrings();
   const [available, setAvailable] = useState<Available | null>(null);
   const [error, setError] = useState('');
@@ -34,7 +34,7 @@ function StepUpBody({ action, onToken }: { action: StepUpAction; onToken: (token
       {available && (available.pin || available.webauthn ? (
         <FactorForm<{ stepUpToken: string }>
           factors={available}
-          start={(factor) => api('/api/stepup/start', { body: { action, factor } })}
+          start={(factor) => api('/api/stepup/start', { body: { action, factor, target } })}
           verify={(challengeId, proof) => api('/api/stepup/verify', { body: { challengeId, ...proof } })}
           onDone={(r) => onToken(r.stepUpToken)}
         />
@@ -50,30 +50,31 @@ function StepUpBody({ action, onToken }: { action: StepUpAction; onToken: (token
  * goes to `run`. Resolves undefined when the user closes the modal. A token is single-use: if `run`
  * is refused with step_up_required (spent or expired) the modal opens once more; any other error
  * (including 503 busy, which wants a new step-up on the next click) reaches the caller.
- * After a `wrong_password` the token is still valid, but the caller prompts again: simpler than
+ * `target` is what the token is bound to (a client id, `<clientId>/<subjectId>`, a username or
+ * `<username>/<role>`; see the spec); omit it for the self-service actions. After a `wrong_password` the token is still valid, but the caller prompts again: simpler than
  * carrying a token across the form.
  */
 export function useStepUp(): {
-  stepUp: <T>(action: StepUpAction, run: (token: string) => Promise<T>) => Promise<T | undefined>;
+  stepUp: <T>(action: StepUpAction, run: (token: string) => Promise<T>, target?: string) => Promise<T | undefined>;
   modal: ReactNode;
 } {
   const t = useStrings();
-  const [action, setAction] = useState<StepUpAction | null>(null);
+  const [ask, setAsk] = useState<{ action: StepUpAction; target?: string } | null>(null);
   const settle = useRef<((token: string | undefined) => void) | null>(null);
 
   const finish = useCallback((token: string | undefined) => {
     const s = settle.current;
     settle.current = null;
-    setAction(null);
+    setAsk(null);
     s?.(token);
   }, []);
 
   const getToken = useCallback(
-    (a: StepUpAction) =>
+    (action: StepUpAction, target?: string) =>
       new Promise<string | undefined>((resolve) => {
         settle.current?.(undefined);
         settle.current = resolve;
-        setAction(a);
+        setAsk({ action, target });
       }),
     [],
   );
@@ -82,9 +83,9 @@ export function useStepUp(): {
   useEffect(() => () => settle.current?.(undefined), []);
 
   const stepUp = useCallback(
-    async <T,>(a: StepUpAction, run: (token: string) => Promise<T>): Promise<T | undefined> => {
+    async <T,>(a: StepUpAction, run: (token: string) => Promise<T>, target?: string): Promise<T | undefined> => {
       for (let attempt = 0; ; attempt++) {
-        const token = await getToken(a);
+        const token = await getToken(a, target);
         if (!token) return undefined;
         try {
           return await run(token);
@@ -98,8 +99,8 @@ export function useStepUp(): {
   );
 
   const modal = (
-    <Modal opened={action !== null} onClose={() => finish(undefined)} title={t.stepUp.title} centered>
-      {action && <StepUpBody action={action} onToken={finish} />}
+    <Modal opened={ask !== null} onClose={() => finish(undefined)} title={t.stepUp.title} centered>
+      {ask && <StepUpBody action={ask.action} target={ask.target} onToken={finish} />}
     </Modal>
   );
   return { stepUp, modal };

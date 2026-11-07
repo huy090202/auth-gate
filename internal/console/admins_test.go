@@ -21,6 +21,14 @@ var adminActions = []struct{ action, method, suffix string }{
 	{"admin-role", "POST", "/role"},
 }
 
+// adminTargetOf is the step-up target of an /admins action on name: admin-role is bound to the role it sets too.
+func adminTargetOf(action, name string) string {
+	if action == "admin-role" {
+		return name + "/admin"
+	}
+	return name
+}
+
 func actionBody(suffix string) any {
 	if suffix == "/role" {
 		return map[string]string{"role": "admin"}
@@ -68,7 +76,7 @@ func TestRoleChecksOnAdmins(t *testing.T) {
 	// A master whose token outlives a demotion is refused at the action.
 	m, _ := fullAdmin(t, h, "mia", console.RoleMaster)
 	h.CreateAdmin("max", pw, console.RoleMaster, false)
-	tok := m.StepUp("admin-disable")
+	tok := m.StepUp("admin-disable", "bob")
 	if err := h.Store().SetRole(context.Background(), nil, "mia", console.RoleAdmin); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +93,7 @@ func TestCreateAdminShowsTempPasswordOnce(t *testing.T) {
 	body := map[string]string{"username": "Newbie", "role": "admin"}
 
 	want(t, b.Do("POST", "/api/admins", body), 403, "step_up_required")
-	r := b.Do("POST", "/api/admins", body, tokHeader, b.StepUp("admin-create"))
+	r := b.Do("POST", "/api/admins", body, tokHeader, b.StepUp("admin-create", "newbie"))
 	want(t, r, 201, "")
 	temp := r.Str("temporaryPassword")
 	raw, err := base64.RawURLEncoding.DecodeString(temp)
@@ -113,9 +121,9 @@ func TestCreateAdminShowsTempPasswordOnce(t *testing.T) {
 		t.Fatalf("list %s audit %s", list.Body, audit.Body)
 	}
 
-	want(t, b.Do("POST", "/api/admins", body, tokHeader, b.StepUp("admin-create")), 409, "username_taken")
-	want(t, b.Do("POST", "/api/admins", map[string]string{"username": "a b", "role": "admin"}, tokHeader, b.StepUp("admin-create")), 400, "invalid_username")
-	want(t, b.Do("POST", "/api/admins", map[string]string{"username": "carol", "role": "boss"}, tokHeader, b.StepUp("admin-create")), 400, "invalid_role")
+	want(t, b.Do("POST", "/api/admins", body, tokHeader, b.StepUp("admin-create", "newbie")), 409, "username_taken")
+	want(t, b.Do("POST", "/api/admins", map[string]string{"username": "a b", "role": "admin"}, tokHeader, b.StepUp("admin-create", "carol")), 400, "invalid_username")
+	want(t, b.Do("POST", "/api/admins", map[string]string{"username": "carol", "role": "boss"}, tokHeader, b.StepUp("admin-create", "carol")), 400, "invalid_role")
 
 	n := h.NewBrowser()
 	l := n.Login("newbie", temp)
@@ -140,7 +148,7 @@ func TestResetEndsSessionsAndForcesChange(t *testing.T) {
 		t.Fatal("bob is not locked")
 	}
 
-	r := b.Do("POST", "/api/admins/bob/reset-password", struct{}{}, tokHeader, b.StepUp("admin-reset-password"))
+	r := b.Do("POST", "/api/admins/bob/reset-password", struct{}{}, tokHeader, b.StepUp("admin-reset-password", "bob"))
 	want(t, r, 200, "")
 	temp := r.Str("temporaryPassword")
 	if temp == "" || r.Str("username") != "bob" || r.Header.Get("Cache-Control") != "no-store" {
@@ -188,7 +196,7 @@ func TestClearFactorsEndsSessionsAndReEnrolls(t *testing.T) {
 	want(t, bb.Login("bob", pw), 200, "")
 	want(t, bb.SignInWithPIN(pin1), 200, "")
 
-	want(t, b.Do("POST", "/api/admins/bob/clear-factors", struct{}{}, tokHeader, b.StepUp("admin-clear-factors")), 200, "")
+	want(t, b.Do("POST", "/api/admins/bob/clear-factors", struct{}{}, tokHeader, b.StepUp("admin-clear-factors", "bob")), 200, "")
 	e0 := bob.SessionEpoch
 	if epochAtPurge != e0+1 {
 		t.Fatalf("epoch at the purge = %d, want %d (bump before purge)", epochAtPurge, e0+1)
@@ -218,21 +226,21 @@ func TestDisableEndsSessionsEnableRestores(t *testing.T) {
 	b, _ := fullAdmin(t, h, "ada", console.RoleMaster)
 	bb, _ := fullAdmin(t, h, "bob", console.RoleAdmin)
 
-	want(t, b.Do("POST", "/api/admins/bob/disable", struct{}{}, tokHeader, b.StepUp("admin-disable")), 200, "")
+	want(t, b.Do("POST", "/api/admins/bob/disable", struct{}{}, tokHeader, b.StepUp("admin-disable", "bob")), 200, "")
 	want(t, bb.Do("GET", "/api/me", nil), 401, "")
 	if getAdmin(t, h, "bob").DisabledAt == nil {
 		t.Fatal("bob is not disabled")
 	}
 	want(t, h.NewBrowser().Login("bob", pw), 401, "invalid_credentials")
 
-	want(t, b.Do("POST", "/api/admins/bob/enable", struct{}{}, tokHeader, b.StepUp("admin-enable")), 200, "")
+	want(t, b.Do("POST", "/api/admins/bob/enable", struct{}{}, tokHeader, b.StepUp("admin-enable", "bob")), 200, "")
 	want(t, h.NewBrowser().Login("bob", pw), 200, "")
 
-	want(t, b.Do("POST", "/api/admins/bob/role", map[string]string{"role": "master"}, tokHeader, b.StepUp("admin-role")), 200, "")
+	want(t, b.Do("POST", "/api/admins/bob/role", map[string]string{"role": "master"}, tokHeader, b.StepUp("admin-role", "bob/master")), 200, "")
 	if getAdmin(t, h, "bob").Role != console.RoleMaster {
 		t.Fatal("bob is not a master")
 	}
-	want(t, b.Do("POST", "/api/admins/bob/role", map[string]string{"role": "root"}, tokHeader, b.StepUp("admin-role")), 400, "invalid_role")
+	want(t, b.Do("POST", "/api/admins/bob/role", map[string]string{"role": "root"}, tokHeader, b.StepUp("admin-role", "bob/admin")), 400, "invalid_role")
 }
 
 // Why: acting on yourself would bypass the last-factor and last-master rules.
@@ -240,11 +248,10 @@ func TestCannotActOnSelf(t *testing.T) {
 	h := consoletest.New(t)
 	b, ada := fullAdmin(t, h, "ada", console.RoleMaster)
 	h.CreateAdmin("bob", pw, console.RoleMaster, false)
-	bobA := getAdmin(t, h, "bob")
 	before := getAdmin(t, h, "ada")
 
 	for _, c := range adminActions {
-		r := b.Do(c.method, "/api/admins/ADA"+c.suffix, actionBody(c.suffix), tokHeader, b.StepUp(c.action))
+		r := b.Do(c.method, "/api/admins/ADA"+c.suffix, actionBody(c.suffix), tokHeader, b.StepUp(c.action, adminTargetOf(c.action, "ada")))
 		want(t, r, 409, "cannot_modify_self")
 	}
 	if got := getAdmin(t, h, "ada"); !reflect.DeepEqual(before, got) {
@@ -253,10 +260,11 @@ func TestCannotActOnSelf(t *testing.T) {
 	if f := factorsOf(t, h, ada); !f.PIN {
 		t.Fatal("ada lost her PIN")
 	}
-	// A refused guard does not spend the token.
-	tok := b.StepUp("admin-disable")
+	// A refused guard does not spend the token. It is bound to ada, so it cannot be tried on bob any more:
+	// the proof is that its jti is still unused.
+	tok := b.StepUp("admin-disable", "ada")
 	want(t, b.Do("POST", "/api/admins/ada/disable", struct{}{}, tokHeader, tok), 409, "cannot_modify_self")
-	want(t, b.Do("POST", "/api/admins/"+bobA.Username+"/disable", struct{}{}, tokHeader, tok), 200, "")
+	requireUnspent(t, h, tok)
 }
 
 // Why: the last active master is the only way back in; CLI and web must both refuse to remove it.
@@ -296,7 +304,7 @@ func TestLastMasterCannotBeRemoved(t *testing.T) {
 			t.Error(err)
 		}
 	}
-	want(t, b.Do("POST", "/api/admins/bob/disable", struct{}{}, tokHeader, b.StepUp("admin-disable")), 409, "last_master")
+	want(t, b.Do("POST", "/api/admins/bob/disable", struct{}{}, tokHeader, b.StepUp("admin-disable", "bob")), 409, "last_master")
 	if getAdmin(t, h2, "bob").DisabledAt != nil {
 		t.Fatal("bob was disabled although ada was no master any more")
 	}
@@ -328,7 +336,7 @@ func TestOtherAdminActionsNeedStepUp(t *testing.T) {
 		if c.action == other {
 			other = "admin-enable"
 		}
-		want(t, b.Do(c.method, path, actionBody(c.suffix), tokHeader, b.StepUp(other)), 403, "step_up_required")
+		want(t, b.Do(c.method, path, actionBody(c.suffix), tokHeader, b.StepUp(other, "bob")), 403, "step_up_required")
 		if got := getAdmin(t, h, "bob"); !reflect.DeepEqual(before, got) {
 			t.Fatalf("%s: bob changed without a valid token", c.action)
 		}
@@ -336,7 +344,7 @@ func TestOtherAdminActionsNeedStepUp(t *testing.T) {
 	if !factorsOf(t, h, bob).PIN {
 		t.Fatal("bob lost his PIN")
 	}
-	tok := b.StepUp("admin-disable")
+	tok := b.StepUp("admin-disable", "bob")
 	want(t, b.Do("POST", "/api/admins/bob/disable", struct{}{}, tokHeader, tok), 200, "")
 	want(t, b.Do("POST", "/api/admins/bob/disable", struct{}{}, tokHeader, tok), 403, "step_up_required")
 }

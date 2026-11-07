@@ -116,7 +116,7 @@ func (a *App) createAdmin(w http.ResponseWriter, r *http.Request) error {
 	if !validRole(in.Role) {
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_role"}
 	}
-	tok, err := a.checkStepUp(r, x, "admin-create")
+	tok, err := a.checkStepUp(r, x, "admin-create", name)
 	if err != nil {
 		return err
 	}
@@ -145,9 +145,11 @@ func (a *App) createAdmin(w http.ResponseWriter, r *http.Request) error {
 // be a master (as read with this request, so a demotion counts at once, before
 // any token work), the name must be one and not the caller's own (so no PIN is
 // asked for a refusal), the token must be valid for the action (checked, not
-// spent), and the target must exist. The
-// caller spends the token itself, right before it writes.
-func (a *App) adminTarget(r *http.Request, action string) (*stepUp, Admin, Admin, error) {
+// spent) for this action on this username (qualify adds what else the token is
+// bound to, the role of admin-role; its failure answers before the token is
+// looked at), and the target must exist. The caller spends the token itself,
+// right before it writes.
+func (a *App) adminTarget(r *http.Request, action string, qualify func() (string, error)) (*stepUp, Admin, Admin, error) {
 	x, actor := sessionFrom(r.Context())
 	if actor.Role != RoleMaster {
 		return nil, Admin{}, Admin{}, errForbidden
@@ -160,7 +162,15 @@ func (a *App) adminTarget(r *http.Request, action string) (*stepUp, Admin, Admin
 	if name == actor.Username {
 		return nil, Admin{}, Admin{}, errSelf
 	}
-	tok, err := a.checkStepUp(r, x, action)
+	stepTarget := name
+	if qualify != nil {
+		q, err := qualify()
+		if err != nil {
+			return nil, Admin{}, Admin{}, err
+		}
+		stepTarget += "/" + q
+	}
+	tok, err := a.checkStepUp(r, x, action, stepTarget)
 	if err != nil {
 		return nil, Admin{}, Admin{}, err
 	}
@@ -175,7 +185,7 @@ func (a *App) adminTarget(r *http.Request, action string) (*stepUp, Admin, Admin
 }
 
 func (a *App) resetPassword(w http.ResponseWriter, r *http.Request) error {
-	tok, _, target, err := a.adminTarget(r, "admin-reset-password")
+	tok, _, target, err := a.adminTarget(r, "admin-reset-password", nil)
 	if err != nil {
 		return err
 	}
@@ -201,7 +211,7 @@ func (a *App) resetPassword(w http.ResponseWriter, r *http.Request) error {
 // a session opened between the first bump and the purge. The purge goes through
 // the AuthGate client directly, not the protected /clients routes.
 func (a *App) clearFactors(w http.ResponseWriter, r *http.Request) error {
-	tok, _, target, err := a.adminTarget(r, "admin-clear-factors")
+	tok, _, target, err := a.adminTarget(r, "admin-clear-factors", nil)
 	if err != nil {
 		return err
 	}
@@ -223,7 +233,7 @@ func (a *App) clearFactors(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) disableAdmin(w http.ResponseWriter, r *http.Request) error {
-	tok, actor, target, err := a.adminTarget(r, "admin-disable")
+	tok, actor, target, err := a.adminTarget(r, "admin-disable", nil)
 	if err != nil {
 		return err
 	}
@@ -240,7 +250,7 @@ func (a *App) disableAdmin(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) enableAdmin(w http.ResponseWriter, r *http.Request) error {
-	tok, actor, target, err := a.adminTarget(r, "admin-enable")
+	tok, actor, target, err := a.adminTarget(r, "admin-enable", nil)
 	if err != nil {
 		return err
 	}
@@ -256,18 +266,20 @@ func (a *App) enableAdmin(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) setAdminRole(w http.ResponseWriter, r *http.Request) error {
-	tok, actor, target, err := a.adminTarget(r, "admin-role")
-	if err != nil {
-		return err
-	}
 	var in struct {
 		Role Role `json:"role"`
 	}
-	if err := decodeBody(r, &in); err != nil {
+	tok, actor, target, err := a.adminTarget(r, "admin-role", func() (string, error) {
+		if err := decodeBody(r, &in); err != nil {
+			return "", err
+		}
+		if !validRole(in.Role) {
+			return "", &apiError{Status: http.StatusBadRequest, Code: "invalid_role"}
+		}
+		return string(in.Role), nil
+	})
+	if err != nil {
 		return err
-	}
-	if !validRole(in.Role) {
-		return &apiError{Status: http.StatusBadRequest, Code: "invalid_role"}
 	}
 	if err := a.spendStepUp(r, tok); err != nil {
 		return err

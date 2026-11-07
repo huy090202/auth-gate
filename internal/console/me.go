@@ -171,7 +171,7 @@ func (a *App) settle(w http.ResponseWriter, r *http.Request, x Session, mustChan
 
 func (a *App) changePassword(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	tok, err := a.checkStepUp(r, x, "change-password")
+	tok, err := a.checkStepUp(r, x, "change-password", "")
 	if err != nil {
 		return err
 	}
@@ -231,7 +231,7 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) setPIN(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	tok, err := a.checkStepUp(r, x, "add-factor")
+	tok, err := a.checkStepUp(r, x, "add-factor", "")
 	if err != nil {
 		return err
 	}
@@ -268,7 +268,7 @@ func (a *App) setPIN(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) deletePIN(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	tok, err := a.checkStepUp(r, x, "remove-factor")
+	tok, err := a.checkStepUp(r, x, "remove-factor", "")
 	if err != nil {
 		return err
 	}
@@ -296,7 +296,7 @@ func (a *App) deletePIN(w http.ResponseWriter, r *http.Request) error {
 // is tied to this start by the registration id kept in the session.
 func (a *App) passkeyStart(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	tok, err := a.checkStepUp(r, x, "add-factor")
+	tok, err := a.checkStepUp(r, x, "add-factor", "")
 	if err != nil {
 		return err
 	}
@@ -356,7 +356,7 @@ func (a *App) passkeyFinish(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) deletePasskey(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	tok, err := a.checkStepUp(r, x, "remove-factor")
+	tok, err := a.checkStepUp(r, x, "remove-factor", "")
 	if err != nil {
 		return err
 	}

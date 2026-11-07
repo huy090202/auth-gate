@@ -1,7 +1,9 @@
 package console
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -24,6 +26,72 @@ var stepUpActions = map[string]string{
 	"admin-enable": "console-admin-enable", "admin-role": "console-admin-role",
 }
 
+// targetKind is what an action's step-up token is bound to besides the admin.
+type targetKind int
+
+const (
+	noTarget       targetKind = iota // the session's own admin
+	clientTarget                     // a client id
+	subjectTarget                    // <clientId>/<subjectId>
+	userTarget                       // a username
+	userRoleTarget                   // <username>/<role>
+)
+
+// stepUpTargets says which actions are bound to a target and of what kind. An
+// action not listed takes none.
+var stepUpTargets = map[string]targetKind{
+	"rotate-key": clientTarget, "revoke-previous-keys": clientTarget, "disable-client": clientTarget, "update-client": clientTarget,
+	"purge-subject": subjectTarget,
+	"admin-create":  userTarget, "admin-reset-password": userTarget, "admin-clear-factors": userTarget,
+	"admin-disable": userTarget, "admin-enable": userTarget,
+	"admin-role": userRoleTarget,
+}
+
+var errInvalidTarget = &apiError{Status: http.StatusBadRequest, Code: "invalid_target"}
+
+// stepUpPurpose is the purpose of the challenge, and so of the token, for an
+// action on a target: the action's own purpose, then ":" and the first 32 hex
+// characters of sha256 of the target when the action takes one. The target is
+// checked by the same rules as the door of the route it will be used on; the
+// normalized target (a username in lower case) is returned with the purpose.
+func stepUpPurpose(action, target string) (purpose, normalized string, err error) {
+	base, ok := stepUpActions[action]
+	if !ok {
+		return "", "", &apiError{Status: http.StatusBadRequest, Code: "invalid_action"}
+	}
+	kind := stepUpTargets[action]
+	if kind == noTarget {
+		if target != "" {
+			return "", "", errInvalidTarget
+		}
+		return base, "", nil
+	}
+	normalized, ok = normalizeTarget(kind, target)
+	if !ok {
+		return "", "", errInvalidTarget
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	return base + ":" + hex.EncodeToString(sum[:])[:32], normalized, nil
+}
+
+func normalizeTarget(kind targetKind, target string) (string, bool) {
+	switch kind {
+	case clientTarget:
+		return target, clientIDRE.MatchString(target)
+	case subjectTarget:
+		client, subject, ok := strings.Cut(target, "/")
+		return target, ok && clientIDRE.MatchString(client) && validSubject(subject)
+	case userTarget:
+		name, err := NormalizeUsername(target)
+		return name, err == nil
+	case userRoleTarget:
+		user, role, ok := strings.Cut(target, "/")
+		name, err := NormalizeUsername(user)
+		return name + "/" + role, ok && err == nil && validRole(Role(role))
+	}
+	return "", false
+}
+
 const stepUpHeader = "x-step-up-token"
 
 var errStepUp = &apiError{Status: http.StatusForbidden, Code: "step_up_required"}
@@ -41,14 +109,16 @@ type stepUp struct {
 // is 403 before anything else. An enrolling session needs none; the caller
 // decides whether it may act at all (see factorsForWrite). It is only called behind
 // a session, so a caller without one cannot make the Console fetch AuthGate's
-// keys. Any failure is the same 403.
-func (a *App) checkStepUp(r *http.Request, s Session, action string) (*stepUp, error) {
+// keys. Any failure is the same 403. The token must have been issued for this
+// action on this target (see stepUpPurpose); target is "" for an action that takes none.
+func (a *App) checkStepUp(r *http.Request, s Session, action, target string) (*stepUp, error) {
 	if s.Stage == StageEnroll {
 		return nil, nil
 	}
-	purpose, ok := stepUpActions[action]
-	if !ok {
-		slog.Error("console: unknown step-up action", "action", action)
+	purpose, _, err := stepUpPurpose(action, target)
+	if err != nil {
+		// The handler names its own action and a target it has already checked.
+		slog.Error("console: bad step-up action or target", "action", action)
 		return nil, &apiError{Status: http.StatusInternalServerError, Code: "internal"}
 	}
 	tok := r.Header.Get(stepUpHeader)
@@ -88,17 +158,17 @@ func (a *App) stepUpRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /api/stepup/verify", a.audited("stepup-verify", nil, full(handlerFunc(a.stepUpVerify))))
 }
 
-// stepUpStart opens a challenge for the action's purpose and remembers its id in
-// the session. An action outside the allow-list never reaches AuthGate, and the
-// admin-* actions are for masters only.
+// stepUpStart opens a challenge for the action's purpose on its target and
+// remembers its id in the session. An action outside the allow-list, or a target
+// that is missing, not wanted or not of the action's kind, never reaches
+// AuthGate, and the admin-* actions are for masters only.
 func (a *App) stepUpStart(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
-	var in struct{ Action, Factor string }
+	var in struct{ Action, Factor, Target string }
 	if err := decodeBody(r, &in); err != nil {
 		return err
 	}
-	purpose, ok := stepUpActions[in.Action]
-	if !ok {
+	if _, ok := stepUpActions[in.Action]; !ok {
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_action"}
 	}
 	setAuditTarget(r.Context(), in.Action)
@@ -107,6 +177,10 @@ func (a *App) stepUpStart(w http.ResponseWriter, r *http.Request) error {
 	}
 	if in.Factor != "pin" && in.Factor != "webauthn" {
 		return &apiError{Status: http.StatusBadRequest, Code: "invalid_factor"}
+	}
+	purpose, _, err := stepUpPurpose(in.Action, in.Target)
+	if err != nil {
+		return err
 	}
 	ch, err := a.AuthGate.CreateChallenge(r.Context(), admin.ID, purpose, in.Factor)
 	if err != nil {

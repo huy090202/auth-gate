@@ -192,8 +192,19 @@ and AuthGate's function each time out within 10 seconds, so a read and a write f
 | Every action on another admin's account | |
 
 Each has its own purpose (`console-rotate-key`, …). The frontend attaches the token to the action. It
-must match the admin and action and is single use, stricter than auth-app's sample, where a replay
-works until `exp`.
+must match the admin, the action and the target, and is single use, stricter than auth-app's sample,
+where a replay works until `exp`.
+
+**The token is bound to its target** (product owner decision, 2026-11-07). The challenge purpose is
+the action's purpose, then `:` and the first 32 hex characters of `sha256(target)` for an action that
+takes a target. A token approved for `rotate-key` on client A does not work on client B. The target is
+the client id for the client actions, `<clientId>/<subjectId>` for `purge-subject`, the normalized
+username for the `admin-*` actions, `<username>/<role>` for `admin-role`; `change-password`,
+`add-factor` and `remove-factor` act on the session's own admin and take none. `POST /stepup/start`
+takes `target` and answers `400 invalid_target`, before any AuthGate call, when a targeted action has
+none or a malformed one, or an untargeted action has one. **The limit:** the binding is to the target,
+not to the request body. An approved `update-client` can still change any field of that one client,
+once, within the token's life.
 
 **Managing admins (master only).**
 
