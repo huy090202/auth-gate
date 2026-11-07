@@ -143,8 +143,9 @@ func (a *App) createAdmin(w http.ResponseWriter, r *http.Request) error {
 
 // adminTarget is the start of every /admins/{username}/* action: the caller must
 // be a master (as read with this request, so a demotion counts at once, before
-// any token work), the name must be one, the token must be valid for the action
-// (checked, not spent), the target must not be the caller and must exist. The
+// any token work), the name must be one and not the caller's own (so no PIN is
+// asked for a refusal), the token must be valid for the action (checked, not
+// spent), and the target must exist. The
 // caller spends the token itself, right before it writes.
 func (a *App) adminTarget(r *http.Request, action string) (*stepUp, Admin, Admin, error) {
 	x, actor := sessionFrom(r.Context())
@@ -156,12 +157,12 @@ func (a *App) adminTarget(r *http.Request, action string) (*stepUp, Admin, Admin
 		return nil, Admin{}, Admin{}, &apiError{Status: http.StatusBadRequest, Code: "invalid_username"}
 	}
 	setAuditTarget(r.Context(), name)
+	if name == actor.Username {
+		return nil, Admin{}, Admin{}, errSelf
+	}
 	tok, err := a.checkStepUp(r, x, action)
 	if err != nil {
 		return nil, Admin{}, Admin{}, err
-	}
-	if name == actor.Username {
-		return nil, Admin{}, Admin{}, errSelf
 	}
 	target, err := a.Store.GetAdmin(r.Context(), name)
 	if errors.Is(err, ErrAdminNotFound) {

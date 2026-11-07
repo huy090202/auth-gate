@@ -39,6 +39,13 @@ func TestCLIReadsPasswordFromStdinOnly(t *testing.T) {
 	if _, e := h.Store().GetAdmin(ctx, "zed"); e == nil {
 		t.Fatal("an admin was written after --password")
 	}
+	// The =value form is refused too, and a name that merely starts with "password" is not a flag.
+	if err := console.RunAdmin(ctx, []string{"create", "--username", "zed", "--role", "master", "--password=x"}, strings.NewReader(secret+"\n"), &out, d); err == nil {
+		t.Fatal("--password=x was accepted")
+	}
+	if err := console.RunAdmin(ctx, []string{"create", "--username", "password-admin", "--role", "admin"}, strings.NewReader("a-fine-long-password\n"), &out, d); err != nil {
+		t.Fatalf("a username starting with password was refused: %v", err)
+	}
 	if err := console.RunAdmin(ctx, []string{"create", "--username", "zed", "--role", "master"}, strings.NewReader("short\n"), &out, d); err == nil {
 		t.Fatal("a weak password was accepted")
 	}

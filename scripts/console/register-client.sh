@@ -50,6 +50,9 @@ else
   rp_id="${rp_id%%[/:]*}"
 fi
 base="${base%/}"
+# make dev serves the admin role under /admin; on AWS the admin API is at the base URL.
+api="$base"
+[[ "$target" == local ]] && api="$base/admin"
 
 # Secrets go through 0600 temp files, never argv.
 tmpdir="$(mktemp -d)"
@@ -58,12 +61,12 @@ trap 'rm -rf "$tmpdir"' EXIT
 printf 'x-internal-access-key: %s\n' "$admin_key" >"$tmpdir/headers"
 jq -n --arg name "$name" --arg rp "$rp_id" --arg origin "$origin" \
   '{name: $name, rpId: $rp, origins: [$origin]}' >"$tmpdir/body"
-status="$(curl -sS -o "$tmpdir/resp" -w '%{http_code}' -X POST "$base/api/clients" \
+status="$(curl -sS -o "$tmpdir/resp" -w '%{http_code}' -X POST "$api/api/clients" \
   -H @"$tmpdir/headers" -H 'content-type: application/json' \
-  --data-binary @"$tmpdir/body")" || die "POST $base/api/clients: network error"
+  --data-binary @"$tmpdir/body")" || die "POST $api/api/clients: network error"
 if [[ "$status" != 201 ]]; then
   # Status and error code only: the body is not echoed.
-  die "POST $base/api/clients -> $status $(jq -r '.error // empty' "$tmpdir/resp" 2>/dev/null || true)"
+  die "POST $api/api/clients -> $status $(jq -r '.error // empty' "$tmpdir/resp" 2>/dev/null || true)"
 fi
 client_id="$(jq -r '.clientId // empty' "$tmpdir/resp")"
 access_key="$(jq -r '.accessKey // empty' "$tmpdir/resp")"
@@ -83,8 +86,9 @@ if [[ "$target" == local ]]; then
   chmod 600 "$env_file"
   echo "registered $name ($client_id); wrote $env_file"
 else
-  jq -n --arg n "$PARAM_PREFIX/authgate-client-key" --arg v "$access_key" \
-    '{Name: $n, Type: "SecureString", Value: $v}' >"$tmpdir/param"
+  # The key goes from the response file to the param file inside jq, never on argv.
+  jq --arg n "$PARAM_PREFIX/authgate-client-key" \
+    '{Name: $n, Type: "SecureString", Value: .accessKey}' "$tmpdir/resp" >"$tmpdir/param"
   if ! aws ssm put-parameter --region "$REGION" --cli-input-json "file://$tmpdir/param" >/dev/null; then
     {
       echo "error: registered client $client_id but could not write $PARAM_PREFIX/authgate-client-key."

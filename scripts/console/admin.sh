@@ -21,6 +21,7 @@ esac
 shift
 
 if [[ "$STAGE" == local ]]; then
+  unset AWS_PROFILE
   env_file="$ROOT/.env.console"
   [[ -f "$env_file" ]] || die "$env_file is missing; run register-client.sh local first"
   set -a
@@ -30,6 +31,8 @@ if [[ "$STAGE" == local ]]; then
   export CONSOLE_DEV=1 TABLE_NAME=console-dev DYNAMO_ENDPOINT=http://localhost:8000 AUTHGATE_BASE_URL=http://localhost:8080
   export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-x}" AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-x}"
 else
+  # Nothing left over from a local or test shell may redirect the write.
+  unset DYNAMO_ENDPOINT CONSOLE_DEV ADMIN_KEY CLIENT_KEY PORT AUTHGATE_BASE_URL AUTHGATE_CLIENT_ID ADMIN_KEY_PARAM TABLE_NAME
   export AWS_PROFILE="${ADMIN_PROFILE:-default}"
   export AWS_REGION="$REGION"
   export TABLE_NAME="auth-gate-console-$STAGE"
@@ -46,9 +49,9 @@ fi
 cd "$ROOT"
 case "$sub" in
   create | reset-password)
-    read -rsp "Password for the account: " pw
+    IFS= read -rsp "Password for the account: " pw
     echo >&2
-    read -rsp "Again: " pw2
+    IFS= read -rsp "Again: " pw2
     echo >&2
     [[ "$pw" == "$pw2" ]] || die "the two passwords differ"
     printf '%s\n' "$pw" | go run ./cmd/console admin "$sub" "$@"

@@ -33,7 +33,7 @@ func RunAdmin(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		return errors.New(usage)
 	}
 	for _, a := range args[1:] {
-		if strings.HasPrefix(strings.TrimLeft(a, "-"), "password") {
+		if strings.HasPrefix(a, "-") && strings.HasPrefix(strings.TrimLeft(a, "-"), "password") {
 			return errors.New("passwords are read from stdin only; there is no --password flag")
 		}
 	}
