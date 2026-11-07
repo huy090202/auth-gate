@@ -6,9 +6,10 @@ import { AppRoutes } from './routes';
 
 const icon = { width: 18, height: 18, fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
 
-function SchemeToggle() {
+export function SchemeToggle() {
   const t = useStrings();
-  const { setColorScheme } = useMantineColorScheme();
+  // keepTransitions: Mantine would otherwise append a <style> element on every toggle, which the CSP blocks.
+  const { setColorScheme } = useMantineColorScheme({ keepTransitions: true });
   const scheme = useComputedColorScheme('light');
   const next = scheme === 'dark' ? 'light' : 'dark';
   return (

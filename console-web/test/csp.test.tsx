@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { Button, MantineProvider, Modal } from '@mantine/core';
+import { ActionIcon, Button, MantineProvider, Modal, SegmentedControl } from '@mantine/core';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, expect, test, vi } from 'vitest';
+import { SchemeToggle } from '../src/App';
 import { mantineVarsCss } from '../src/lib/mantine-vars';
 import { theme } from '../src/theme';
 
@@ -37,6 +38,8 @@ test('no <style> element is rendered, including with a Modal open', async () => 
     root.render(
       <MantineProvider withCssVariables={false} withGlobalClasses={false} defaultColorScheme="auto" theme={theme}>
         <Button>Open</Button>
+        <ActionIcon aria-label="icon">x</ActionIcon>
+        <SegmentedControl value="en" onChange={() => {}} data={['en', 'vi']} />
         <Modal opened onClose={() => {}} title="Dialog" transitionProps={{ duration: 0 }}>
           body
         </Modal>
@@ -44,6 +47,31 @@ test('no <style> element is rendered, including with a Modal open', async () => 
     );
   });
   expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  expect(document.querySelectorAll('style').length).toBe(0);
+  await act(async () => root.unmount());
+});
+
+test('clicking the scheme toggle renders no <style> element', async () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: false, media: query, onchange: null,
+    addEventListener: () => {}, removeEventListener: () => {},
+    addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+  }));
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <MantineProvider withCssVariables={false} withGlobalClasses={false} defaultColorScheme="light" theme={theme}>
+        <SchemeToggle />
+      </MantineProvider>,
+    );
+  });
+  const button = host.querySelector('button')!;
+  await act(async () => {
+    button.click();
+  });
+  expect(document.documentElement.getAttribute('data-mantine-color-scheme')).toBe('dark');
   expect(document.querySelectorAll('style').length).toBe(0);
   await act(async () => root.unmount());
 });
