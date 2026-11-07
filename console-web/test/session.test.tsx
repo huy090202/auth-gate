@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, expect, test, vi } from 'vitest';
 import { api } from '../src/lib/api';
 import { SessionProvider, useMe } from '../src/session';
+import { ToastProvider, useToast } from '../src/toast';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -78,5 +79,32 @@ test('the stage refresh finishes before the failure hook navigates', async () =>
   });
   expect(host.querySelector('#target')).not.toBeNull();
   expect(seen[0]).toBe('half'); // the first render of the target already sees the new stage
+  await act(async () => root.unmount());
+});
+
+// Why: the toast provider sits above the routes, so a note from the user who just signed out (or
+// whose session a 401 ended) would show on the sign-in page for up to 4 s.
+test('clearing the session also clears the toasts', async () => {
+  vi.stubGlobal('fetch', async () => json(me('full')));
+  function Probe() {
+    const toast = useToast();
+    const { clear } = useMe();
+    return (
+      <>
+        <button type="button" id="say" onClick={() => toast('PIN saved')}>say</button>
+        <button type="button" id="out" onClick={clear}>out</button>
+      </>
+    );
+  }
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<MemoryRouter><ToastProvider><SessionProvider><Probe /></SessionProvider></ToastProvider></MemoryRouter>);
+  });
+  await act(async () => host.querySelector<HTMLButtonElement>('#say')!.click());
+  expect(host.querySelector('.toast-text')?.textContent).toBe('PIN saved');
+  await act(async () => host.querySelector<HTMLButtonElement>('#out')!.click());
+  expect(host.querySelector('.toast')).toBeNull();
   await act(async () => root.unmount());
 });

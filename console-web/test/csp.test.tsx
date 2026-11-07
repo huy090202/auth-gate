@@ -239,7 +239,12 @@ for (const path of ['/clients', `/clients/${ID}`, '/admins']) test(`the ${path.s
 
 test('the audit screen renders no <style> element, expanded rows included, and falls back to raw values', async () => {
   const { host, root } = await renderAt('/audit');
-  expect(host.querySelectorAll('tbody tr:not(.row-detail)').length).toBe(3);
+  const rowCount = host.querySelectorAll('tbody tr:not(.row-detail)').length;
+  expect(rowCount).toBe(3);
+  // Rows start closed: nothing open, every detail inert and empty.
+  expect(host.querySelectorAll('.row-detail[data-open="true"]').length).toBe(0);
+  expect(host.querySelectorAll('[inert]').length).toBe(rowCount);
+  for (const d of host.querySelectorAll('.detail-body')) expect(d.textContent).toBe('');
   for (const b of host.querySelectorAll<HTMLButtonElement>('.row-toggle')) {
     await act(async () => {
       b.click();

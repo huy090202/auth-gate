@@ -3,15 +3,16 @@ import { useStrings } from './lib/i18n';
 
 export type ToastKind = 'success' | 'info';
 type Item = { id: number; message: string; kind: ToastKind; leaving: boolean };
-type ToastFn = (message: string, kind?: ToastKind) => void;
+type ToastFn = ((message: string, kind?: ToastKind) => void) & { clear: () => void };
 
 // Without a provider (a screen rendered alone in a test) a toast is dropped.
-const Ctx = createContext<ToastFn>(() => {});
+const Ctx = createContext<ToastFn>(Object.assign(() => {}, { clear: () => {} }));
 
-/** `toast(message, kind)` shows a short note at the top right. Success and info only: errors stay inline. */
+/** `toast(message, kind)` shows a short note at the top right. Success and info only: errors stay inline. `toast.clear()` drops them all (a sign-out). */
 export const useToast = (): ToastFn => useContext(Ctx);
 
 const LIFETIME = 4000;
+const MAX = 3; // the newest few; a burst of toasts does not pile up
 const EXIT = 200; // a little over the 180 ms exit animation in styles.css
 
 const stroke = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true, focusable: false } as const;
@@ -50,13 +51,17 @@ function ToastItem({ item, onLeave, onGone }: { item: Item; onLeave: (id: number
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<Item[]>([]);
   const seq = useRef(0);
-  const toast = useCallback<ToastFn>((message, kind = 'success') => {
+  const show = useCallback((message: string, kind: ToastKind = 'success') => {
     if (message === '') return;
-    setItems((prev) => [...prev, { id: ++seq.current, message, kind, leaving: false }]);
+    setItems((prev) => {
+      if (prev.some((i) => i.message === message && !i.leaving)) return prev; // the same note is already showing
+      return [...prev, { id: ++seq.current, message, kind, leaving: false }].slice(-MAX);
+    });
   }, []);
+  const clear = useCallback(() => setItems([]), []);
   const leave = useCallback((id: number) => setItems((prev) => prev.map((i) => (i.id === id ? { ...i, leaving: true } : i))), []);
   const gone = useCallback((id: number) => setItems((prev) => prev.filter((i) => i.id !== id)), []);
-  const value = useMemo(() => toast, [toast]);
+  const value = useMemo<ToastFn>(() => Object.assign((m: string, k?: ToastKind) => show(m, k), { clear }), [show, clear]);
   return (
     <Ctx.Provider value={value}>
       {children}

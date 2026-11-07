@@ -85,3 +85,36 @@ test('the close button dismisses a toast', async () => {
   expect(host.querySelector('.toast')).toBeNull();
   await act(async () => root.unmount());
 });
+
+// Why: copying an id chip repeatedly stacked identical "Copied" toasts, and a toast of the previous
+// user could outlive a sign-out onto the sign-in page. Both are visible only in a browser.
+function Many() {
+  const toast = useToast();
+  return (
+    <>
+      <button type="button" id="dup" onClick={() => { toast('Copied'); toast('Copied'); }}>dup</button>
+      <button type="button" id="many" onClick={() => ['a', 'b', 'c', 'd', 'e'].forEach((m) => toast(m))}>many</button>
+      <button type="button" id="clear" onClick={() => toast.clear()}>clear</button>
+    </>
+  );
+}
+
+test('identical toasts are dropped, the stack holds three, and clear() empties it', async () => {
+  stubMatchMedia();
+  vi.useFakeTimers();
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<MantineProvider theme={theme}><ToastProvider><Many /></ToastProvider></MantineProvider>);
+  });
+  const click = (id: string) => act(async () => host.querySelector<HTMLButtonElement>(id)!.click());
+  await click('#dup');
+  await click('#dup');
+  expect(host.querySelectorAll('.toast').length).toBe(1);
+  await click('#many');
+  expect([...host.querySelectorAll('.toast-text')].map((e) => e.textContent)).toEqual(['c', 'd', 'e']);
+  await click('#clear');
+  expect(host.querySelector('.toast')).toBeNull();
+  await act(async () => root.unmount());
+});

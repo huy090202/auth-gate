@@ -5,6 +5,7 @@ import { ApiError, api, onApiFailure } from './lib/api';
 import { SiteHeader } from './controls';
 import { explain } from './lib/explain';
 import { useStrings } from './lib/i18n';
+import { useToast } from './toast';
 
 export type Passkey = { credentialId: string; createdAt: string; lastUsedAt?: string | null };
 export type Me = {
@@ -37,13 +38,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<Status>('loading');
   const [error, setError] = useState<unknown>(null);
   const loaded = useRef(false);
+  const toast = useToast();
 
+  // The toasts belong to the user who is leaving: the sign-in page must not show their notes.
   const clear = useCallback(() => {
     loaded.current = false;
+    toast.clear();
     setMe(null);
     setError(null);
     setStatus('anon');
-  }, []);
+  }, [toast]);
 
   const reload = useCallback(async () => {
     try {

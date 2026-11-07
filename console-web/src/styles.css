@@ -303,7 +303,7 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 .mantine-Select-option[data-checked] svg { color: var(--accent-text); }
 .mantine-Select-option[data-combobox-disabled] { opacity: 0.5; cursor: not-allowed; }
 
-/* Toast: top right, under the sticky header. Enter and exit are CSS animations; reduced motion turns them off. */
+/* Toast: top right, under the sticky header (bottom on small screens, clear of the nav). Enter and exit are CSS animations; reduced motion turns them off. */
 .toast-stack {
   position: fixed; z-index: 400; top: calc(var(--header-h) + 12px); right: clamp(12px, 3vw, 24px);
   display: grid; gap: 10px; width: min(380px, calc(100vw - 24px)); pointer-events: none;
@@ -324,4 +324,4 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 @keyframes toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 @keyframes toast-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(16px); } }
 @media (prefers-reduced-motion: reduce) { .toast, .toast[data-leaving='true'] { animation: none; } }
-@media (max-width: 768px) { .toast-stack { top: calc(var(--header-h) + 8px); } }
+@media (max-width: 768px) { .toast-stack { top: auto; bottom: 12px; } }
