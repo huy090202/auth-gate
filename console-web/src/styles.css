@@ -172,4 +172,8 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 .avatar { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; font-weight: 700; color: #ecfdf3; background: #0b7041; }
 .avatar-name { font-weight: 600; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .content-header .mantine-Menu-dropdown { background: var(--glass-strong); }
+.content-header .mantine-Menu-dropdown { padding-block: 6px; }
+.content-header .mantine-Menu-label { padding-block: 4px 8px; }
+.content-header .mantine-Menu-item { padding-block: 9px; }
+.content-header .mantine-Menu-label + .mantine-Menu-item { margin-top: 4px; }
 .pref-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 14px 0 0; }
