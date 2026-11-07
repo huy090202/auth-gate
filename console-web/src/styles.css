@@ -97,3 +97,12 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 @media (max-width: 520px) { .auth-card, .panel { padding: 20px 18px; } }
 
 .auth-card h1 { font-size: 1.75rem; letter-spacing: -0.015em; }
+
+.app-nav .nav-link { padding: 6px 10px; border-radius: 8px; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.step { padding: 18px 20px; border-radius: 14px; }
+.step-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.step h2 { font-size: 1.0625rem; font-weight: 650; }
+.enroll-col { width: min(100%, 520px); display: grid; gap: 14px; }
+.enroll-out { justify-self: start; }
+.panel-stack { display: grid; gap: 14px; }

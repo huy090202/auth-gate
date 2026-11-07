@@ -24,6 +24,15 @@ export class ApiError extends Error {
   }
 }
 
+let failureHook: ((e: ApiError) => void) | null = null;
+/** The one place that reacts to a failure of any call (session loss, wrong stage). Returns the unsubscribe. */
+export function onApiFailure(fn: (e: ApiError) => void): () => void {
+  failureHook = fn;
+  return () => {
+    if (failureHook === fn) failureHook = null;
+  };
+}
+
 /**
  * Same origin only: the browser never talks to AuthGate. Every non-GET is application/json,
  * with or without a body: the backend refuses anything else. An error response that carries
@@ -32,6 +41,18 @@ export class ApiError extends Error {
 export async function api<T>(
   path: string,
   init: { method?: string; body?: unknown; stepUpToken?: string } = {},
+): Promise<T> {
+  try {
+    return await request<T>(path, init);
+  } catch (e) {
+    if (e instanceof ApiError) failureHook?.(e);
+    throw e;
+  }
+}
+
+async function request<T>(
+  path: string,
+  init: { method?: string; body?: unknown; stepUpToken?: string },
 ): Promise<T> {
   const method = init.method ?? (init.body === undefined ? 'GET' : 'POST');
   const headers: Record<string, string> = {};

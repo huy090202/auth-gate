@@ -46,3 +46,8 @@ export function describe(e: unknown, t: Strings): string {
   if (typeof code === 'string' && Object.hasOwn(t.errors, code)) return t.errors[code as keyof Strings['errors']];
   return t.errors.internal;
 }
+
+/** Fills `{name}` placeholders. Strings stay plain text so the typed strings module can hold them. */
+export function fmt(template: string, values: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (m, k: string) => (Object.hasOwn(values, k) ? String(values[k]) : m));
+}
