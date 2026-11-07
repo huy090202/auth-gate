@@ -22,5 +22,7 @@ docs:
     | `/api/me` without a cookie | **401** | no session, no data |
 
     Each login attempt spends one token of the per-IP limiter on `/api/auth/*`
-    (burst 10, then one per 6 seconds). This folder spends two.
+    (burst 10, then one per 6 seconds). Run by hand this folder spends two; under
+    `smoke.sh` it spends one, because the wrong-password request is skipped. The
+    unknown-user login also writes an audit row.
   type: text/markdown

@@ -12,6 +12,8 @@ docs:
     Run after `02-sign-in`, in order. The Console's own client is read-only, so this
     folder makes its own client and works on that. **It leaves that client behind**
     (`bruno console demo`): a client cannot be deleted in v1, only disabled.
+    Disabling the demo client needs a step-up of its own, and the operator does it
+    by hand.
 
     A sensitive change (here `origins`) needs a step-up token: `POST /api/stepup/start`
     with `{action, factor, target}`, where `target` is the client id, then

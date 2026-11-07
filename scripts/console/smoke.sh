@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Smoke-test a deployed Console stage. Reads BaseUrl and RawConsoleUrl from the
 # stack outputs and checks, in order:
-#   1. $BaseUrl/clients/x   200 text/html, the SPA shell, with a CSP whose
-#                           script-src and style-src carry no 'unsafe-inline'
+#   1. $BaseUrl/clients/x   200 text/html, the SPA shell, with a CSP that carries
+#                           no 'unsafe-inline' anywhere (every CSP header)
 #   2. $BaseUrl/api/nope    404 {"error":"not_found"...}: /api never falls
 #                           through to the shell
-#   3. $RawConsoleUrl/api/nope  401: the Function URL refuses what did not come
+#   3. $RawConsoleUrl/api/nope  401 {"error":"unauthorized"...}: the Function URL refuses what did not come
 #                           through CloudFront. This holds once the second
 #                           deploy pass has run; on the first pass the function
 #                           fails at init and answers 502.
@@ -34,11 +34,13 @@ fail() { echo "FAIL  $*" >&2; fails=$((fails + 1)); }
 # fetch <url> fills $tmp/head and $tmp/body and sets $code. A transport failure
 # leaves code 000, which no check below accepts.
 fetch() {
+  : >"$tmp/body"
+  : >"$tmp/head"
   code="$(curl -sS --connect-timeout 10 --max-time 30 -o "$tmp/body" -D "$tmp/head" -w '%{http_code}' "$1")" || code=000
 }
-# header <name> prints the value of the last such response header, lower-cased name.
+# header <name> prints every value of that response header, one per line.
 header() {
-  tr -d '\r' <"$tmp/head" | awk -F': *' -v n="$1" 'tolower($1) == n { v = substr($0, index($0, ":") + 1); sub(/^ +/, "", v) } END { print v }'
+  tr -d '\r' <"$tmp/head" | awk -F': *' -v n="$1" 'tolower($1) == n { v = substr($0, index($0, ":") + 1); sub(/^ +/, "", v); print v }'
 }
 
 # 1. the SPA shell, with a strict CSP
@@ -50,22 +52,14 @@ csp="$(header content-security-policy)"
 if [[ -z "$csp" ]]; then
   fail "no content-security-policy header"
 else
-  # Directive by directive, so a later directive cannot hide a weak script-src.
-  script_src="$(tr ';' '\n' <<<"$csp" | sed 's/^ *//' | grep -E '^script-src( |$)' || true)"
-  if [[ -z "$script_src" ]]; then
-    fail "csp has no script-src"
-  elif [[ "$script_src" == *unsafe-inline* ]]; then
-    fail "csp script-src allows unsafe-inline"
+  # Every CSP header is enforced, so every one is checked. style-src 'self' ships
+  # (infra/console.yaml, console-web/vite.config.ts): unsafe-inline is a regression.
+  if grep -qi 'unsafe-inline' <<<"$csp"; then
+    fail "csp carries unsafe-inline"
   else
-    pass "csp script-src has no unsafe-inline"
+    pass "csp has no unsafe-inline"
   fi
-  # Spec conflict 5: if the style fallback was accepted, only script-src is held to this.
-  if [[ "$csp" == *unsafe-inline* ]]; then
-    echo "note  csp carries unsafe-inline outside script-src (the accepted style fallback?)" >&2
-    [[ "$script_src" == *unsafe-inline* ]] || pass "csp is strict where it matters (script-src)"
-  else
-    pass "csp has no unsafe-inline anywhere"
-  fi
+  if grep -qiE '(^|;) *script-src( |;|$)' <<<"$csp"; then pass "csp has a script-src"; else fail "csp has no script-src"; fi
 fi
 
 # 2. an unknown API path is JSON, not the shell
@@ -81,6 +75,11 @@ fi
 fetch "$raw_url/api/nope"
 if [[ "$code" == 401 ]]; then
   pass "raw function URL is 401"
+  if [[ "$(tr -d ' \n\r' <"$tmp/body")" == '{"error":"unauthorized"'* ]]; then
+    pass "raw function URL body is the unauthorized envelope"
+  else
+    fail "raw function URL body is not {\"error\":\"unauthorized\"...}"
+  fi
 elif [[ "$code" == 502 ]]; then
   fail "raw function URL is 502: the first deploy pass has run but not the second (AUTHGATE_CLIENT_ID=<id> deploy.sh)"
 else

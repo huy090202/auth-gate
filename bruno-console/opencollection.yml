@@ -38,7 +38,9 @@ docs:
     ### Rate limit
 
     `/api/auth/*` allows a burst of 10, then one request per 6 seconds, per IP
-    (in Dev, the socket address). A full run uses five tokens. Wait a minute
+    (in Dev, the socket address). A full run uses five tokens; `smoke.sh` runs `01-boundary` only and spends one
+    (the wrong-password request is skipped), and its unknown-user login writes an
+    audit row. Wait a minute
     before running it again; the limiter is not switched off.
 
     Real environment files are gitignored. Never commit a password or a PIN.
