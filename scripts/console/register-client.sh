@@ -61,9 +61,14 @@ trap 'rm -rf "$tmpdir"' EXIT
 printf 'x-internal-access-key: %s\n' "$admin_key" >"$tmpdir/headers"
 jq -n --arg name "$name" --arg rp "$rp_id" --arg origin "$origin" \
   '{name: $name, rpId: $rp, origins: [$origin]}' >"$tmpdir/body"
-status="$(curl -sS -o "$tmpdir/resp" -w '%{http_code}' -X POST "$api/api/clients" \
+status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$tmpdir/resp" -w '%{http_code}' -X POST "$api/api/clients" \
   -H @"$tmpdir/headers" -H 'content-type: application/json' \
-  --data-binary @"$tmpdir/body")" || die "POST $api/api/clients: network error"
+  --data-binary @"$tmpdir/body")" || {
+  if [[ "$target" == local ]]; then
+    die "POST $api/api/clients: no answer. Is AuthGate running? Start it with: make dev"
+  fi
+  die "POST $api/api/clients: network error"
+}
 if [[ "$status" != 201 ]]; then
   # Status and error code only: the body is not echoed.
   die "POST $api/api/clients -> $status $(jq -r '.error // empty' "$tmpdir/resp" 2>/dev/null || true)"
