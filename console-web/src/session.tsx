@@ -52,7 +52,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setMe(m);
       setStatus(m.stage);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) return; // the failure hook has cleared state
+      // Only `unauthorized` is the hook's to handle (it has cleared state). Any other failure of /me,
+      // a 401 with another code included, must reach the error branch or the caller.
+      if (e instanceof ApiError && e.status === 401 && e.code === 'unauthorized') return;
       if (loaded.current) throw e; // a page already showing keeps showing; the caller reports
       setMe(null);
       setError(e);
@@ -75,13 +77,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (e.status === 401 && e.code === 'unauthorized') {
           clear();
           nav('/sign-in', { replace: true });
-        } else if (e.status === 401 && e.code === 'second_factor_required') {
-          void reload().catch(() => {});
-          nav('/sign-in/second-factor', { replace: true });
-        } else if (e.status === 403 && e.code === 'enrollment_required') {
-          void reload().catch(() => {});
-          nav('/enroll', { replace: true });
+          return;
         }
+        const toSecondFactor = e.status === 401 && e.code === 'second_factor_required';
+        const toEnroll = e.status === 403 && e.code === 'enrollment_required';
+        // /api/me answers every stage, so a stage refusal from it is a broken backend, not a cue
+        // to refetch it (that could loop): reload()'s own catch shows it as an error.
+        if ((!toSecondFactor && !toEnroll) || e.path === '/api/me') return;
+        // Refresh first, then navigate: the target screen must see the new status or it bounces back.
+        void (async () => {
+          try {
+            await reload();
+          } catch {
+            /* a failed refresh leaves the old status; the target screen's guard decides */
+          }
+          nav(toSecondFactor ? '/sign-in/second-factor' : '/enroll', { replace: true });
+        })();
       }),
     [clear, nav, reload],
   );

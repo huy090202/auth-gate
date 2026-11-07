@@ -33,8 +33,10 @@ export function useAction() {
     setError('');
     setNote('');
     try {
-      if ((await fn()) === false) return false;
-      setNote(okNote);
+      const done = await fn();
+      if (done === false) return false;
+      // A step that knows more than the caller did beforehand (a count, say) returns its own note.
+      setNote(typeof done === 'string' ? done : okNote);
       return true;
     } catch (e) {
       if (isCancelled(e)) return false;

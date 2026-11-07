@@ -4,10 +4,15 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, expect, test, vi } from 'vitest';
 import { SchemeToggle } from '../src/App';
 import { mantineVarsCss } from '../src/lib/mantine-vars';
+import { ShownOnce } from '../src/ShownOnce';
+import { Admins } from '../src/screens/Admins';
+import { Audit } from '../src/screens/Audit';
+import { ClientDetail } from '../src/screens/ClientDetail';
+import { Clients } from '../src/screens/Clients';
 import { SessionProvider, type Me } from '../src/session';
 import { Shell } from '../src/shell';
 import { theme } from '../src/theme';
@@ -126,6 +131,121 @@ for (const collapsed of [false, true]) test(`the signed-in Shell renders no <sty
     await new Promise((r) => setTimeout(r, 400)); // the menu's own transition
   });
   expect([...document.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent)).toEqual(['My account', 'Sign out']);
+  expect(document.querySelectorAll('style').length).toBe(0);
+  await act(async () => root.unmount());
+});
+
+// Why these render the real screens: a Mantine component that injects a <style> (Table.ScrollContainer,
+// a Select dropdown, responsive props) only fails in a browser under the production CSP, where it is
+// silent in the page and loud only in the console. The last assertions are a smoke check that rows with
+// an empty source, no detail or an unknown action and reason render at all, with the raw value as text.
+const master: Me = { username: 'ann', role: 'master', stage: 'full', mustChangePassword: false, factors: { pin: true, webauthn: [] } };
+const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200, headers: { 'content-type': 'application/json' } });
+const ID = '01HZZZZZZZZZZZZZZZZZZZZZZZ';
+const routes: Record<string, unknown> = {
+  '/api/me': master,
+  '/api/clients': { clients: [{ clientId: ID, name: 'Shop', rpId: 'shop.example.com', createdAt: '2026-11-01T10:00:00Z' }] },
+  [`/api/clients/${ID}`]: {
+    clientId: ID, name: 'Shop', rpId: 'shop.example.com', origins: ['https://shop.example.com'],
+    pinPolicy: { length: 6, maxAttempts: 5, lockoutSec: 900 }, tokenTtlSec: 300, rateLimit: { burst: 100, perSecond: 50 },
+    createdAt: '2026-11-01T10:00:00Z',
+  },
+  '/api/audit': {
+    month: '2026-11',
+    entries: [
+      { adminId: 'a1', username: 'ann', action: 'update-client', target: ID, result: 'success', ip: '203.0.113.9', source: 'web', at: '2026-11-05T09:00:00.000000000Z',
+        detail: { fields: 'name,pinPolicy', name: 'Shop', pinPolicy: 'length=6,maxAttempts=5,lockoutSec=900' } },
+      { adminId: '', username: '', action: 'login', target: '', result: 'failed:invalid_credentials', ip: '', source: '', at: '2026-11-05T08:00:00.000000000Z',
+        detail: { reason: 'wrong_password' } },
+      { adminId: '', username: 'cli:root', action: 'brand-new-action', target: '', result: 'failed:brand_new_code', ip: '', source: 'cli', at: '2026-11-04T08:00:00.000000000Z' },
+    ],
+  },
+  '/api/admins': { admins: [
+    { username: 'ann', role: 'master', mustChangePassword: false, lockedUntil: null, disabledAt: null, createdAt: '2026-10-01T00:00:00Z' },
+    { username: 'bob', role: 'admin', mustChangePassword: true, lockedUntil: null, disabledAt: null, createdAt: '2026-10-02T00:00:00Z' },
+  ] },
+};
+
+async function renderAt(path: string) {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: false, media: query, onchange: null,
+    addEventListener: () => {}, removeEventListener: () => {},
+    addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+  }));
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal('fetch', async (url: string) => {
+    const p = url.split('?')[0]!;
+    return Object.hasOwn(routes, p) ? json(routes[p]) : new Response('{"error":"not_found"}', { status: 404 });
+  });
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <MantineProvider withCssVariables={false} withGlobalClasses={false} defaultColorScheme="light" theme={theme}>
+        <MemoryRouter initialEntries={[path]}>
+          <SessionProvider>
+            <Routes>
+              <Route path="/clients" element={<Clients />} />
+              <Route path="/clients/:id" element={<ClientDetail />} />
+              <Route path="/audit" element={<Audit />} />
+              <Route path="/admins" element={<Admins />} />
+            </Routes>
+          </SessionProvider>
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+  });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  return { host, root };
+}
+
+for (const path of ['/clients', `/clients/${ID}`, '/admins']) test(`the ${path.split('/')[1]} screen renders no <style> element`, async () => {
+  const { host, root } = await renderAt(path);
+  expect(host.querySelector('h1')).not.toBeNull();
+  expect(host.querySelectorAll('button').length).toBeGreaterThan(1);
+  expect(document.querySelectorAll('style').length).toBe(0);
+  await act(async () => root.unmount());
+});
+
+test('the audit screen renders no <style> element, expanded rows included, and falls back to raw values', async () => {
+  const { host, root } = await renderAt('/audit');
+  expect(host.querySelectorAll('tbody tr').length).toBe(3);
+  for (const b of host.querySelectorAll<HTMLButtonElement>('.row-toggle')) {
+    await act(async () => {
+      b.click();
+    });
+  }
+  const text = host.textContent ?? '';
+  expect(text).toContain('Client updated'); // a known action: its label
+  expect(text).toContain('Wrong password'); // detail.reason: its label
+  expect(text).toContain('brand-new-action'); // an unknown action: the raw value
+  expect(text).toContain('brand_new_code'); // an unknown failure: the raw value
+  expect(host.querySelectorAll('.row-detail').length).toBe(3);
+  expect(document.querySelectorAll('style').length).toBe(0);
+  await act(async () => root.unmount());
+});
+
+test('ShownOnce renders no <style> element', async () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: false, media: query, onchange: null,
+    addEventListener: () => {}, removeEventListener: () => {},
+    addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+  }));
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <MantineProvider withCssVariables={false} withGlobalClasses={false} defaultColorScheme="light" theme={theme}>
+        <ShownOnce title="t" label="l" value="v" onClose={() => {}} />
+      </MantineProvider>,
+    );
+  });
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   expect(document.querySelectorAll('style').length).toBe(0);
   await act(async () => root.unmount());
 });

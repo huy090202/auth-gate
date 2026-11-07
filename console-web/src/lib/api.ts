@@ -15,6 +15,8 @@ export class ApiError extends Error {
   /** An ErrorCode from the backend, or 'network_error', 'invalid_response' or 'unknown' from here. */
   code: string;
   extras: Record<string, unknown>;
+  /** The request path, set by api(); lets the failure hook tell a failed /api/me from any other call. */
+  path = '';
   constructor(status: number, code: string, extras: Record<string, unknown>) {
     super(`${status} ${code}`);
     this.name = 'ApiError';
@@ -45,7 +47,10 @@ export async function api<T>(
   try {
     return await request<T>(path, init);
   } catch (e) {
-    if (e instanceof ApiError) failureHook?.(e);
+    if (e instanceof ApiError) {
+      e.path = path;
+      failureHook?.(e);
+    }
     throw e;
   }
 }

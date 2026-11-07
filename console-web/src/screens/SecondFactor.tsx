@@ -123,6 +123,7 @@ export function SecondFactor() {
   useTitle(consoleTitle(t.screens.secondFactor));
   const nav = useNavigate();
   const { me, status, error, reload, retry, clear } = useMe();
+  const [reloadError, setReloadError] = useState('');
   if (status === 'loading') return <Loading />;
   if (status === 'error') return <LoadFailed error={error} onRetry={retry} />;
   if (status !== 'half' || !me) return <Navigate to={homeFor(status)} replace />;
@@ -147,9 +148,15 @@ export function SecondFactor() {
           start={(factor) => api<Challenge>('/api/auth/second-factor/start', { body: { factor } })}
           verify={(challengeId, proof) => api('/api/auth/second-factor/verify', { body: { challengeId, ...proof } })}
           onDone={(r) => {
-            void reload().then(() => nav(r.stage === 'enroll' ? '/enroll' : '/clients', { replace: true }), () => {});
+            setReloadError('');
+            // The factor was accepted; if the refresh fails the user is told, not left on a silent form.
+            void reload().then(
+              () => nav(r.stage === 'enroll' ? '/enroll' : '/clients', { replace: true }),
+              (e: unknown) => setReloadError(explain(e, t)),
+            );
           }}
         />
+        {reloadError && <Text c="red.7" fz="sm" role="alert">{reloadError}</Text>}
         <Anchor component="button" type="button" fz="sm" ta="left" onClick={() => void startOver()}>{t.secondFactor.startOver}</Anchor>
       </Stack>
     </div>
