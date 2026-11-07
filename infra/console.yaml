@@ -26,6 +26,9 @@ Resources:
     Properties:
       TableName: !Sub auth-gate-console-${Stage}
       BillingMode: PAY_PER_REQUEST
+      # Holds every admin account and the audit trail. scripts/console/purge.sh turns this
+      # off after its typed confirmation; a stack delete fails until then.
+      DeletionProtectionEnabled: true
       AttributeDefinitions:
         - { AttributeName: pk, AttributeType: S }
         - { AttributeName: sk, AttributeType: S }
@@ -65,6 +68,9 @@ Resources:
       Timeout: 24
       FunctionUrlConfig:
         AuthType: NONE
+      # The ceiling on this role: a right added below must also be in
+      # infra/role-boundary.json, or it is denied at run time.
+      PermissionsBoundary: !Sub arn:aws:iam::${AWS::AccountId}:policy/auth-gate-boundary
       Environment:
         Variables:
           STAGE: !Ref Stage

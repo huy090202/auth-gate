@@ -48,20 +48,33 @@
       "Sid": "ManageTheExecutionRoles",
       "Effect": "Allow",
       "Action": [
-        "iam:CreateRole",
         "iam:DeleteRole",
         "iam:GetRole",
         "iam:TagRole",
         "iam:UntagRole",
-        "iam:PutRolePolicy",
         "iam:GetRolePolicy",
-        "iam:DeleteRolePolicy",
-        "iam:AttachRolePolicy",
-        "iam:DetachRolePolicy",
         "iam:ListRolePolicies",
         "iam:ListAttachedRolePolicies"
       ],
       "Resource": "arn:aws:iam::826113468815:role/auth-gate-*"
+    },
+    {
+      "Sid": "ChangeRolesOnlyUnderTheBoundary",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePermissionsBoundary"
+      ],
+      "Resource": "arn:aws:iam::826113468815:role/auth-gate-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::826113468815:policy/auth-gate-boundary"
+        }
+      }
     },
     {
       "Sid": "PassRolesToLambdaOnly",

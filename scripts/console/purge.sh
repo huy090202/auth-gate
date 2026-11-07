@@ -23,6 +23,22 @@ if bucket="$(aws cloudformation describe-stacks --region "$REGION" --stack-name 
   echo "emptied $bucket"
 fi
 
+# Deletion protection fails the stack delete, so it goes off here, after the typed confirmation
+# and just before the delete: a failure above leaves the table protected. The table is named
+# after the stack (infra/console.yaml). On a rerun it may be gone, or already unprotected.
+if protected="$(aws dynamodb describe-table --region "$REGION" --table-name "$STACK" \
+  --query Table.DeletionProtectionEnabled --output json 2>&1)"; then
+  if [[ "$protected" == true ]]; then
+    aws dynamodb update-table --region "$REGION" --table-name "$STACK" --no-deletion-protection-enabled >/dev/null
+    aws dynamodb wait table-exists --region "$REGION" --table-name "$STACK"
+    echo "turned off deletion protection on table $STACK"
+  fi
+elif [[ "$protected" == *ResourceNotFoundException* ]]; then
+  echo "skip deletion protection (table $STACK absent)"
+else
+  die "cannot read table $STACK: $protected"
+fi
+
 aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK"
 aws cloudformation wait stack-delete-complete --region "$REGION" --stack-name "$STACK"
 echo "deleted stack $STACK"

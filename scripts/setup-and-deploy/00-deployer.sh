@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# One-time: create the IAM user auth-gate-deployer with infra/deployer-policy.json and a
-# local AWS profile of the same name, which the other scripts use by default.
+# Create the IAM user auth-gate-deployer with infra/deployer-policy.json, the permissions
+# boundary auth-gate-boundary from infra/role-boundary.json, and a local AWS profile of the
+# same name, which the other scripts use by default. Rerun it after changing either JSON.
 # Run with an admin profile: ADMIN_PROFILE=default ./00-deployer.sh
 # The secret access key goes straight into ~/.aws/credentials; it is never printed.
 set -euo pipefail
@@ -8,7 +9,10 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+command -v jq >/dev/null || die "jq is required"
+
 USER_NAME=auth-gate-deployer
+BOUNDARY_NAME=auth-gate-boundary
 admin=(--profile "${ADMIN_PROFILE:-default}")
 
 if aws iam get-user "${admin[@]}" --user-name "$USER_NAME" >/dev/null 2>&1; then
@@ -18,8 +22,39 @@ else
   echo "created user $USER_NAME"
 fi
 
-# A managed policy, not inline: inline user policies are capped at 2 KB.
 account="$(aws sts get-caller-identity "${admin[@]}" --query Account --output text)"
+
+# The ceiling on every auth-gate-* role. It comes before the deployer policy, which only lets
+# the deployer make roles under this ARN, and before the early exit on an existing access key.
+boundary_arn="arn:aws:iam::$account:policy/$BOUNDARY_NAME"
+boundary_file="$ROOT/infra/role-boundary.json"
+if default_version="$(aws iam get-policy "${admin[@]}" --policy-arn "$boundary_arn" \
+  --query Policy.DefaultVersionId --output text 2>/dev/null)"; then
+  current="$(aws iam get-policy-version "${admin[@]}" --policy-arn "$boundary_arn" --version-id "$default_version" \
+    --query PolicyVersion.Document --output json | jq -Sc .)"
+  if [ "$current" = "$(jq -Sc . "$boundary_file")" ]; then
+    echo "boundary $BOUNDARY_NAME unchanged ($default_version)"
+  else
+    # IAM keeps at most 5 versions, and never lets the default one go.
+    count="$(aws iam list-policy-versions "${admin[@]}" --policy-arn "$boundary_arn" \
+      --query 'length(Versions)' --output text)"
+    if [ "$count" -ge 5 ]; then
+      oldest="$(aws iam list-policy-versions "${admin[@]}" --policy-arn "$boundary_arn" \
+        --query 'sort_by(Versions[?!IsDefaultVersion], &CreateDate)[0].VersionId' --output text)"
+      aws iam delete-policy-version "${admin[@]}" --policy-arn "$boundary_arn" --version-id "$oldest"
+      echo "removed boundary version $oldest"
+    fi
+    new_version="$(aws iam create-policy-version "${admin[@]}" --policy-arn "$boundary_arn" \
+      --policy-document "file://$boundary_file" --set-as-default --query PolicyVersion.VersionId --output text)"
+    echo "boundary $BOUNDARY_NAME updated to $new_version (was $default_version)"
+  fi
+else
+  aws iam create-policy "${admin[@]}" --policy-name "$BOUNDARY_NAME" \
+    --policy-document "file://$boundary_file" >/dev/null
+  echo "created boundary $BOUNDARY_NAME"
+fi
+
+# A managed policy, not inline: inline user policies are capped at 2 KB.
 policy_arn="arn:aws:iam::$account:policy/$USER_NAME-policy"
 doc="file://$ROOT/infra/deployer-policy.json"
 if aws iam get-policy "${admin[@]}" --policy-arn "$policy_arn" >/dev/null 2>&1; then

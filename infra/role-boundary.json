@@ -1,0 +1,63 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LambdaLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:ap-southeast-1:826113468815:log-group:/aws/lambda/auth-gate-*"
+    },
+    {
+      "Sid": "TableData",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:ConditionCheckItem"
+      ],
+      "Resource": "arn:aws:dynamodb:ap-southeast-1:826113468815:table/auth-gate-*"
+    },
+    {
+      "Sid": "ReadParameters",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": [
+        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate/*",
+        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate-console/*"
+      ]
+    },
+    {
+      "Sid": "UseTheSigningKey",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Sign",
+        "kms:GetPublicKey"
+      ],
+      "Resource": "arn:aws:kms:ap-southeast-1:826113468815:key/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/app": "auth-gate"
+        }
+      }
+    },
+    {
+      "Sid": "DecryptSecureStringsThroughSsm",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "arn:aws:kms:ap-southeast-1:826113468815:key/*",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "ssm.ap-southeast-1.amazonaws.com"
+        }
+      }
+    }
+  ]
+}

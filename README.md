@@ -132,9 +132,11 @@ The deploy and smoke steps are manual and run by a person with AWS access. They 
 `scripts/setup-and-deploy/` and read `STAGE` (default `stg`), `AWS_PROFILE` (default
 `auth-gate-deployer`) and `AWS_REGION` (default `ap-southeast-1`):
 
-0. `00-deployer.sh` (once per account, with an admin profile: `ADMIN_PROFILE=default`): create
-   the IAM user `auth-gate-deployer` with `infra/deployer-policy.json`, scoped to `auth-gate-*`
-   resources, and a local AWS profile of the same name.
+0. `00-deployer.sh` (once per account and after changing either JSON, with an admin profile:
+   `ADMIN_PROFILE=default`): create or update the permissions boundary `auth-gate-boundary` from
+   `infra/role-boundary.json`, then the IAM user `auth-gate-deployer` with
+   `infra/deployer-policy.json`, scoped to `auth-gate-*` resources, and a local AWS profile of
+   the same name.
 1. `00-cert.sh DOMAIN` (optional): request an ACM certificate in `us-east-1`.
 2. `01-ssm.sh`: write the random `admin-key` (SecureString) and `origin-verify` (plain
    String; CloudFront cannot resolve a SecureString).
@@ -157,6 +159,27 @@ If a deploy fails, CloudFormation rolls back and leaves the stack in `ROLLBACK_C
 (or `ROLLBACK_FAILED`), which cannot be updated: delete it with
 `aws cloudformation delete-stack --stack-name auth-gate-<stage>` before deploying again. A
 missing deployer permission goes into `infra/deployer-policy.json`; rerun `00-deployer.sh`.
+The Console's table has deletion protection, which blocks a plain `delete-stack`: to clear a
+failed Console stack, run `scripts/console/purge.sh`, which turns it off after its typed
+confirmation.
+
+### Permissions boundary
+
+`auth-gate-boundary` is a ceiling on what any `auth-gate-*` role can do, whatever is attached
+to it. The deployer can create or change such a role only if the role carries that boundary,
+so a right added to a Lambda role must also go into `infra/role-boundary.json`, followed by
+`00-deployer.sh`, or the function is denied it at run time.
+
+Order matters when the boundary first reaches a stage whose stack already exists. The new
+deployer policy cannot change AuthGate's existing roles until the template has set the boundary
+on them, so run, in this order: `00-deployer.sh`; then `02-build.sh` and `03-deploy.sh` for
+AuthGate, from a tree whose template has the boundary; then `scripts/console/deploy.sh`.
+
+If that first AuthGate deploy fails, rollback tries to remove the boundary, which the deployer
+may not do, and the stack stops at `UPDATE_ROLLBACK_FAILED`. Finish it with an admin profile:
+`aws cloudformation continue-update-rollback --profile <admin> --stack-name auth-gate-<stage>`,
+then deploy again. Tearing down a stack whose roles never got the boundary needs an admin
+profile too.
 
 ## Repository layout
 
