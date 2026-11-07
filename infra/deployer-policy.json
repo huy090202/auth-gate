@@ -170,17 +170,24 @@
         "cloudfront:UpdateResponseHeadersPolicy",
         "cloudfront:DeleteResponseHeadersPolicy",
         "cloudfront:ListResponseHeadersPolicies",
-        "cloudfront:CreateFunction",
-        "cloudfront:DescribeFunction",
-        "cloudfront:GetFunction",
-        "cloudfront:UpdateFunction",
-        "cloudfront:PublishFunction",
-        "cloudfront:DeleteFunction",
         "cloudfront:ListFunctions",
         "cloudfront:CreateInvalidation",
         "cloudfront:GetInvalidation"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "ManageTheEdgeFunctions",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:CreateFunction",
+        "cloudfront:DescribeFunction",
+        "cloudfront:GetFunction",
+        "cloudfront:UpdateFunction",
+        "cloudfront:PublishFunction",
+        "cloudfront:DeleteFunction"
+      ],
+      "Resource": "arn:aws:cloudfront::826113468815:function/auth-gate-*"
     },
     {
       "Sid": "ManageTheParameters",

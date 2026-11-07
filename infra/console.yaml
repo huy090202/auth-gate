@@ -10,6 +10,7 @@ Parameters:
     AllowedPattern: "[a-z0-9-]+"
   AuthGateBaseUrl:
     Type: String
+    AllowedPattern: ^https://[^/]+$
     Description: auth-gate's one URL, e.g. https://xxxx.cloudfront.net
   AuthGateClientId:
     Type: String

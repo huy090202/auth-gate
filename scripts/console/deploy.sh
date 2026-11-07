@@ -40,7 +40,9 @@ make console-build
 pnpm --filter console-web run build
 [[ -f console-web/dist/index.html ]] || die "console-web/dist/index.html missing after the build"
 
-# sam rejects empty overrides ("AuthGateClientId="); the template defaults it to "".
+# sam rejects empty overrides ("AuthGateClientId="), so the id is passed only when set.
+# On create the template default "" applies; on update SAM keeps the previous value,
+# so a plain redeploy of a healthy stack keeps its client id.
 params=("Stage=$STAGE" "AuthGateBaseUrl=${authgate_url%/}")
 [[ -z "$client_id" ]] || params+=("AuthGateClientId=$client_id")
 sam deploy --template-file "$ROOT/infra/console.yaml" \
@@ -52,12 +54,18 @@ sam deploy --template-file "$ROOT/infra/console.yaml" \
 bucket="$(output "$STACK" SiteBucket)"
 dist="$(output "$STACK" DistributionId)"
 [[ -n "$bucket" && -n "$dist" ]] || die "stack $STACK has no SiteBucket or DistributionId output"
-aws s3 sync "$ROOT/console-web/dist" "s3://$bucket" --delete --region "$REGION"
+# Order matters. New hashed assets go up first, then the shell (index.html, never
+# cached by browsers), then the old assets are deleted: a client mid-load never
+# finds a missing file, and a stale shell cannot outlive its assets for long.
+aws s3 sync "$ROOT/console-web/dist" "s3://$bucket" --exclude index.html --region "$REGION"
+aws s3 cp "$ROOT/console-web/dist/index.html" "s3://$bucket/index.html" --cache-control no-cache --region "$REGION"
+aws s3 sync "$ROOT/console-web/dist" "s3://$bucket" --delete --exclude index.html --region "$REGION"
 aws cloudfront create-invalidation --distribution-id "$dist" --paths '/*' >/dev/null
 echo "invalidated $dist"
 
 echo "BaseUrl: $(output "$STACK" BaseUrl)"
 echo "RawConsoleUrl: $(output "$STACK" RawConsoleUrl)"
-if [[ -z "$client_id" ]]; then
-  echo "AUTHGATE_CLIENT_ID is empty: /api is down until the second pass: run register-client.sh stg and deploy again"
+# Judge by the deployed value, not the env var: SAM keeps the id of the last deploy.
+if [[ -z "$(output "$STACK" AuthGateClientId)" ]]; then
+  echo "No AuthGate client id is deployed: /api is down until the second pass. Run register-client.sh stg, then deploy again with AUTHGATE_CLIENT_ID=<printed id>."
 fi

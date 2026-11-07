@@ -7,8 +7,13 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-read -r -p "Type '$STACK' to delete the stack, its bucket contents and SSM parameters: " answer
+echo "This destroys the Console's table: every admin account and the audit trail, with the site and two parameters."
+read -r -p "Type '$STACK' to delete the stack, its table, its bucket contents and SSM parameters: " answer
 [[ "$answer" == "$STACK" ]] || die "confirmation did not match; nothing deleted"
+
+# Read before the stack goes: the hint at the end needs the real client id.
+client_id="$(output "$STACK" AuthGateClientId 2>/dev/null || true)"
+authgate_url="$(output "$AUTHGATE_STACK" BaseUrl 2>/dev/null || true)"
 
 # A non-empty bucket blocks stack deletion. A missing stack means nothing to empty.
 if bucket="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" \
@@ -36,6 +41,5 @@ cat <<MSG
 The Console's client is still registered on auth-gate. Hard delete is out of v1:
 disable it instead, so its key stops working. With the admin key in the
 x-internal-access-key header:
-  POST <auth-gate BaseUrl>/api/clients/<clientId>/disable
-(the client id was printed by register-client.sh; see the AuthGateClientId output of a past deploy).
+  POST ${authgate_url:-<auth-gate BaseUrl>}/api/clients/${client_id:-<clientId>}/disable
 MSG
