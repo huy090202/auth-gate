@@ -47,13 +47,27 @@ CI runs the same container as a service.
 
 `pnpm run check` must pass before a branch is merged. It runs, in order:
 
-- `pnpm run lint`: shellcheck over `scripts/setup-and-deploy/*.sh`, `tools/wt/*.sh`,
-  `tools/wt/test/*.sh` and the `.claude/` scripts.
+- `pnpm run lint`: shellcheck over `scripts/setup-and-deploy/*.sh`, `scripts/console/*.sh`,
+  `tools/wt/*.sh`, `tools/wt/test/*.sh` and the `.claude/` scripts, then eslint on `console-web/`.
+- `pnpm run typecheck`: `tsc -b` on `console-web/`.
 - `pnpm run test`: the shell tests, `tools/wt/test/hooks.sh` (statusline and hooks) and
-  `tools/wt/test/e2e.sh` (worktree scripts, end to end).
+  `tools/wt/test/e2e.sh` (worktree scripts, end to end), then the Console web tests.
+- `pnpm run build`: `vite build` of the Console web app.
 - `make check`: `go vet`, `golangci-lint run`, `go test`.
 
 CI runs the same command on every push to `main` and on every pull request.
+
+## The Console web app
+
+`console-web/` is React, Vite and Mantine, with EN and VI strings in `src/strings.ts` (a missing key fails
+typecheck). `pnpm --filter console-web dev` serves it on :5173 against `make console-dev`; see the README.
+
+- Do not add a `<style>` element or an inline `style` or `on*` attribute. The site's CSP is `style-src 'self'` with
+  no `unsafe-inline`, and a nonce cannot work because CloudFront serves a static header. Mantine features that inject
+  a `<style>` (responsive style props, `Grid`, `SimpleGrid`, `AppShell`, scroll locking on `Modal` and `Drawer`) are
+  switched off or avoided; put rules in `src/styles.css`. `test/csp.test.tsx` fails if a screen renders a `<style>`.
+- Toasts are in-house (`src/toast.tsx`). Do not add a toast package for the same reason: a dependency might inject
+  styles.
 
 ## Running one test alone
 
