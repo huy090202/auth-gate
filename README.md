@@ -262,9 +262,9 @@ the [permissions boundary](#permissions-boundary) is new, follow the order there
    protection (it holds the accounts and the audit trail), so a plain `delete-stack` fails;
    `purge.sh` turns it off just before the delete. It never touches AuthGate's `admin-key`.
 
-The account's Lambda concurrency limit is 40, and the Console reserves 5 of it, so a login
-flood (each sign-in runs a 64 MiB argon2id hash) cannot starve AuthGate's functions. Ask for
-a quota increase through Service Quotas before production.
+The account's Lambda concurrency limit is 40. Ask for a quota increase in Service Quotas
+before production, then deploy with `CONSOLE_RESERVED_CONCURRENCY=5`, so a login flood (each
+sign-in runs a 64 MiB argon2id hash) cannot starve AuthGate's functions.
 
 ### The admin key and the Console
 

@@ -488,7 +488,7 @@ type failFinish struct{ base http.RoundTripper }
 
 func (f failFinish) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/webauthn/registrations/") {
-		return &http.Response{StatusCode: 400, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":"invalid_credential"}`)), Request: r}, nil
+		return &http.Response{StatusCode: 400, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":"registration_failed"}`)), Request: r}, nil
 	}
 	return f.base.RoundTrip(r)
 }
@@ -513,7 +513,7 @@ func TestFailedWriteReleasesLease(t *testing.T) {
 	pk := h2.NewPasskey()
 	start := flaky.StartPasskey()
 	want(t, start, 200, "")
-	want(t, flaky.FinishPasskey(start.Str("registrationId"), pk.Attest(h2, start)), 400, "invalid_credential")
+	want(t, flaky.FinishPasskey(start.Str("registrationId"), pk.Attest(h2, start)), 400, "registration_failed")
 	// The same browser, on the Console that reaches AuthGate again: a fresh start and finish.
 	ok := h2.BrowserFor(console.New(h2.Deps))
 	ok.SetCookie(flaky.CookieValue())

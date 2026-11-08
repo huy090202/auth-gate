@@ -3,7 +3,8 @@
 # Lambda and the web app, sam deploy, upload the site, invalidate, print the URLs.
 # Reads AuthGateBaseUrl from the auth-gate stack ($AUTHGATE_STACK). AUTHGATE_CLIENT_ID
 # may be empty on the first pass: deploy, run register-client.sh stg (it needs this
-# stack's BaseUrl), deploy again with AUTHGATE_CLIENT_ID set.
+# stack's BaseUrl), deploy again with AUTHGATE_CLIENT_ID set. CONSOLE_RESERVED_CONCURRENCY,
+# when set, reserves that many concurrent executions for the Console.
 set -euo pipefail
 # shellcheck source=lib.sh
 # shellcheck source-path=SCRIPTDIR
@@ -45,6 +46,12 @@ pnpm --filter console-web run build
 # so a plain redeploy of a healthy stack keeps its client id.
 params=("Stage=$STAGE" "AuthGateBaseUrl=${authgate_url%/}")
 [[ -z "$client_id" ]] || params+=("AuthGateClientId=$client_id")
+# The same for CONSOLE_RESERVED_CONCURRENCY (0 reserves none): unset, a create gets the
+# template default 0 and an update keeps the previous value.
+if [[ -n "${CONSOLE_RESERVED_CONCURRENCY:-}" ]]; then
+  [[ "$CONSOLE_RESERVED_CONCURRENCY" =~ ^[0-9]+$ ]] || die "CONSOLE_RESERVED_CONCURRENCY must be a whole number"
+  params+=("ReservedConcurrency=$CONSOLE_RESERVED_CONCURRENCY")
+fi
 sam deploy --template-file "$ROOT/infra/console.yaml" \
   --stack-name "$STACK" --region "$REGION" \
   --capabilities CAPABILITY_IAM --resolve-s3 \

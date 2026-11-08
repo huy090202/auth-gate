@@ -16,9 +16,18 @@ Parameters:
     Type: String
     Default: ""
     Description: Empty on the first deploy; set after register-client.sh stg.
+  ReservedConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: >-
+      Concurrent executions reserved for the Console; 0 reserves none. Set it once the
+      account quota leaves room: Lambda refuses a reservation that would take unreserved
+      concurrency below its minimum, which would roll back the deploy.
 
 Conditions:
   HasClientId: !Not [!Equals [!Ref AuthGateClientId, ""]]
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
 
 Resources:
   Table:
@@ -68,7 +77,7 @@ Resources:
       # timeout keeps every landing inside the lease.
       Timeout: 24
       # The account has 40 concurrent executions; a login flood (argon2id, 64 MiB each) must not starve AuthGate.
-      ReservedConcurrentExecutions: 5
+      ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref AWS::NoValue]
       FunctionUrlConfig:
         AuthType: NONE
       # The ceiling on this role: a right added below must also be in
