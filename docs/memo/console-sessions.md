@@ -7,7 +7,7 @@ Five rules in the Console keep a session honest:
 - A session carries the account's `sessionEpoch`, and every request reads the account and rejects a mismatch.
 - A change that can remove a master runs as one transaction that also checks the actor is still an active master. The operator CLI has no actor, so it uses a surviving master as one.
 - The Console's own AuthGate client is read-only through the Console.
-- A session that has not proved a factor (`FactorProved`) cannot skip step-up or become `full` once the account has a factor, and the first factor is written under a short lease on the account.
+- Step-up is asked in stage `full`, never in `enroll`. A session that has not proved a factor (`FactorProved`) cannot write or become `full` once the account has a factor, and the first factor is written under a short lease on the account.
 - A step-up token is bound to the admin, the action and the target.
 
 ## Context
@@ -24,7 +24,7 @@ Resetting, clearing or disabling an account must end its sessions at once. The s
 
 ## Why the Console's own client is read-only
 
-The Console is itself a client of AuthGate, and every admin's factors are subjects of that client. Through the Console, a role `admin` could purge a master's factors, which breaks "only `master` manages accounts". Rotating its key from the UI would leave the SSM copy stale, so sign-in would die when the 24 hours ended. Patching its origins could lock everyone out. So rotate, patch, disable and purge on it answer `409 own_client_protected`. The scripts and the CLI remain for the emergency.
+The Console is itself a client of AuthGate, and every admin's factors are subjects of that client. Through the Console, a role `admin` could purge a master's factors, which breaks "only `master` manages accounts". Rotating its key from the UI would leave the SSM copy stale, so sign-in would die when the 24 hours ended. Patching its origins could lock everyone out. So rotate, revoke previous keys, patch, disable and purge on it answer `409 own_client_protected`. The scripts and the CLI remain for the emergency.
 
 ## Why `FactorProved` and the first-factor lease
 
@@ -32,7 +32,7 @@ A temporary password is a bearer secret held by two people. The attack: someone 
 
 That check reads the factors and then writes, and the two are separate calls to AuthGate, so two sessions could both read zero and both write. A narrower fix, claiming the account by bumping its epoch before the write, left a gap: a sign-in during the write read the new epoch and zero factors and claimed too. So the Console takes a lease on the account for the first-factor write: the loser answers `409 enrollment_in_progress`, makes no AuthGate call and stays signed in. The lease lasts 25 seconds, counted from the claim, and covers a read and a write. A write that got no answer may still land, so its lease is kept until it runs out; an answered failure releases it.
 
-The guarantee is bounded by timeouts, not absolute: AuthGate does not fence writes. It holds while the Console's HTTP client and AuthGate's function each time out within 10 seconds, and the Console Lambda's own timeout (24 seconds) is under the lease, so a function that outlived the lease cannot land a write after another claim. Whoever holds a temporary password and acts before its owner can still enroll first; the owner then finds they cannot sign in, and the master who issued it can reset again.
+The guarantee is bounded by timeouts, not absolute: AuthGate does not fence writes. A sent write lands within AuthGate's 10 second function timeout, so the Console sends the first-factor write only while the time since the claim plus those 10 seconds stays under the lease: the write carries a deadline at the claim plus 13 seconds (25 less 10 less a 2 second margin), and one that could only go out later is not sent, answers `502 authgate_unavailable` and releases the lease. One cut off after it may have gone out keeps the lease, as does an answered 5xx. The Console Lambda's 24 second timeout does not give this bound: it limits when a write is sent, not when it lands, and the DynamoDB calls before the write retry without a deadline of their own. Whoever holds a temporary password and acts before its owner can still enroll first; the owner then finds they cannot sign in, and the master who issued it can reset again.
 
 ## Why step-up tokens are bound to targets
 

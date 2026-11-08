@@ -168,12 +168,15 @@ keeps the KMS and AuthGate table permissions out of a browser-facing Lambda.
   minutes idle and 8 hours absolute. Resetting, clearing or disabling an admin ends that
   admin's sessions at once, because every request compares the session's epoch with the
   account's ([memo](docs/memo/console-sessions.md)).
-- An enrolling session that never proved a factor (`FactorProved`) cannot skip step-up or reach
-  a full session once the account has a factor. First-factor enrollment is serialised by a
+- Step-up is asked in stage `full`, never in `enroll`. An enrolling session that never proved a
+  factor (`FactorProved`) cannot write or reach a full session once the account has a factor:
+  the write is refused and the session ends. First-factor enrollment is serialised by a
   25 second lease on the account, and a session that loses answers `409
   enrollment_in_progress`. AuthGate does not fence writes, so this is bounded by timeouts,
-  not absolute: it holds while the Console's HTTP client and AuthGate's function each time out
-  within 10 seconds. The Console Lambda's timeout (24 s) stays under the lease for that reason.
+  not absolute: a sent write lands within AuthGate's 10 second function timeout, and the
+  Console sends the first-factor write only up to 13 seconds after the claim (the lease less
+  those 10 seconds and a 2 second margin), so it lands inside the lease. The Console Lambda's
+  timeout bounds when the write is sent, not when it lands, so it is not what keeps the bound.
 - Sensitive actions (rotate or revoke keys, disable a client, clear a user's factors, change
   a client's origins, PIN policy, token TTL or rate limit, change a password, add or remove
   your own factor, anything on another admin's account) ask for a PIN or passkey again. The
@@ -181,7 +184,7 @@ keeps the KMS and AuthGate table permissions out of a browser-facing Lambda.
   rotate client A does not rotate client B. It is not bound to the request body: an approved
   update of a client can still change any field of that client, once.
 - The Console's own client is read-only through the Console (`409 own_client_protected` on
-  patch, rotate, disable and purge). Emergency changes to it use the scripts.
+  patch, rotate, revoke previous keys, disable and purge). Emergency changes to it use the scripts.
 - `/api/auth/*` is limited per IP, read from `CloudFront-Viewer-Address`: a burst of 10, then
   one request per 6 seconds.
 
@@ -202,7 +205,7 @@ All under `/api`, JSON. Errors are `{"error": "<snake_case>"}`.
 | Route | Session | Notes |
 | --- | --- | --- |
 | `POST /auth/login`, `/auth/second-factor/start`, `/auth/second-factor/verify`, `/auth/logout` | by stage | |
-| `GET /me`, `POST /me/password`, `/me/pin`, `/me/passkeys/start`, `/me/passkeys/finish`, `DELETE /me/pin`, `/me/passkeys/{id}` | enroll or full | Step-up once the account has a factor. The last factor cannot be removed. |
+| `GET /me`, `POST /me/password`, `/me/pin`, `/me/passkeys/start`, `/me/passkeys/finish`, `DELETE /me/pin`, `/me/passkeys/{id}` | any stage for `GET /me`; enroll or full for the rest | Writes need step-up in `full` (a passkey at its start), never in `enroll`. The last factor cannot be removed. |
 | `POST /stepup/start`, `/stepup/verify` | full | `start` takes the action and its `target`; `400 invalid_target` otherwise. |
 | `GET /clients`, `GET /clients/{id}`, `POST /clients` | full | The key is returned once. |
 | `PATCH /clients/{id}` | full | Step-up unless only `name` changes. |
@@ -258,6 +261,10 @@ the [permissions boundary](#permissions-boundary) is new, follow the order there
 6. `purge.sh`: remove the stack, after a typed confirmation. The Console table has deletion
    protection (it holds the accounts and the audit trail), so a plain `delete-stack` fails;
    `purge.sh` turns it off just before the delete. It never touches AuthGate's `admin-key`.
+
+The account's Lambda concurrency limit is 40, and the Console reserves 5 of it, so a login
+flood (each sign-in runs a 64 MiB argon2id hash) cannot starve AuthGate's functions. Ask for
+a quota increase through Service Quotas before production.
 
 ### The admin key and the Console
 

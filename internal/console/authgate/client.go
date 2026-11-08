@@ -61,6 +61,11 @@ type Client struct {
 
 const maxBody = 1 << 20
 
+// Timeout is the Console's HTTP timeout for AuthGate calls. It equals AuthGate's
+// own function timeout (Timeout: 10 in infra/template.yaml), which is what bounds
+// how late a sent write can land.
+const Timeout = 10 * time.Second
+
 // rolePath adds the role prefix when base is a local address, as `make dev`
 // serves the three roles on one port. It mirrors cmd/smoke.
 func rolePath(base, path string) string {
@@ -90,7 +95,7 @@ func noRedirect(hc *http.Client) *http.Client {
 	if hc != nil {
 		cp = *hc
 	} else {
-		cp.Timeout = 10 * time.Second
+		cp.Timeout = Timeout
 	}
 	cp.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &cp
@@ -98,8 +103,12 @@ func noRedirect(hc *http.Client) *http.Client {
 
 // ErrNoAnswer marks an ErrUnavailable where no status came back (the request
 // failed, timed out or the body was cut off): a write that failed so may still land.
-// An answered 5xx is not one.
+// An answered 5xx is not one; see ErrServerError.
 var ErrNoAnswer = errors.New("authgate: no answer")
+
+// ErrServerError marks an ErrUnavailable that was an answered 5xx, from AuthGate
+// or from something in front of it: a write answered so may still have landed.
+var ErrServerError = errors.New("authgate: server error")
 
 func (c *Client) http() *http.Client { return noRedirect(c.HTTP) }
 
@@ -135,7 +144,9 @@ func (c *Client) do(ctx context.Context, method, path, key string, body any) (js
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return json.RawMessage(raw), nil
-	case resp.StatusCode >= 500, resp.StatusCode == http.StatusUnauthorized:
+	case resp.StatusCode >= 500:
+		return nil, fmt.Errorf("%w: status %d: %w", ErrUnavailable, resp.StatusCode, ErrServerError)
+	case resp.StatusCode == http.StatusUnauthorized:
 		return nil, fmt.Errorf("%w: status %d", ErrUnavailable, resp.StatusCode)
 	}
 	e := &Error{Status: resp.StatusCode}

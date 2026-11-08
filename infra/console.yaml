@@ -61,11 +61,14 @@ Resources:
       Architectures: [arm64]
       # argon2id with 64 MiB is slow at the CPU share of 256 MB.
       MemorySize: 512
-      # Stay under the first-factor lease (firstFactorLeaseFor, 25 s, in
-      # internal/console/me.go) and above a factor read plus a write at 10 s each.
-      # A function that outlived the lease could land a write after another
-      # session had claimed it.
+      # Room for a factor read and a write at 10 s each. This does not bound the
+      # first-factor lease (firstFactorLeaseFor, 25 s, in internal/console/me.go):
+      # a write sent near the end can land 10 s later. The Console sends that write
+      # only within firstFactorSendWindow of the claim, which with AuthGate's 10 s
+      # timeout keeps every landing inside the lease.
       Timeout: 24
+      # The account has 40 concurrent executions; a login flood (argon2id, 64 MiB each) must not starve AuthGate.
+      ReservedConcurrentExecutions: 5
       FunctionUrlConfig:
         AuthType: NONE
       # The ceiling on this role: a right added below must also be in
@@ -192,6 +195,25 @@ Resources:
               Override: true
               Value: same-origin
 
+  # The /api answers: no CSP or frame options, which a JSON API does not need,
+  # and HSTS as on the site.
+  ApiHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub auth-gate-console-${Stage}-api-headers
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            Override: true
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: false
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: no-referrer
+
   Distribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -234,6 +256,7 @@ Resources:
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
             # AllViewerExceptHostHeader forwards CloudFront-Viewer-Address, which the limiter reads.
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: !Ref ApiHeaders
         # No CustomErrorResponses: they are distribution-wide and would turn the
         # Console's own 403/404 JSON on /api/* into index.html 200.
 

@@ -201,7 +201,7 @@ func (a *App) audited(action string, h http.Handler) http.Handler {
 				Detail: note.Detail, At: a.now(),
 			})
 		default:
-			slog.Warn("console: write without a session", "route", r.Method+" "+r.URL.Path, "ip", a.auditIP(r), "result", result)
+			slog.Warn("console: write without a session", "route", truncate(r.Method+" "+r.URL.Path, maxAuditTarget), "ip", a.auditIP(r), "result", result)
 		}
 		w.WriteHeader(bw.status)
 		_, _ = w.Write(bw.body.Bytes())

@@ -59,7 +59,7 @@ func main() {
 		adminKey = mustSecret(ctx, awsCfg, cfg.AdminKeyParam)
 		clientKey = mustSecret(ctx, awsCfg, cfg.ClientKeyParam)
 	}
-	httpc := &http.Client{Timeout: 10 * time.Second}
+	httpc := &http.Client{Timeout: authgate.Timeout}
 	// authgate.Client and Verifier copy this client and refuse redirects themselves.
 	h := console.New(console.Deps{
 		Config:   cfg,
@@ -143,7 +143,7 @@ func runAdmin(args []string) error {
 			if key == "" {
 				return nil, errors.New("the admin key is empty")
 			}
-			return &authgate.Client{BaseURL: base, AdminKey: key, HTTP: &http.Client{Timeout: 10 * time.Second}}, nil
+			return &authgate.Client{BaseURL: base, AdminKey: key, HTTP: &http.Client{Timeout: authgate.Timeout}}, nil
 		},
 	}
 	return console.RunAdmin(ctx, args, os.Stdin, os.Stdout, d)

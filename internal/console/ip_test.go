@@ -25,4 +25,12 @@ func TestViewerIP(t *testing.T) {
 			t.Errorf("ViewerIP(%q) = %q, want %q", in, got, want)
 		}
 	}
+	// A viewer-supplied value passed along with CloudFront's own could come first
+	// and pick the bucket, so two values count as none.
+	h := http.Header{}
+	h.Add("CloudFront-Viewer-Address", "203.0.113.7:1")
+	h.Add("CloudFront-Viewer-Address", "198.51.100.10:46532")
+	if got := ViewerIP(h); got != "" {
+		t.Errorf("ViewerIP(two values) = %q, want \"\"", got)
+	}
 }

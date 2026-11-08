@@ -1,6 +1,9 @@
 package console
 
-import "net/http"
+import (
+	"net/http"
+	"time"
+)
 
 // NewWithPasswordCheck is New with the password comparison replaced, so a test
 // can count how often sign-in runs it.
@@ -24,3 +27,6 @@ func AdminWriteError(err error) (status int, code string, retryAfter int) {
 	ae := adminWriteError(err).(*apiError)
 	return ae.Status, ae.Code, ae.RetryAfter
 }
+
+// FirstFactorSendWindow is how long after the lease claim the first-factor write may be sent.
+const FirstFactorSendWindow time.Duration = firstFactorSendWindow

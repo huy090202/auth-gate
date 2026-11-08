@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -45,7 +46,21 @@ func (a *App) cookieName() string {
 	return cookieName
 }
 
+// setCookie sets the session cookie, replacing one this response already set: a
+// request that reissues and then promotes must send one cookie, not two of one
+// name whose order every hop would have to keep.
 func (a *App) setCookie(w http.ResponseWriter, value string, maxAge int) {
+	h := w.Header()
+	var kept []string
+	for _, v := range h.Values("Set-Cookie") {
+		if !strings.HasPrefix(v, a.cookieName()+"=") {
+			kept = append(kept, v)
+		}
+	}
+	h.Del("Set-Cookie")
+	for _, v := range kept {
+		h.Add("Set-Cookie", v)
+	}
 	//nolint:gosec // Secure is only off in Dev, where __Host- cannot work over plain HTTP.
 	http.SetCookie(w, &http.Cookie{
 		Name: a.cookieName(), Value: value, Path: "/", MaxAge: maxAge,

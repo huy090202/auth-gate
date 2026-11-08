@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -400,4 +401,27 @@ func TestSecretsAbsentFromAuditAndLogs(t *testing.T) {
 			t.Errorf("a secret reached the logs: %q", sec)
 		}
 	}
+}
+
+// noJWKS fails every request, as an AuthGate outage does.
+type noJWKS struct{}
+
+func (noJWKS) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("connection refused")
+}
+
+// Why: a JWKS outage is AuthGate being down, not a bad token. Answering
+// step_up_required sends the admin through another PIN that cannot help; it must
+// answer as sign-in does, 502 authgate_unavailable, and leave the token unspent.
+func TestStepUpCheckDuringJWKSOutage(t *testing.T) {
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleAdmin)
+	id, _ := newClient(t, b, "app")
+	tok := b.StepUp("disable-client", id)
+	deps := h.Deps
+	deps.Tokens = &authgate.Verifier{BaseURL: h.AuthGateURL, Audience: h.ClientID, HTTP: &http.Client{Transport: noJWKS{}}, Now: h.Clock.Now}
+	down := h.BrowserFor(console.New(deps))
+	down.SetCookie(b.CookieValue())
+	want(t, down.Do("POST", "/api/clients/"+id+"/disable", struct{}{}, tokHeader, tok), 502, "authgate_unavailable")
+	want(t, b.Do("POST", "/api/clients/"+id+"/disable", struct{}{}, tokHeader, tok), 200, "")
 }

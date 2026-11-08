@@ -483,17 +483,17 @@ func TestLeaseExpiredClaimerSeesEarlierFactor(t *testing.T) {
 	}
 }
 
-// failFinish answers a passkey registration finish with 502, as a gateway would.
+// failFinish refuses a passkey registration finish with an AuthGate 400.
 type failFinish struct{ base http.RoundTripper }
 
 func (f failFinish) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/webauthn/registrations/") {
-		return &http.Response{StatusCode: 502, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: 400, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":"invalid_credential"}`)), Request: r}, nil
 	}
 	return f.base.RoundTrip(r)
 }
 
-// Why: when AuthGate refuses or fails the write, the lease must go with it, or the
+// Why: when AuthGate refuses the write, the lease must go with it, or the
 // admin's own retry is locked out for the lease's length.
 func TestFailedWriteReleasesLease(t *testing.T) {
 	h := consoletest.New(t)
@@ -513,40 +513,108 @@ func TestFailedWriteReleasesLease(t *testing.T) {
 	pk := h2.NewPasskey()
 	start := flaky.StartPasskey()
 	want(t, start, 200, "")
-	want(t, flaky.FinishPasskey(start.Str("registrationId"), pk.Attest(h2, start)), 502, "authgate_unavailable")
+	want(t, flaky.FinishPasskey(start.Str("registrationId"), pk.Attest(h2, start)), 400, "invalid_credential")
 	// The same browser, on the Console that reaches AuthGate again: a fresh start and finish.
 	ok := h2.BrowserFor(console.New(h2.Deps))
 	ok.SetCookie(flaky.CookieValue())
 	want(t, ok.EnrollPasskey(pk), 200, "")
 }
 
-// failWrite fails a PIN write with no answer at all, as a client timeout does: the
-// request may or may not have reached AuthGate.
-type failWrite struct{ base http.RoundTripper }
+// failWrite fails a PIN write with no answer at all (status 0), as a client
+// timeout does, or with the given 5xx: either way the request may have reached
+// AuthGate and the write may land.
+type failWrite struct {
+	base   http.RoundTripper
+	status int
+}
 
 func (f failWrite) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/api/factors/pin") {
-		return nil, errors.New("timeout")
+		if f.status == 0 {
+			return nil, errors.New("timeout")
+		}
+		return &http.Response{StatusCode: f.status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	}
 	return f.base.RoundTrip(r)
 }
 
-// Why: a write that got no answer may still land later, so its lease must stay
-// until it runs out; an answered failure (TestFailedWriteReleasesLease) releases.
+// Why: a write that got no answer, or an answered 5xx, may still land later, so
+// its lease must stay until it runs out; an AuthGate refusal
+// (TestFailedWriteReleasesLease) releases.
 func TestLeaseKeptWhenWriteGotNoAnswer(t *testing.T) {
+	for name, status := range map[string]int{"no answer": 0, "answered 502": 502} {
+		t.Run(name, func(t *testing.T) {
+			h := consoletest.New(t)
+			h.CreateAdmin("ada", pw, console.RoleAdmin, true)
+			deps := h.Deps
+			deps.AuthGate = &authgate.Client{BaseURL: h.AuthGateURL, ClientKey: h.ClientKey, AdminKey: consoletest.AdminKey,
+				HTTP: &http.Client{Transport: failWrite{base: h.AuthGate.HTTP.Transport, status: status}}}
+			owner := h.BrowserFor(console.New(deps))
+			other := h.NewBrowser()
+			want(t, owner.Login("ada", pw), 200, "")
+			want(t, owner.EnrollPIN(pin1), 502, "authgate_unavailable")
+			want(t, other.Login("ada", pw), 200, "") // opened after the owner's epoch bump
+			want(t, other.EnrollPIN(pin2), 409, "enrollment_in_progress")
+			h.Clock.Advance(26 * time.Second)
+			want(t, other.EnrollPIN(pin2), 200, "")
+		})
+	}
+}
+
+// Why: the lease holds only while a write lands before it runs out, and a write
+// can land up to AuthGate's 10 s timeout after it is sent. One that could only be
+// sent too late must not be sent at all, and then cannot land, so the lease goes.
+func TestFirstFactorWriteNotSentPastItsWindow(t *testing.T) {
 	h := consoletest.New(t)
-	h.CreateAdmin("ada", pw, console.RoleAdmin, true)
+	a := h.CreateAdmin("ada", pw, console.RoleAdmin, true)
+	g := newGate(t, h.AuthGate.HTTP.Transport)
+	hook := &afterFactors{base: g}
 	deps := h.Deps
 	deps.AuthGate = &authgate.Client{BaseURL: h.AuthGateURL, ClientKey: h.ClientKey, AdminKey: consoletest.AdminKey,
-		HTTP: &http.Client{Transport: failWrite{base: h.AuthGate.HTTP.Transport}}}
-	owner := h.BrowserFor(console.New(deps))
-	other := h.NewBrowser()
-	want(t, owner.Login("ada", pw), 200, "")
-	want(t, owner.EnrollPIN(pin1), 502, "authgate_unavailable")
-	want(t, other.Login("ada", pw), 200, "") // opened after the owner's epoch bump
-	want(t, other.EnrollPIN(pin2), 409, "enrollment_in_progress")
-	h.Clock.Advance(26 * time.Second)
-	want(t, other.EnrollPIN(pin2), 200, "")
+		HTTP: &http.Client{Transport: hook}}
+	b := h.BrowserFor(console.New(deps))
+	want(t, b.Login("ada", pw), 200, "")
+	// Between the claim and the write, time passes the last moment the write may go out.
+	hook.arm(func() { h.Clock.Advance(console.FirstFactorSendWindow + time.Second) })
+	want(t, b.EnrollPIN(pin1), 502, "authgate_unavailable")
+	if n := g.writes.Load(); n != 0 {
+		t.Fatalf("%d write(s) sent past the window", n)
+	}
+	// Nothing was sent, so nothing can land: the lease is gone and a retry goes through.
+	want(t, b.EnrollPIN(pin1), 200, "")
+	if !pinWorks(t, h, a, pin1) {
+		t.Fatal("the retry's PIN did not land")
+	}
+}
+
+// Why: on the normal first run (password, then the first factor) one response
+// both reissues and promotes the session. Two cookies of one name in one answer
+// rely on every hop keeping their order; exactly one, the live one, must go out.
+func TestFirstFactorAnswersOneSessionCookie(t *testing.T) {
+	h := consoletest.New(t)
+	h.CreateAdmin("ada", pw, console.RoleAdmin, true)
+	b := h.NewBrowser()
+	want(t, b.Login("ada", pw), 200, "")
+	want(t, b.Do("POST", "/api/me/password", passwordBody(pw, pw2)), 200, "")
+	r := b.EnrollPIN(pin1)
+	want(t, r, 200, "")
+	if r.Str("stage") != "full" {
+		t.Fatalf("stage = %q, want full", r.Str("stage"))
+	}
+	var values []string
+	for _, c := range (&http.Response{Header: r.Header}).Cookies() {
+		if c.Name == "__Host-console_session" {
+			values = append(values, c.Value)
+		}
+	}
+	if len(values) != 1 {
+		t.Fatalf("%d session cookies in one answer, want 1", len(values))
+	}
+	fresh := h.NewBrowser()
+	fresh.SetCookie(values[0])
+	if st := stageOf(t, fresh); st != "full" {
+		t.Fatalf("the cookie sent is at stage %q, want the live full session", st)
+	}
 }
 
 // Why: a holder whose lease ran out must not remove the lease of the session that

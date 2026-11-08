@@ -109,7 +109,8 @@ type stepUp struct {
 // is 403 before anything else. An enrolling session needs none; the caller
 // decides whether it may act at all (see factorsForWrite). It is only called behind
 // a session, so a caller without one cannot make the Console fetch AuthGate's
-// keys. Any failure is the same 403. The token must have been issued for this
+// keys. Any failure of the token is the same 403; AuthGate's keys being out of
+// reach is 502 authgate_unavailable, as at sign-in. The token must have been issued for this
 // action on this target (see stepUpPurpose); target is "" for an action that takes none.
 func (a *App) checkStepUp(r *http.Request, s Session, action, target string) (*stepUp, error) {
 	if s.Stage == StageEnroll {
@@ -126,6 +127,10 @@ func (a *App) checkStepUp(r *http.Request, s Session, action, target string) (*s
 		return nil, errStepUp
 	}
 	c, err := a.Tokens.Verify(r.Context(), tok, s.AdminID, purpose)
+	if errors.Is(err, authgate.ErrUnavailable) {
+		// The keys could not be fetched: AuthGate is down, the token may be fine.
+		return nil, agError(err)
+	}
 	if err != nil {
 		if !errors.Is(err, authgate.ErrInvalidToken) {
 			slog.Warn("console: step-up check failed", "err", err)
