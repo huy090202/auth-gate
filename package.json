@@ -6,8 +6,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "lint": "shellcheck -x scripts/setup-and-deploy/*.sh scripts/setup-and-deploy/test/*.sh scripts/console/*.sh tools/wt/*.sh tools/wt/test/*.sh .claude/statusline.sh .claude/hooks/*.sh && pnpm -r lint",
-    "test": "bash tools/wt/test/hooks.sh && bash tools/wt/test/e2e.sh && bash scripts/setup-and-deploy/test/99-purge.sh && pnpm -r test",
+    "lint": "shellcheck -x scripts/setup-and-deploy/*.sh scripts/setup-and-deploy/test/*.sh scripts/ci/*.sh scripts/ci/test/*.sh scripts/console/*.sh tools/wt/*.sh tools/wt/test/*.sh .claude/statusline.sh .claude/hooks/*.sh && pnpm -r lint",
+    "test": "bash tools/wt/test/hooks.sh && bash tools/wt/test/e2e.sh && bash scripts/setup-and-deploy/test/99-purge.sh && bash scripts/ci/test/00-sam-lifecycle.sh && pnpm -r test",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && make check",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build"

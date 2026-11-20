@@ -1,0 +1,16 @@
+[
+  {
+    "ID": "auth-gate-artifacts-expire",
+    "Status": "Enabled",
+    "Filter": { "Prefix": "auth-gate-" },
+    "Expiration": { "Days": 30 },
+    "NoncurrentVersionExpiration": { "NoncurrentDays": 7 },
+    "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 }
+  },
+  {
+    "ID": "auth-gate-artifacts-markers",
+    "Status": "Enabled",
+    "Filter": { "Prefix": "auth-gate-" },
+    "Expiration": { "ExpiredObjectDeleteMarker": true }
+  }
+]
