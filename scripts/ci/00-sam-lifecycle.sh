@@ -44,8 +44,10 @@ merged="$(jq --slurpfile ours "$rules_file" \
   <<<"$current")"
 
 echo "bucket: $bucket"
-echo "rules before: $(jq -r '[.Rules[]?.ID // "(no id)"] | join(", ")' <<<"$current")"
-echo "rules after:  $(jq -r '[.Rules[].ID] | join(", ")' <<<"$merged")"
+# One label per rule, so an empty list and a rule without an ID read differently.
+rule_ids='if (.Rules // []) == [] then "(none)" else [.Rules[] | .ID // "(no id)"] | join(", ") end'
+echo "rules before: $(jq -r "$rule_ids" <<<"$current")"
+echo "rules after:  $(jq -r "$rule_ids" <<<"$merged")"
 
 echo "$merged" >"$out"
 extra=()
