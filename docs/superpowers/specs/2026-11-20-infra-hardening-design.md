@@ -44,19 +44,24 @@ ignores a condition key would silently stay open; an unconditional deny would br
 
 ## 3. Rollout
 
-The new policy must not land before the resources carry what it checks. Order:
+The new policy must not land before the resources carry what it checks, and once it lands a
+deploy from a tree without `--s3-prefix` fails at the upload. Order:
 
-1. Deploy AuthGate, then the Console, from this branch with the current deployer policy. This adds
-   the tags, the S3 prefix and the table protection. The current policy already has
-   `dynamodb:UpdateTable`.
+1. Merge this branch to `main`. Deploy AuthGate, then the Console, from `main` with the current
+   deployer policy. This adds the tags, the S3 prefix and the table protection. The current
+   policy already has `dynamodb:UpdateTable`; a failure here rolls back harmlessly.
 2. `00-deployer.sh` with the admin profile, applying the new policy.
-3. Deploy both again as the deployer, then both smoke scripts. This proves the narrowed policy
-   still deploys.
-4. Proofs, read-only, as admin: `aws iam simulate-principal-policy` for `auth-gate-deployer` shows
-   `implicitDeny` for `kms:PutKeyPolicy` on a key without the tag, `cloudfront:UpdateDistribution`
-   on a distribution without the tag, and `s3:PutObject` outside the prefix; and `allowed` for the
-   same actions on auth-gate's resources. `aws dynamodb describe-table` shows
-   `DeletionProtectionEnabled: true`.
+3. Deploy both again from `main` as the deployer, then both smoke scripts. This proves the
+   narrowed policy still deploys. Every other worktree rebases on `main` before it deploys.
+4. Proofs, read-only, as admin: `aws iam simulate-principal-policy` for `auth-gate-deployer` on
+   auth-gate's own key and distribution, with `aws:ResourceTag/app` given as context, shows
+   `allowed` for `kms:PutKeyPolicy` and `cloudfront:UpdateDistribution` with `auth-gate` and
+   `implicitDeny` with another value, and `implicitDeny` for `s3:PutObject` outside the prefix.
+   `aws dynamodb describe-table` shows `DeletionProtectionEnabled: true`.
+
+A deploy that creates the stacks (a new stage, or a stage rebuilt after a purge) runs under the
+admin profile: the deployer's `kms:TagResource` and `kms:PutKeyPolicy` are limited to tagged keys,
+and `CreateKey` with tags needs them unrestricted.
 
 ## 4. Non-goals
 

@@ -30,13 +30,13 @@
         "s3:GetObject",
         "s3:AbortMultipartUpload"
       ],
-      "Resource": "arn:aws:s3:::aws-sam-cli-managed-default-samclisourcebucket-*/auth-gate-*"
+      "Resource": "arn:aws:s3:::aws-sam-cli-managed-default-samclisourcebucket-m5yrn5zzyiu6/auth-gate-*"
     },
     {
       "Sid": "ListOurSamArtifacts",
       "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::aws-sam-cli-managed-default-samclisourcebucket-*",
+      "Resource": "arn:aws:s3:::aws-sam-cli-managed-default-samclisourcebucket-m5yrn5zzyiu6",
       "Condition": {
         "StringLike": {
           "s3:prefix": "auth-gate-*"
@@ -115,7 +115,10 @@
         "dynamodb:UpdateContinuousBackups",
         "dynamodb:TagResource",
         "dynamodb:UntagResource",
-        "dynamodb:ListTagsOfResource"
+        "dynamodb:ListTagsOfResource",
+        "dynamodb:DescribeContributorInsights",
+        "dynamodb:DescribeKinesisStreamingDestination",
+        "dynamodb:GetResourcePolicy"
       ],
       "Resource": "arn:aws:dynamodb:ap-southeast-1:826113468815:table/auth-gate-*"
     },
@@ -169,10 +172,7 @@
     {
       "Sid": "CreateTheDistribution",
       "Effect": "Allow",
-      "Action": [
-        "cloudfront:CreateDistribution",
-        "cloudfront:CreateDistributionWithTags"
-      ],
+      "Action": "cloudfront:CreateDistribution",
       "Resource": "*",
       "Condition": {
         "StringEquals": {

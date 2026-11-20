@@ -12,17 +12,33 @@ export HOME="$tmp/home" AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/d
 export AWS_PROFILE=stub STAGE=t AWS_REGION=ap-southeast-1
 export CALLS="$tmp/calls"
 
-# Scenarios: protected, unprotected, absent, describe-denied, update-fails.
+# Scenarios: protected, unprotected, absent, describe-denied, update-fails, delete-fails.
+# The stub models the table: describe-table answers by the --query it gets. Protection stays on
+# for the first poll after update-table and is off from the second, so the script must wait,
+# and it must ask exactly "ACTIVE and protection off": any other poll query is an error.
+export POLLS="$tmp/polls"
 cat >"$tmp/bin/aws" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$CALLS"
+query=""
+prev=""
+for a in "$@"; do
+  [[ "$prev" == --query ]] && query="$a"
+  prev="$a"
+done
 case "$1 $2" in
   "dynamodb describe-table")
     case "$SCENARIO" in
-      protected | update-fails) echo true ;;
-      unprotected) echo false ;;
       absent) echo "An error occurred (ResourceNotFoundException) when calling the DescribeTable operation" >&2; exit 254 ;;
       describe-denied) echo "An error occurred (AccessDeniedException) when calling the DescribeTable operation" >&2; exit 254 ;;
+    esac
+    case "$query" in
+      Table.DeletionProtectionEnabled)
+        if [[ "$SCENARIO" == unprotected ]]; then echo false; else echo true; fi ;;
+      "Table.TableStatus=='ACTIVE' && Table.DeletionProtectionEnabled==\`false\`")
+        echo x >>"$POLLS"
+        if [[ "$(wc -l <"$POLLS")" -ge 2 ]]; then echo true; else echo false; fi ;;
+      *) echo "stub: unexpected query: $query" >&2; exit 255 ;;
     esac ;;
   "dynamodb update-table")
     if [[ "$SCENARIO" == update-fails ]]; then
@@ -30,6 +46,11 @@ case "$1 $2" in
       exit 254
     fi
     echo '{}' ;;
+  "cloudformation delete-stack")
+    if [[ "$SCENARIO" == delete-fails ]]; then
+      echo "An error occurred (AccessDenied) when calling the DeleteStack operation" >&2
+      exit 254
+    fi ;;
 esac
 exit 0
 STUB
@@ -53,6 +74,7 @@ refute() {
 # run <scenario> <answer>: sets $out (stdout and stderr) and $code.
 run() {
   : >"$CALLS"
+  : >"$POLLS"
   code=0
   out="$(SCENARIO="$1" bash "$purge" <<<"$2" 2>&1)" || code=$?
 }
@@ -73,6 +95,7 @@ assert "protected: turns it off before the stack delete" test "$(line 'update-ta
 assert "protected: deletes the stack" called 'cloudformation delete-stack --region ap-southeast-1 --stack-name auth-gate-t'
 assert "protected: deletes both parameters" test "$(grep -c 'ssm delete-parameter' "$CALLS")" -eq 2
 assert "protected: says so" grep -q 'turned off deletion protection on table auth-gate-t' <<<"$out"
+assert "protected: waits until protection is off" test "$(wc -l <"$POLLS")" -eq 2
 
 run unprotected auth-gate-t
 assert "already unprotected: exits 0" test "$code" -eq 0
@@ -95,5 +118,11 @@ refute "update-table fails: exits non-zero" test "$code" -eq 0
 assert "update-table fails: shows the error" grep -q 'AccessDeniedException' <<<"$out"
 refute "update-table fails: stack not deleted" called 'delete-stack'
 refute "update-table fails: parameters kept" called 'ssm delete-parameter'
+
+run delete-fails auth-gate-t
+refute "delete-stack fails: exits non-zero" test "$code" -eq 0
+assert "delete-stack fails: prints the restore hint" grep -q 'To restore: aws dynamodb update-table --region ap-southeast-1 --table-name auth-gate-t --deletion-protection-enabled' <<<"$out"
+assert "delete-stack fails: says the stack was not deleted" grep -q 'stack auth-gate-t was not deleted' <<<"$out"
+refute "delete-stack fails: parameters kept" called 'ssm delete-parameter'
 
 exit "$fail"
