@@ -301,8 +301,9 @@ rights reach only auth-gate's own resources ([Deployer scope](#deployer-scope)).
 change Lambda code and the Console's site (so it can swap the JavaScript the admin loads), read
 `admin-key` from SSM, edit any CloudFront cache, origin request, response headers or origin
 access control policy in the account (CloudFront cannot scope those), and it holds wide rights on
-Route 53 and ACM until the custom domain work settles them. Keep the deployer key out of CI and
-shells you do not control.
+Route 53 and ACM until the custom domain work settles them. CI does not use the key: it assumes the
+role `ci-auth-gate-deploy` ([Continuous deploy](#continuous-deploy)). Keep the key out of shells
+you do not control.
 
 ## Local development
 
@@ -328,8 +329,9 @@ also runs the store tests against DynamoDB Local.
 
 ## Deploy
 
-The deploy and smoke steps are manual and run by a person with AWS access. They live in
-`scripts/setup-and-deploy/` and read `STAGE` (default `stg`), `AWS_PROFILE` (default
+The deploy and smoke steps also run in CI on every merge to `main`
+([Continuous deploy](#continuous-deploy)). A person runs them for first deploys, recoveries and
+other stages, with AWS access. They live in `scripts/setup-and-deploy/` and read `STAGE` (default `stg`), `AWS_PROFILE` (default
 `auth-gate-deployer`) and `AWS_REGION` (default `ap-southeast-1`):
 
 0. `00-deployer.sh` (once per account and after changing either JSON, with an admin profile:
@@ -402,7 +404,7 @@ resources:
   `aws-sam-cli-managed-default-samclisourcebucket-m5yrn5zzyiu6` (`--s3-prefix
   auth-gate-<stage>`, `auth-gate-console-<stage>`). The deployer may read and write objects
   only under `auth-gate-*` in that bucket, and list only that prefix. Artifacts of deploys from
-  before the prefix stay at the bucket root; a lifecycle rule comes with the later CI/CD work.
+  before the prefix stay at the bucket root; the lifecycle rules of [Continuous deploy](#continuous-deploy) expire the new ones.
 - **KMS:** every right on a key requires the tag `app = auth-gate`, including `PutKeyPolicy`,
   `TagResource` and `DescribeKey`, so tagging cannot pull another project's key into scope.
   `CreateKey` requires the request to carry that tag.
@@ -480,6 +482,84 @@ AWS_PROFILE=default scripts/console/deploy.sh
 ```
 
 Every later deploy, including the Console's second pass, runs as the deployer.
+
+## Continuous deploy
+
+Every push to `main` runs the `deploy` job in `.github/workflows/ci.yml` after `check` passes,
+for stg only. It assumes the role `ci-auth-gate-deploy` through GitHub OIDC (no stored key),
+runs `scripts/ci/preflight.sh`, then `02-build.sh`, `03-deploy.sh`, `04-smoke.sh`,
+`scripts/console/deploy.sh` and `scripts/console/smoke.sh`. The preflight stops the job unless
+both stacks exist in `CREATE_COMPLETE`, `UPDATE_COMPLETE` or `UPDATE_ROLLBACK_COMPLETE` and the
+Console's `AuthGateClientId` output is set: CI never creates a stack. Deploys queue (group
+`deploy-stg`, never cancelled), so a second merge waits for a running deploy. GitHub keeps one pending run, so a third merge
+replaces the queued second and the newest merge wins. If a smoke fails
+after a successful deploy, the new code is live: fix forward or revert the PR, whose merge
+deploys too.
+
+### Set up
+
+Once, under an admin profile, before the first merge that carries the `deploy` job:
+
+```bash
+ADMIN_PROFILE=default scripts/ci/00-ci-role.sh
+ADMIN_PROFILE=default scripts/ci/00-sam-lifecycle.sh
+```
+
+`00-ci-role.sh` creates the GitHub OIDC provider if the account has none and the role, trusted
+only for `repo:huy090202/auth-gate:ref:refs/heads/main` (`infra/ci-trust.json`), with the managed
+policy `auth-gate-deployer-policy`. `00-sam-lifecycle.sh` adds two lifecycle rules,
+`auth-gate-artifacts-*`, to the shared SAM bucket and keeps every rule already there. Both are
+rerunnable. The proofs, read-only, under the admin profile in a subshell:
+
+```bash
+(
+export AWS_PROFILE=default AWS_REGION=ap-southeast-1
+acct="$(aws sts get-caller-identity --query Account --output text)"
+role=ci-auth-gate-deploy
+aws iam get-role --role-name "$role" --query Role.AssumeRolePolicyDocument
+aws iam list-attached-role-policies --role-name "$role" --query 'AttachedPolicies[].PolicyName'
+bucket="$(aws cloudformation describe-stacks --stack-name aws-sam-cli-managed-default \
+  --query 'Stacks[0].Outputs[?OutputKey==`SourceBucket`].OutputValue | [0]' --output text)"
+aws s3api get-bucket-lifecycle-configuration --bucket "$bucket" --query 'Rules[].ID'
+)
+```
+
+Expect the trust policy with `aud` `sts.amazonaws.com` and the `sub` above, the policy
+`auth-gate-deployer-policy`, and both `auth-gate-artifacts-*` rule IDs next to every rule that
+was there before. A green first run of the `deploy` job proves the rest.
+
+A shell that exports `AWS_ACCESS_KEY_ID` makes the scripts use those credentials instead of the
+`auth-gate-deployer` profile (`lib.sh` sets the profile only when no key is in the environment).
+That is how CI hands over the role's credentials; on a workstation, unset it first.
+
+### If a deploy gets stuck
+
+A failed update rolls back by itself. If the rollback fails too, the stack is
+`UPDATE_ROLLBACK_FAILED` and the preflight refuses it. Recover by hand under the admin profile:
+
+```bash
+aws cloudformation continue-update-rollback --stack-name auth-gate-stg \
+  --resources-to-skip <LogicalId>
+```
+
+Pick the `<LogicalId>` from the stack's failed events, and repeat for `auth-gate-console-stg` if
+that one is stuck. Then rerun the newest failed run (rerunning an older run after newer merges
+deploys older code), or push a new commit.
+
+A deploy can also fail when stg has been idle for more than 30 days: the lifecycle rule has then
+expired the previous code zip that CloudFormation still references. Fix it the same way, by
+running a fresh deploy.
+
+### What stays manual
+
+`00-deployer.sh`, a stage's first deploy (and the Console's second pass), purges,
+`register-client.sh` and `05-backfill-clients.sh`.
+
+### When a PR changes rights
+
+A template that needs a new right: run `00-deployer.sh` from the branch before merging, or the CI
+deploy fails. A policy that narrows rights: merge first, then apply, as in the infra-hardening
+rollout.
 
 ## Repository layout
 
