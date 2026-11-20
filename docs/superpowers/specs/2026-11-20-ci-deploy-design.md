@@ -81,7 +81,10 @@ The trust policy allows `sts:AssumeRoleWithWebIdentity` only when, with `StringE
 wildcard:
 
 - `token.actions.githubusercontent.com:aud` is `sts.amazonaws.com`, and
-- `token.actions.githubusercontent.com:sub` is `repo:huy090202/auth-gate:ref:refs/heads/main`.
+- `token.actions.githubusercontent.com:sub` is `repo:huy090202@100850219/auth-gate@1423990644:ref:refs/heads/main`.
+  GitHub's `sub` carries the owner and repository IDs (`100850219`, `1423990644`) after each
+  name, so a renamed or re-created `huy090202/auth-gate` does not match. The first CI run showed
+  this form (CloudTrail, 2026-11-20); the plain `repo:huy090202/auth-gate:…` form was refused.
 
 A pull request (`…:pull_request`), a push to any other branch, a fork, and every other
 repository are refused.
