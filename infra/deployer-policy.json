@@ -30,6 +30,15 @@
       ]
     },
     {
+      "Sid": "ManageTheConsoleSite",
+      "Effect": "Allow",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::auth-gate-console-*",
+        "arn:aws:s3:::auth-gate-console-*/*"
+      ]
+    },
+    {
       "Sid": "ManageTheFunctions",
       "Effect": "Allow",
       "Action": "lambda:*",
@@ -39,18 +48,33 @@
       "Sid": "ManageTheExecutionRoles",
       "Effect": "Allow",
       "Action": [
-        "iam:CreateRole",
         "iam:DeleteRole",
         "iam:GetRole",
         "iam:TagRole",
         "iam:UntagRole",
-        "iam:PutRolePolicy",
         "iam:GetRolePolicy",
-        "iam:DeleteRolePolicy",
-        "iam:AttachRolePolicy",
-        "iam:DetachRolePolicy"
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies"
       ],
       "Resource": "arn:aws:iam::826113468815:role/auth-gate-*"
+    },
+    {
+      "Sid": "ChangeRolesOnlyUnderTheBoundary",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePermissionsBoundary"
+      ],
+      "Resource": "arn:aws:iam::826113468815:role/auth-gate-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::826113468815:policy/auth-gate-boundary"
+        }
+      }
     },
     {
       "Sid": "PassRolesToLambdaOnly",
@@ -147,9 +171,36 @@
         "cloudfront:DeleteCachePolicy",
         "cloudfront:ListCachePolicies",
         "cloudfront:GetOriginRequestPolicy",
-        "cloudfront:ListOriginRequestPolicies"
+        "cloudfront:ListOriginRequestPolicies",
+        "cloudfront:CreateOriginAccessControl",
+        "cloudfront:GetOriginAccessControl",
+        "cloudfront:GetOriginAccessControlConfig",
+        "cloudfront:UpdateOriginAccessControl",
+        "cloudfront:DeleteOriginAccessControl",
+        "cloudfront:ListOriginAccessControls",
+        "cloudfront:CreateResponseHeadersPolicy",
+        "cloudfront:GetResponseHeadersPolicy",
+        "cloudfront:UpdateResponseHeadersPolicy",
+        "cloudfront:DeleteResponseHeadersPolicy",
+        "cloudfront:ListResponseHeadersPolicies",
+        "cloudfront:CreateFunction",
+        "cloudfront:ListFunctions",
+        "cloudfront:CreateInvalidation",
+        "cloudfront:GetInvalidation"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "ManageTheEdgeFunctions",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:DescribeFunction",
+        "cloudfront:GetFunction",
+        "cloudfront:UpdateFunction",
+        "cloudfront:PublishFunction",
+        "cloudfront:DeleteFunction"
+      ],
+      "Resource": "arn:aws:cloudfront::826113468815:function/auth-gate-*"
     },
     {
       "Sid": "ManageTheParameters",
@@ -161,7 +212,10 @@
         "ssm:DeleteParameter",
         "ssm:AddTagsToResource"
       ],
-      "Resource": "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate/*"
+      "Resource": [
+        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate/*",
+        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate-console/*"
+      ]
     },
     {
       "Sid": "OptionalCustomDomain",

@@ -47,6 +47,10 @@ Globals:
     Timeout: 10
     FunctionUrlConfig:
       AuthType: NONE
+    # The ceiling on every role here: a right added to a role below must also be in
+    # infra/role-boundary.json, or it is denied at run time. The deployer cannot change
+    # a role that lacks this boundary (infra/deployer-policy.json).
+    PermissionsBoundary: !Sub arn:aws:iam::${AWS::AccountId}:policy/auth-gate-boundary
 
 Resources:
   Table:

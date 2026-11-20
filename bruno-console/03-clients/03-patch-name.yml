@@ -1,0 +1,36 @@
+info:
+  name: "Patch name, no step-up (200)"
+  type: http
+  seq: 3
+
+http:
+  method: PATCH
+  url: "{{baseUrl}}/api/clients/{{clientId}}"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "name": "bruno console demo renamed" }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+        test("renamed", function() {
+          expect(res.getBody().name).to.equal("bruno console demo renamed");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 200.** A rename alone is not sensitive and needs no step-up token.

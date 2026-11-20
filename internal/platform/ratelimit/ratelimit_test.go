@@ -23,7 +23,8 @@ import (
 	"github.com/huy090202/auth-gate/internal/platform/dynamo/dynamotest"
 )
 
-var t0 = time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+// Anchored to real time: a stored ttl in the past lets DynamoDB's reaper delete the item mid-test.
+var t0 = time.Now().UTC().Truncate(time.Second)
 
 type clock struct {
 	mu sync.Mutex

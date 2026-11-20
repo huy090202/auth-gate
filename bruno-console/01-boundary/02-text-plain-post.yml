@@ -1,0 +1,39 @@
+info:
+  name: "text/plain POST (415)"
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/auth/login"
+  headers:
+    - name: Content-Type
+      value: "text/plain"
+  body:
+    type: text
+    data: |-
+      x
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("415", function() {
+          expect(res.getStatus()).to.equal(415);
+        });
+
+        test("the error code says why", function() {
+          expect(res.getBody().error).to.equal("unsupported_media_type");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 415.** Every non-GET request must carry `application/json`. This is the
+  CSRF guard that sits next to the `SameSite` cookie: a cross-site HTML form cannot
+  send that content type without a preflight. It is refused before the login handler
+  runs, so it spends no limiter token.

@@ -170,6 +170,13 @@ Sessions are server-side, unlike auth-app, so disabling an admin or signing out 
 at once. Cookie `__Host-console_session`: opaque random token, HttpOnly, Secure, SameSite=Strict.
 Non-GET requests must be `application/json`.
 
+Enrolling a first factor is serialised by a short lease on the Admin item (25 seconds, claimed before
+the account's factors are read and released after the write, or left to run out when the write got no
+answer): a session that cannot take it answers `409 enrollment_in_progress` and stays signed in. AuthGate
+does not fence writes, so the guarantee is bounded by timeouts: it holds while the Console's HTTP client
+and AuthGate's function each time out within 10 seconds, so a read and a write fit inside the lease
+(product owner decision, 2026-11-06).
+
 **Roles.** `admin` manages clients and reads the audit log. `master` also manages admin accounts.
 
 **Step-up only on security-sensitive actions.** Once signed in, routine work asks for nothing more.
@@ -185,8 +192,20 @@ Non-GET requests must be `application/json`.
 | Every action on another admin's account | |
 
 Each has its own purpose (`console-rotate-key`, …). The frontend attaches the token to the action. It
-must match the admin and action and is single use, stricter than auth-app's sample, where a replay
-works until `exp`.
+must match the admin, the action and the target, and is single use, stricter than auth-app's sample,
+where a replay works until `exp`.
+
+**The token is bound to its target** (product owner decision, 2026-11-07). The challenge purpose is
+the action's purpose, then `:` and the first 32 hex characters of `sha256(target)` for an action that
+takes a target. A token approved for `rotate-key` on client A does not work on client B. The target is
+the client id for the client actions, `<clientId>/<subjectId>` for `purge-subject`, the normalized
+username for the other `admin-*` actions, `<username>/<role>` for `admin-create` and `admin-role`, so an approval
+to create an `admin` cannot create a `master`; `change-password`,
+`add-factor` and `remove-factor` act on the session's own admin and take none. `POST /stepup/start`
+takes `target` and answers `400 invalid_target`, before any AuthGate call, when a targeted action has
+none or a malformed one, or an untargeted action has one. **The limit:** the binding is to the target,
+not to the request body. An approved `update-client` can still change any field of that one client,
+once, within the token's life.
 
 **Managing admins (master only).**
 
@@ -203,7 +222,7 @@ last remaining factor cannot be removed.
 **Operator commands** (`console admin create|reset-password|disable|clear-factors`) create the first
 master and recover a locked-out one. They read secrets from stdin, never argv, and write to the table
 with the operator's AWS profile. A forgotten password goes to a master, or to these commands if the
-master is the one locked out, because there is no email system.
+master is the one locked out, because there is no email system. Each command writes an audit item, success or failure, with source `cli`, the actor `cli:<operating system user>`, the username as target and, for `create`, the role; the password is never recorded, and a failed audit write is a warning on stderr that changes neither the outcome nor the exit status.
 
 **If AuthGate is down,** nobody can sign in to the Console. The scripts that use the admin key
 directly remain the documented emergency path.
@@ -221,7 +240,7 @@ All under `/api`, JSON. Error envelope `{"error": "<snake_case>", ...}`.
 | `POST /me/password` | enroll, full + step-up | Current and new password. No step-up in `enroll`. |
 | `POST /me/pin`, `DELETE /me/pin` | enroll, full + step-up | Delete refused for the last factor. No step-up in `enroll`. |
 | `POST /me/passkeys/start`, `/finish`, `DELETE /me/passkeys/{id}` | enroll, full + step-up | No step-up in `enroll`. The session moves to `full` once the password is changed and a factor exists. |
-| `POST /stepup/start`, `/verify` | full | Action must be in the allow-list. |
+| `POST /stepup/start`, `/verify` | full | Action must be in the allow-list. `start` takes the `target` the token is bound to (§6); `400 invalid_target` otherwise. |
 | `GET /clients`, `GET /clients/{id}` | full | |
 | `POST /clients` | full | Key returned once. |
 | `PATCH /clients/{id}` | full; + step-up unless only `name` changes | |
@@ -235,7 +254,7 @@ All under `/api`, JSON. Error envelope `{"error": "<snake_case>", ...}`.
 | `POST /admins` | master + step-up | Temporary password returned once. |
 | `POST /admins/{username}/reset-password`, `/clear-factors`, `/disable`, `/enable`, `/role` | master + step-up | Guards in §6. Other roles get `403 forbidden`. |
 
-Every write records an audit item, success or failure. Audit items and logs never contain a key,
+Every write records an audit item, success or failure, with its source (`web` or `cli`) and a small allow-listed detail (for example the fields a patch changed and their new values, or the reason a sign-in failed: `wrong_password`, `locked`, `disabled`, `unknown_user`); a failed write with no session (other than under `/auth`, where it is stored with empty identity) is logged, not stored. Audit items and logs never contain a key,
 PIN, password or token. Responses carrying a key are `Cache-Control: no-store`.
 
 ## 8. Screens

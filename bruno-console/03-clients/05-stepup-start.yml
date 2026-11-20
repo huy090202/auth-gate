@@ -1,0 +1,42 @@
+info:
+  name: "Step-up start (PIN, for this client)"
+  type: http
+  seq: 5
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/stepup/start"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "action": "update-client", "factor": "pin", "target": "{{clientId}}" }
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.getStatus() === 200) {
+          bru.setVar("challengeId", res.getBody().challengeId);
+        }
+    - type: tests
+      code: |-
+        test("200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+        test("a challenge id comes back", function() {
+          expect(res.getBody().challengeId).to.be.a("string").and.not.equal("");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 200.** The challenge is for `update-client` **on this client id**: a token
+  earned here cannot be used on another client.

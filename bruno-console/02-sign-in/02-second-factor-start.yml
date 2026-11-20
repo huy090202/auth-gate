@@ -1,0 +1,42 @@
+info:
+  name: "Second factor start (PIN)"
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/auth/second-factor/start"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "factor": "pin" }
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.getStatus() === 200) {
+          bru.setVar("challengeId", res.getBody().challengeId);
+        }
+    - type: tests
+      code: |-
+        test("200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+        test("a challenge id comes back", function() {
+          expect(res.getBody().challengeId).to.be.a("string").and.not.equal("");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 200 with a `challengeId`.** The id is also remembered in the session, so
+  only this session can answer it.

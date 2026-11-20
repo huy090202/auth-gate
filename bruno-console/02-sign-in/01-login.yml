@@ -1,0 +1,45 @@
+info:
+  name: "Login (second factor needed)"
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/auth/login"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "username": "{{username}}", "password": "{{password}}" }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+        test("the next step is the second factor, with a PIN on offer", function() {
+          const b = res.getBody();
+          expect(b.next).to.equal("second-factor");
+          expect(b.factors.pin).to.equal(true);
+        });
+
+        test("a session cookie is set, HttpOnly", function() {
+          const c = [].concat(res.getHeader("set-cookie") || []).join(";").toLowerCase();
+          expect(c).to.include("httponly");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 200 `{"next":"second-factor","factors":{...}}`.** The password is right;
+  the session is half-open until a second factor is proved. If you get
+  `{"next":"enroll"}` the admin has no factor yet: enroll in the browser first.

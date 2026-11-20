@@ -63,6 +63,13 @@ docs:
     stored. A client key on an admin route is a 401. `04-smoke.sh` refuses to run
     if the two are ever equal.
 
+    ### Client management
+
+    `02-clients` also covers list, `PATCH` (name changes, `rpId` refused) and
+    `DELETE /api/clients/{id}/keys/previous`. `01-the-boundary` ends with a disabled
+    client's key answering 401 and the enabled one working again. The Console, a
+    separate app, drives these routes: see `bruno-console/`.
+
     ### Rate limit
 
     The verify role is limited per client: a token bucket of **100 burst, 50 per

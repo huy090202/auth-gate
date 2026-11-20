@@ -1,0 +1,27 @@
+info:
+  name: Clients
+  type: folder
+  seq: 3
+
+request: {}
+
+docs:
+  content: |-
+    ## Client management behind a step-up
+
+    Run after `02-sign-in`, in order. The Console's own client is read-only, so this
+    folder makes its own client and works on that. **It leaves that client behind**
+    (`bruno console demo`): a client cannot be deleted in v1, only disabled.
+    Disabling the demo client needs a step-up of its own, and the operator does it
+    by hand.
+
+    A sensitive change (here `origins`) needs a step-up token: `POST /api/stepup/start`
+    with `{action, factor, target}`, where `target` is the client id, then
+    `/api/stepup/verify` with the PIN. The token is bound to that action and that
+    client, goes in the `x-step-up-token` header, and is **spent** by the action: using
+    it again is a 403. A client id must be a 26-character ULID, so ids here are taken
+    from the create response.
+
+    The new client's key is in the create response, once. This collection neither asserts
+    nor stores it.
+  type: text/markdown

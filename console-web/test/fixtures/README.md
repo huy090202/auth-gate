@@ -1,0 +1,1 @@
+These fixtures are hand-crafted, not captured from auth-gate (no stored option bodies or credentials existed there). They follow the go-webauthn JSON shape with base64url fields and realistic lengths: 32-byte challenges and credential ids, a 64-byte user id, a 37-byte authenticatorData and a DER ECDSA signature. The byte content is random, so auth-gate would not verify them.

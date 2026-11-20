@@ -1,0 +1,287 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  auth-gate console: the Console Lambda and the SPA bucket behind one CloudFront distribution.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: stg
+    AllowedPattern: "[a-z0-9-]+"
+  AuthGateBaseUrl:
+    Type: String
+    AllowedPattern: ^https://[^/]+$
+    Description: auth-gate's one URL, e.g. https://xxxx.cloudfront.net
+  AuthGateClientId:
+    Type: String
+    Default: ""
+    Description: Empty on the first deploy; set after register-client.sh stg.
+  ReservedConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: >-
+      Concurrent executions reserved for the Console; 0 reserves none. Set it once the
+      account quota leaves room: Lambda refuses a reservation that would take unreserved
+      concurrency below its minimum, which would roll back the deploy.
+
+Conditions:
+  HasClientId: !Not [!Equals [!Ref AuthGateClientId, ""]]
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
+
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub auth-gate-console-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      # Holds every admin account and the audit trail. scripts/console/purge.sh turns this
+      # off after its typed confirmation; a stack delete fails until then.
+      DeletionProtectionEnabled: true
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # SAM adds lambda:InvokeFunctionUrl for the public URL; newer accounts also
+  # require lambda:InvokeFunction for an AuthType NONE Function URL.
+  ConsoleUrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Console
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  Console:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub auth-gate-console-${Stage}
+      CodeUri: ../bin/console/bootstrap.zip
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      # argon2id with 64 MiB is slow at the CPU share of 256 MB.
+      MemorySize: 512
+      # Room for a factor read and a write at 10 s each. This does not bound the
+      # first-factor lease (firstFactorLeaseFor, 25 s, in internal/console/me.go):
+      # a write sent near the end can land 10 s later. The Console sends that write
+      # only within firstFactorSendWindow of the claim, which with AuthGate's 10 s
+      # timeout keeps every landing inside the lease.
+      Timeout: 24
+      # The account has 40 concurrent executions; a login flood (argon2id, 64 MiB each) must not starve AuthGate.
+      ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref AWS::NoValue]
+      FunctionUrlConfig:
+        AuthType: NONE
+      # The ceiling on this role: a right added below must also be in
+      # infra/role-boundary.json, or it is denied at run time.
+      PermissionsBoundary: !Sub arn:aws:iam::${AWS::AccountId}:policy/auth-gate-boundary
+      Environment:
+        Variables:
+          STAGE: !Ref Stage
+          TABLE_NAME: !Ref Table
+          AUTHGATE_BASE_URL: !Ref AuthGateBaseUrl
+          AUTHGATE_CLIENT_ID: !Ref AuthGateClientId
+          ADMIN_KEY_PARAM: !Sub /credo/auth-gate/${Stage}/admin-key
+          CLIENT_KEY_PARAM: !Sub /credo/auth-gate-console/${Stage}/authgate-client-key
+          ORIGIN_VERIFY_PARAM: !Sub /credo/auth-gate-console/${Stage}/origin-verify
+      # No KMS statement, as in infra/template.yaml: SecureStrings use the account's
+      # default aws/ssm key. No access to the AuthGate table or its signing key.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:Query
+                - dynamodb:ConditionCheckItem
+              Resource: !GetAtt Table.Arn
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate/${Stage}/admin-key"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-console/${Stage}/origin-verify"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-console/${Stage}/authgate-client-key"
+
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub auth-gate-console-${Stage}-site-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  SiteOac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub auth-gate-console-${Stage}-site
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFrontOnly
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+  # SPA routes have no file in S3: any path whose last segment has no dot is served
+  # /index.html. Only on the site behaviour, never on /api/*.
+  SpaRewrite:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub auth-gate-console-${Stage}-spa-rewrite
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Serve index.html for SPA routes
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var req = event.request;
+          var last = req.uri.substring(req.uri.lastIndexOf('/') + 1);
+          if (last.indexOf('.') === -1) req.uri = '/index.html';
+          return req;
+        }
+
+  # Must equal the policy in console-web/vite.config.ts (no inline script or style).
+  # data: in img-src is the glass grain SVG.
+  SiteHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub auth-gate-console-${Stage}-site-headers
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+          StrictTransportSecurity:
+            Override: true
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: false
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            Override: true
+            FrameOption: DENY
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: no-referrer
+        CustomHeadersConfig:
+          Items:
+            - Header: Permissions-Policy
+              Override: true
+              Value: "publickey-credentials-get=(self), publickey-credentials-create=(self), camera=(), microphone=(), geolocation=()"
+            - Header: Cross-Origin-Opener-Policy
+              Override: true
+              Value: same-origin
+
+  # The /api answers: no CSP or frame options, which a JSON API does not need,
+  # and HSTS as on the site.
+  ApiHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub auth-gate-console-${Stage}-api-headers
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            Override: true
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: false
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: no-referrer
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub auth-gate console ${Stage}
+        HttpVersion: http2and3
+        PriceClass: PriceClass_200
+        DefaultRootObject: index.html
+        # One viewer must not rotate through a /64 to dodge the per-IP login limiter.
+        IPV6Enabled: false
+        Origins:
+          - Id: api
+            DomainName: !Select [2, !Split ["/", !GetAtt ConsoleUrl.FunctionUrl]]
+            CustomOriginConfig: { OriginProtocolPolicy: https-only, OriginSSLProtocols: [TLSv1.2] }
+            OriginCustomHeaders:
+              - HeaderName: x-origin-verify
+                HeaderValue: !Sub "{{resolve:ssm:/credo/auth-gate-console/${Stage}/origin-verify}}"
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOac.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          ResponseHeadersPolicyId: !Ref SiteHeaders
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SpaRewrite.FunctionMetadata.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
+            # AllViewerExceptHostHeader forwards CloudFront-Viewer-Address, which the limiter reads.
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: !Ref ApiHeaders
+        # No CustomErrorResponses: they are distribution-wide and would turn the
+        # Console's own 403/404 JSON on /api/* into index.html 200.
+
+Outputs:
+  BaseUrl:
+    Description: The one URL of the Console (site and /api).
+    Value: !Sub "https://${Distribution.DomainName}"
+  RawConsoleUrl:
+    Description: Direct Function URL (must answer 401 without CloudFront).
+    Value: !GetAtt ConsoleUrl.FunctionUrl
+  SiteBucket:
+    Value: !Ref SiteBucket
+  DistributionId:
+    Value: !Ref Distribution
+  AuthGateClientId:
+    # Absent until the second pass: an empty output value is not safe, and admin.sh
+    # treats a missing output as empty.
+    Condition: HasClientId
+    Value: !Ref AuthGateClientId

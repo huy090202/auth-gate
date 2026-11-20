@@ -1,0 +1,216 @@
+package console
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/user"
+	"strings"
+	"time"
+
+	"github.com/huy090202/auth-gate/internal/console/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/id"
+)
+
+// CLIDeps is what the operator commands need. AuthGate is only called by
+// clear-factors, so the others never need the admin key.
+type CLIDeps struct {
+	Store           *Store
+	AuthGate        func(ctx context.Context) (*authgate.Client, error)
+	ConsoleClientID string
+	Now             func() time.Time
+	// Stderr gets the warning when an audit item cannot be written; os.Stderr when nil.
+	Stderr io.Writer
+}
+
+// codedErr is a failure of a command with the short code its audit item records.
+type codedErr struct {
+	code string
+	err  error
+}
+
+func (e codedErr) Error() string { return e.err.Error() }
+func (e codedErr) Unwrap() error { return e.err }
+
+func coded(code string, err error) error { return codedErr{code: code, err: err} }
+
+// cliActions are the commands that are audited, under the action name the web
+// uses for the same thing; the item's source tells them apart.
+var cliActions = map[string]string{
+	"create": "admin-create", "reset-password": "admin-reset-password", "disable": "admin-disable", "clear-factors": "admin-clear-factors",
+}
+
+// cliActor is who an operator command is recorded as: the operating system user.
+func cliActor() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return "cli:" + u.Username
+	}
+	return "cli:unknown"
+}
+
+const usage = "usage: console admin create --username U --role master|admin | reset-password --username U | disable --username U | clear-factors --username U (password on stdin)"
+
+// RunAdmin runs one operator command. Passwords come from stdin only: a flag
+// that names one is refused before anything is read or written. Nothing secret
+// is written to stdout or into an error. Each of the four commands writes an
+// audit item, success or failure, with source "cli"; a failed audit write
+// prints a warning on stderr and changes neither the outcome nor the status.
+func RunAdmin(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, d CLIDeps) error {
+	if len(args) == 0 {
+		return errors.New(usage)
+	}
+	for _, a := range args[1:] {
+		if strings.HasPrefix(a, "-") && strings.HasPrefix(strings.TrimLeft(a, "-"), "password") {
+			return errors.New("passwords are read from stdin only; there is no --password flag")
+		}
+	}
+	cmd := args[0]
+	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	username := fs.String("username", "", "")
+	role := fs.String("role", "", "")
+	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
+		return errors.New(usage)
+	}
+	now := time.Now
+	if d.Now != nil {
+		now = d.Now
+	}
+	name, err := NormalizeUsername(*username)
+	if err != nil {
+		err = coded("invalid_username", fmt.Errorf("--username: %w", err))
+		name = ""
+	} else {
+		err = runCommand(ctx, cmd, name, *role, stdin, stdout, d, now)
+	}
+	if action, ok := cliActions[cmd]; ok {
+		e := AuditEntry{Username: cliActor(), Action: action, Target: name, Result: "success", Source: "cli", At: now().UTC()}
+		if cmd == "create" && validRole(Role(*role)) {
+			e.Detail = map[string]string{"role": *role}
+		}
+		if err != nil {
+			e.Result = "failed:error"
+			var ce codedErr
+			if errors.As(err, &ce) {
+				e.Result = "failed:" + ce.code
+			}
+		}
+		d.audit(ctx, e)
+	}
+	return err
+}
+
+// audit stores the item. It never fails the command.
+func (d CLIDeps) audit(ctx context.Context, e AuditEntry) {
+	e.Target = truncate(e.Target, maxAuditTarget)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditWriteTimeout)
+	defer cancel()
+	if err := d.Store.PutAudit(ctx, e); err != nil {
+		w := d.Stderr
+		if w == nil {
+			w = os.Stderr
+		}
+		_, _ = fmt.Fprintf(w, "warning: the audit item for %s was not written: %v\n", e.Action, err)
+	}
+}
+
+func runCommand(ctx context.Context, cmd, name, role string, stdin io.Reader, stdout io.Writer, d CLIDeps, now func() time.Time) error {
+	switch cmd {
+	case "create":
+		if !validRole(Role(role)) {
+			return coded("invalid_role", errors.New("--role must be master or admin"))
+		}
+		hash, err := hashFromStdin(stdin)
+		if err != nil {
+			return err
+		}
+		err = d.Store.CreateAdmin(ctx, Admin{ID: id.New(), Username: name, Role: Role(role), PasswordHash: hash,
+			MustChangePassword: true, CreatedAt: now().UTC()})
+		if errors.Is(err, ErrUsernameTaken) {
+			return coded("username_taken", fmt.Errorf("%s already exists", name))
+		}
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(stdout, "created %s %s; the password must be changed at first sign-in\n", role, name)
+	case "reset-password":
+		hash, err := hashFromStdin(stdin)
+		if err != nil {
+			return err
+		}
+		if err := d.Store.SetPassword(ctx, name, hash, true, true); err != nil {
+			return cliStoreError(err, name)
+		}
+		_, _ = fmt.Fprintf(stdout, "password of %s reset; sessions ended; it must be changed at next sign-in\n", name)
+	case "disable":
+		at := now().UTC()
+		if err := d.Store.SetDisabled(ctx, nil, name, &at); err != nil {
+			return cliStoreError(err, name)
+		}
+		_, _ = fmt.Fprintf(stdout, "disabled %s; sessions ended\n", name)
+	case "clear-factors":
+		return cliClearFactors(ctx, stdout, d, name)
+	default:
+		return errors.New(usage)
+	}
+	return nil
+}
+
+// cliClearFactors is the order of the web route: bump, purge, bump. The AuthGate
+// client is obtained first, so a missing key changes nothing.
+func cliClearFactors(ctx context.Context, stdout io.Writer, d CLIDeps, name string) error {
+	if d.AuthGate == nil {
+		return coded("authgate_unavailable", errors.New("no AuthGate client configured"))
+	}
+	ag, err := d.AuthGate(ctx)
+	if err != nil {
+		return coded("authgate_unavailable", fmt.Errorf("authgate client: %w", err))
+	}
+	ad, err := d.Store.GetAdmin(ctx, name)
+	if err != nil {
+		return cliStoreError(err, name)
+	}
+	if err := d.Store.EndSessions(ctx, name); err != nil {
+		return cliStoreError(err, name)
+	}
+	if err := ag.PurgeSubject(ctx, d.ConsoleClientID, ad.ID); err != nil {
+		return coded("authgate_unavailable", fmt.Errorf("purge factors at AuthGate: %w (sessions of %s were ended; run it again)", err, name))
+	}
+	if err := d.Store.EndSessions(ctx, name); err != nil {
+		return cliStoreError(err, name)
+	}
+	_, _ = fmt.Fprintf(stdout, "cleared the factors of %s; sessions ended; they enroll again at next sign-in\n", name)
+	return nil
+}
+
+func cliStoreError(err error, name string) error {
+	switch {
+	case errors.Is(err, ErrBusy):
+		return coded("busy", errors.New("another write was in flight; run the command again"))
+	case errors.Is(err, ErrConflict):
+		return coded("last_master", fmt.Errorf("refused: %s is the last active master", name))
+	case errors.Is(err, ErrAdminNotFound):
+		return coded("not_found", fmt.Errorf("no admin %s", name))
+	}
+	return err
+}
+
+// hashFromStdin reads one line, checks the policy and returns its hash.
+func hashFromStdin(stdin io.Reader) (string, error) {
+	line, err := bufio.NewReader(io.LimitReader(stdin, 1024)).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read password: %w", err)
+	}
+	p := strings.TrimRight(line, "\r\n")
+	if p == "" {
+		return "", coded("invalid_password", errors.New("the password goes on stdin"))
+	}
+	if err := ValidatePassword(p); err != nil {
+		return "", coded("invalid_password", err)
+	}
+	return HashPassword(p)
+}

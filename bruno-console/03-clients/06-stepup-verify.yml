@@ -1,0 +1,43 @@
+info:
+  name: "Step-up verify (PIN)"
+  type: http
+  seq: 6
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/stepup/verify"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "challengeId": "{{challengeId}}", "pin": "{{pin}}" }
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.getStatus() === 200) {
+          bru.setVar("stepUpToken", res.getBody().stepUpToken);
+        }
+    - type: tests
+      code: |-
+        test("200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+
+        test("a token and its expiry", function() {
+          const b = res.getBody();
+          expect(b.stepUpToken).to.be.a("string").and.not.equal("");
+          expect(Date.parse(b.expiresAt)).to.be.greaterThan(Date.now());
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 200 with a `stepUpToken`.** Verifying does not spend the token; the action does.

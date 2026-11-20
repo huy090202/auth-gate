@@ -1,8 +1,10 @@
 # auth-gate
 
 auth-gate is a two-factor verification service (PIN and WebAuthn passkeys) that other
-systems call backend to backend with a per-client key. Round 1 is the workspace and its
-tooling; the module itself is round 2.
+systems call backend to backend with a per-client key. Go, on AWS Lambda: `cmd/auth-gate`, `internal/auth`, `infra/template.yaml`.
+
+- AuthGate is the verification service: three roles in one binary behind one CloudFront door.
+- The Console is the operator's web app for managing clients: `cmd/console`, `internal/console`, `console-web/`, `infra/console.yaml`. Start with `README.md` and `docs/memo/console-sessions.md`.
 
 ## Rules
 

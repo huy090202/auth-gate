@@ -1,0 +1,15 @@
+# Copy to local.yml (gitignored) and fill in the admin you enrolled in the browser.
+# The Console runs on :8788 under `make console-dev`; `make dev` serves AuthGate
+# on :8080 behind it.
+bundled: false
+extensions: {}
+name: local
+variables:
+  - name: baseUrl
+    value: http://localhost:8788
+  - name: username
+    value: ""
+  - name: password
+    value: ""
+  - name: pin
+    value: ""

@@ -1,0 +1,47 @@
+info:
+  name: "Unknown user (401)"
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/auth/login"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "username": "no-such-admin-xyz", "password": "not-the-password-1" }
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        bru.setVar("unknownUserBody", JSON.stringify(res.getBody()));
+    - type: tests
+      code: |-
+        test("401", function() {
+          expect(res.getStatus()).to.equal(401);
+        });
+
+        test("invalid_credentials, nothing more", function() {
+          expect(res.getBody()).to.deep.equal({ error: "invalid_credentials" });
+        });
+
+        test("no session cookie is set", function() {
+          const c = res.getHeader("set-cookie");
+          expect(c === undefined || c === null || String(c).length === 0, "a cookie was set").to.equal(true);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 401 `invalid_credentials`.** The name is not an account. The server still
+  runs one password comparison against a dummy hash, so the answer takes about as
+  long as a real one. The body is kept in the variable `unknownUserBody` for the next
+  request to compare with.
