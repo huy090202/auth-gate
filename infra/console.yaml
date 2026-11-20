@@ -226,6 +226,9 @@ Resources:
   Distribution:
     Type: AWS::CloudFront::Distribution
     Properties:
+      # The deployer may change only distributions with this tag (infra/deployer-policy.json).
+      Tags:
+        - { Key: app, Value: auth-gate }
       DistributionConfig:
         Enabled: true
         Comment: !Sub auth-gate console ${Stage}

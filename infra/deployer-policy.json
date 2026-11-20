@@ -12,22 +12,36 @@
       ]
     },
     {
-      "Sid": "ReadTemplates",
+      "Sid": "NoResourceScope",
       "Effect": "Allow",
       "Action": [
         "cloudformation:ValidateTemplate",
-        "cloudformation:GetTemplateSummary"
+        "cloudformation:GetTemplateSummary",
+        "kms:ListAliases",
+        "logs:DescribeLogGroups"
       ],
       "Resource": "*"
     },
     {
-      "Sid": "SamArtifactBucket",
+      "Sid": "SamArtifactsUnderOurPrefix",
       "Effect": "Allow",
-      "Action": "s3:*",
-      "Resource": [
-        "arn:aws:s3:::aws-sam-cli-managed-default-samclisourcebucket-*",
-        "arn:aws:s3:::aws-sam-cli-managed-default-samclisourcebucket-*/*"
-      ]
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:AbortMultipartUpload"
+      ],
+      "Resource": "arn:aws:s3:::aws-sam-cli-managed-default-samclisourcebucket-*/auth-gate-*"
+    },
+    {
+      "Sid": "ListOurSamArtifacts",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::aws-sam-cli-managed-default-samclisourcebucket-*",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "auth-gate-*"
+        }
+      }
     },
     {
       "Sid": "ManageTheConsoleSite",
@@ -108,20 +122,22 @@
     {
       "Sid": "CreateTheSigningKey",
       "Effect": "Allow",
-      "Action": [
-        "kms:CreateKey",
-        "kms:DescribeKey",
-        "kms:TagResource",
-        "kms:ListAliases",
-        "kms:PutKeyPolicy",
-        "kms:GetKeyPolicy"
-      ],
-      "Resource": "*"
+      "Action": "kms:CreateKey",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/app": "auth-gate"
+        }
+      }
     },
     {
       "Sid": "ManageTheSigningKey",
       "Effect": "Allow",
       "Action": [
+        "kms:DescribeKey",
+        "kms:GetKeyPolicy",
+        "kms:PutKeyPolicy",
+        "kms:TagResource",
         "kms:UpdateKeyDescription",
         "kms:EnableKey",
         "kms:DisableKey",
@@ -129,6 +145,7 @@
         "kms:UntagResource",
         "kms:ListResourceTags",
         "kms:GetPublicKey",
+        "kms:CreateAlias",
         "kms:DeleteAlias",
         "kms:UpdateAlias"
       ],
@@ -147,17 +164,26 @@
         "kms:DeleteAlias",
         "kms:UpdateAlias"
       ],
-      "Resource": [
-        "arn:aws:kms:ap-southeast-1:826113468815:alias/auth-gate-*",
-        "arn:aws:kms:ap-southeast-1:826113468815:key/*"
-      ]
+      "Resource": "arn:aws:kms:ap-southeast-1:826113468815:alias/auth-gate-*"
+    },
+    {
+      "Sid": "CreateTheDistribution",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:CreateDistribution",
+        "cloudfront:CreateDistributionWithTags"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/app": "auth-gate"
+        }
+      }
     },
     {
       "Sid": "ManageTheDistribution",
       "Effect": "Allow",
       "Action": [
-        "cloudfront:CreateDistribution",
-        "cloudfront:CreateDistributionWithTags",
         "cloudfront:GetDistribution",
         "cloudfront:GetDistributionConfig",
         "cloudfront:UpdateDistribution",
@@ -165,6 +191,20 @@
         "cloudfront:TagResource",
         "cloudfront:UntagResource",
         "cloudfront:ListTagsForResource",
+        "cloudfront:CreateInvalidation",
+        "cloudfront:GetInvalidation"
+      ],
+      "Resource": "arn:aws:cloudfront::826113468815:distribution/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/app": "auth-gate"
+        }
+      }
+    },
+    {
+      "Sid": "DistributionPolicies",
+      "Effect": "Allow",
+      "Action": [
         "cloudfront:CreateCachePolicy",
         "cloudfront:GetCachePolicy",
         "cloudfront:UpdateCachePolicy",
@@ -184,9 +224,7 @@
         "cloudfront:DeleteResponseHeadersPolicy",
         "cloudfront:ListResponseHeadersPolicies",
         "cloudfront:CreateFunction",
-        "cloudfront:ListFunctions",
-        "cloudfront:CreateInvalidation",
-        "cloudfront:GetInvalidation"
+        "cloudfront:ListFunctions"
       ],
       "Resource": "*"
     },
@@ -198,7 +236,10 @@
         "cloudfront:GetFunction",
         "cloudfront:UpdateFunction",
         "cloudfront:PublishFunction",
-        "cloudfront:DeleteFunction"
+        "cloudfront:DeleteFunction",
+        "cloudfront:TagResource",
+        "cloudfront:UntagResource",
+        "cloudfront:ListTagsForResource"
       ],
       "Resource": "arn:aws:cloudfront::826113468815:function/auth-gate-*"
     },
@@ -235,11 +276,10 @@
       "Sid": "Diagnostics",
       "Effect": "Allow",
       "Action": [
-        "logs:DescribeLogGroups",
         "logs:FilterLogEvents",
         "logs:GetLogEvents"
       ],
-      "Resource": "*"
+      "Resource": "arn:aws:logs:ap-southeast-1:826113468815:log-group:/aws/lambda/auth-gate-*"
     }
   ]
 }

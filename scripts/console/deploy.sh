@@ -52,9 +52,11 @@ if [[ -n "${CONSOLE_RESERVED_CONCURRENCY:-}" ]]; then
   [[ "$CONSOLE_RESERVED_CONCURRENCY" =~ ^[0-9]+$ ]] || die "CONSOLE_RESERVED_CONCURRENCY must be a whole number"
   params+=("ReservedConcurrency=$CONSOLE_RESERVED_CONCURRENCY")
 fi
+# The SAM bucket is shared by every project in the account; the deployer may write only
+# under auth-gate-* in it (infra/deployer-policy.json).
 sam deploy --template-file "$ROOT/infra/console.yaml" \
   --stack-name "$STACK" --region "$REGION" \
-  --capabilities CAPABILITY_IAM --resolve-s3 \
+  --capabilities CAPABILITY_IAM --resolve-s3 --s3-prefix "$STACK" \
   --no-confirm-changeset --no-fail-on-empty-changeset \
   --parameter-overrides "${params[@]}"
 
