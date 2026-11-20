@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -38,3 +38,42 @@ jobs:
       - run: pnpm run check
         env:
           DYNAMO_ENDPOINT: http://localhost:8000
+
+  deploy:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    concurrency:
+      group: deploy-stg
+      cancel-in-progress: false
+    env:
+      STAGE: stg
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: aws-actions/setup-sam@341eee193f458fa5aae5d52c94b0c5cf3a1c5a52 # v3
+        with:
+          use-installer: true
+          version: 1.169.0
+      - run: pnpm install --frozen-lockfile
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::826113468815:role/ci-auth-gate-deploy
+          aws-region: ap-southeast-1
+          role-session-name: ci-deploy-${{ github.run_id }}
+      - run: scripts/ci/preflight.sh
+      - run: scripts/setup-and-deploy/02-build.sh
+      - run: scripts/setup-and-deploy/03-deploy.sh
+      - run: scripts/setup-and-deploy/04-smoke.sh
+      - run: scripts/console/deploy.sh
+      - run: scripts/console/smoke.sh
