@@ -69,3 +69,5 @@ fi
 
 aws iam attach-role-policy "${admin[@]}" --role-name "$role_name" --policy-arn "$policy_arn"
 echo "role arn: arn:aws:iam::$account:role/$role_name"
+echo "attached policies: $(aws iam list-attached-role-policies "${admin[@]}" --role-name "$role_name" \
+  --query 'AttachedPolicies[].PolicyName' --output text)"

@@ -22,6 +22,10 @@ if [ -z "$bucket" ] || [ "$bucket" = None ]; then
   die "the stack aws-sam-cli-managed-default has no SourceBucket output; run a sam deploy --resolve-s3 first"
 fi
 
+expected_bucket=aws-sam-cli-managed-default-samclisourcebucket-m5yrn5zzyiu6
+[ "$bucket" = "$expected_bucket" ] ||
+  die "the SAM bucket is $bucket but infra/deployer-policy.json pins $expected_bucket; wrong account or region? try AWS_REGION=ap-southeast-1"
+
 err="$(mktemp)"
 out="$(mktemp)"
 trap 'rm -f "$err" "$out"' EXIT

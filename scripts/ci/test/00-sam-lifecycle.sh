@@ -14,14 +14,14 @@ export HOME="$tmp/home" AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/d
 export AWS_PROFILE=stub AWS_REGION=ap-southeast-1
 export CALLS="$tmp/calls" TMP="$tmp"
 
-# Scenarios: none, foreign, ours-old, get-denied, no-bucket.
+# Scenarios: none, foreign, ours-old, get-denied, no-bucket, wrong-bucket.
 cat >"$tmp/bin/aws" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$CALLS"
 foreign='{"ID":"other-logs","Status":"Enabled","Prefix":"logs/","Expiration":{"Days":3}}'
 case "$1 $2" in
   "cloudformation describe-stacks")
-    if [[ "$SCENARIO" == no-bucket ]]; then echo None; else echo samclisourcebucket-test; fi ;;
+    if [[ "$SCENARIO" == no-bucket ]]; then echo None; else if [[ "$SCENARIO" == wrong-bucket ]]; then echo samclisourcebucket-other; else echo aws-sam-cli-managed-default-samclisourcebucket-m5yrn5zzyiu6; fi; fi ;;
   "s3api get-bucket-lifecycle-configuration")
     case "$SCENARIO" in
       none)
@@ -79,7 +79,7 @@ foreign='{"ID":"other-logs","Status":"Enabled","Prefix":"logs/","Expiration":{"D
 run none
 assert "none: exits 0" test "$code" -eq 0
 assert "none: puts exactly the rules file" same "$(jq -c . "$tmp/put.json")" "{\"Rules\":$ours}"
-assert "none: targets the SAM bucket" grep -q -- '--bucket samclisourcebucket-test' "$CALLS"
+assert "none: targets the SAM bucket" grep -q -- '--bucket aws-sam-cli-managed-default-samclisourcebucket-m5yrn5zzyiu6' "$CALLS"
 assert "none: sends no size flag" test ! -s "$tmp/size"
 assert "none: every call uses --profile default" profiles_are default
 
@@ -105,6 +105,10 @@ assert "get-denied: nothing written" test "$(put_calls)" -eq 0
 run no-bucket
 assert "no-bucket: exits non-zero" test "$code" -ne 0
 assert "no-bucket: nothing written" test "$(put_calls)" -eq 0
+
+run wrong-bucket
+assert "wrong-bucket: exits non-zero" test "$code" -ne 0
+assert "wrong-bucket: nothing written" test "$(put_calls)" -eq 0
 
 : >"$CALLS"
 code=0

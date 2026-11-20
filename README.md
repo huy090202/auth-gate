@@ -491,7 +491,8 @@ runs `scripts/ci/preflight.sh`, then `02-build.sh`, `03-deploy.sh`, `04-smoke.sh
 `scripts/console/deploy.sh` and `scripts/console/smoke.sh`. The preflight stops the job unless
 both stacks exist in `CREATE_COMPLETE`, `UPDATE_COMPLETE` or `UPDATE_ROLLBACK_COMPLETE` and the
 Console's `AuthGateClientId` output is set: CI never creates a stack. Deploys queue (group
-`deploy-stg`, never cancelled), so a second merge waits for a running deploy. If a smoke fails
+`deploy-stg`, never cancelled), so a second merge waits for a running deploy. GitHub keeps one pending run, so a third merge
+replaces the queued second and the newest merge wins. If a smoke fails
 after a successful deploy, the new code is live: fix forward or revert the PR, whose merge
 deploys too.
 
@@ -516,7 +517,7 @@ export AWS_PROFILE=default AWS_REGION=ap-southeast-1
 acct="$(aws sts get-caller-identity --query Account --output text)"
 role=ci-auth-gate-deploy
 aws iam get-role --role-name "$role" --query Role.AssumeRolePolicyDocument
-aws iam list-attached-role-policies --role-name "$role" --query AttachedPolicies[].PolicyName
+aws iam list-attached-role-policies --role-name "$role" --query 'AttachedPolicies[].PolicyName'
 bucket="$(aws cloudformation describe-stacks --stack-name aws-sam-cli-managed-default \
   --query 'Stacks[0].Outputs[?OutputKey==`SourceBucket`].OutputValue | [0]' --output text)"
 aws s3api get-bucket-lifecycle-configuration --bucket "$bucket" --query 'Rules[].ID'
@@ -542,7 +543,12 @@ aws cloudformation continue-update-rollback --stack-name auth-gate-stg \
 ```
 
 Pick the `<LogicalId>` from the stack's failed events, and repeat for `auth-gate-console-stg` if
-that one is stuck. Then rerun the failed job.
+that one is stuck. Then rerun the newest failed run (rerunning an older run after newer merges
+deploys older code), or push a new commit.
+
+A deploy can also fail when stg has been idle for more than 30 days: the lifecycle rule has then
+expired the previous code zip that CloudFormation still references. Fix it the same way, by
+running a fresh deploy.
 
 ### What stays manual
 
