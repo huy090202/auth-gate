@@ -506,7 +506,7 @@ ADMIN_PROFILE=default scripts/ci/00-sam-lifecycle.sh
 ```
 
 `00-ci-role.sh` creates the GitHub OIDC provider if the account has none and the role, trusted
-only for `repo:huy090202/auth-gate:ref:refs/heads/main` (`infra/ci-trust.json`), with the managed
+only for `repo:huy090202@100850219/auth-gate@1423990644:ref:refs/heads/main` (`infra/ci-trust.json`), with the managed
 policy `auth-gate-deployer-policy`. `00-sam-lifecycle.sh` adds two lifecycle rules,
 `auth-gate-artifacts-*`, to the shared SAM bucket and keeps every rule already there. Both are
 rerunnable. The proofs, read-only, under the admin profile in a subshell:
