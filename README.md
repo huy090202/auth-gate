@@ -245,8 +245,9 @@ Scripts are in `scripts/console/` and read `STAGE` (default `stg`), `AWS_PROFILE
 `auth-gate-deployer`) and `AWS_REGION`. AuthGate must already be deployed in that stage; if
 the [permissions boundary](#permissions-boundary) is new, follow the order there first.
 
-1. `deploy.sh`, first pass: writes the `origin-verify` parameter if absent, builds the Lambda
-   and the web app, deploys the stack, uploads the site and invalidates the cache. With no
+1. `deploy.sh`, first pass, under the admin profile ([First deploy of a
+   stage](#first-deploy-of-a-stage)): writes the `origin-verify` parameter if absent, builds the
+   Lambda and the web app, deploys the stack, uploads the site and invalidates the cache. With no
    AuthGate client id yet `/api` is down and it says so.
 2. `register-client.sh stg`: register the Console as an AuthGate client with the stack's URL
    as its `rpId` and origin. It writes the client key to SSM and prints the client id; it
@@ -295,11 +296,13 @@ from stdin, never argv, and writes an audit item with source `cli` and the actor
 ### What a stolen deployer key can do
 
 The permissions boundary caps every `auth-gate-*` IAM role the deployer creates, so a stolen
-deployer key cannot mint a role more powerful than the boundary. It can still change Lambda
-code and the Console's site (so it can swap the JavaScript the admin loads), read `admin-key`
-from SSM, and it holds wide rights on KMS, Route 53, ACM, CloudFront and CloudWatch Logs.
-Narrowing those is pending the owner's decision. Keep the deployer key out of CI and shells you
-do not control.
+deployer key cannot mint a role more powerful than the boundary. Its KMS, CloudFront, S3 and log
+rights reach only auth-gate's own resources ([Deployer scope](#deployer-scope)). It can still
+change Lambda code and the Console's site (so it can swap the JavaScript the admin loads), read
+`admin-key` from SSM, edit any CloudFront cache, origin request, response headers or origin
+access control policy in the account (CloudFront cannot scope those), and it holds wide rights on
+Route 53 and ACM until the custom domain work settles them. Keep the deployer key out of CI and
+shells you do not control.
 
 ## Local development
 
@@ -333,12 +336,15 @@ The deploy and smoke steps are manual and run by a person with AWS access. They 
    `ADMIN_PROFILE=default`): create or update the permissions boundary `auth-gate-boundary` from
    `infra/role-boundary.json`, then the IAM user `auth-gate-deployer` with
    `infra/deployer-policy.json`, scoped to `auth-gate-*` resources, and a local AWS profile of
-   the same name.
+   the same name. The deployer cannot create the stacks: a stage's first deploy runs under the
+   admin profile ([First deploy of a stage](#first-deploy-of-a-stage)).
 1. `00-cert.sh DOMAIN` (optional): request an ACM certificate in `us-east-1`.
 2. `01-ssm.sh`: write the random `admin-key` (SecureString) and `origin-verify` (plain
    String; CloudFront cannot resolve a SecureString).
 3. `02-build.sh`: cross-compile `bin/bootstrap.zip` for linux/arm64.
-4. `03-deploy.sh`: deploy the SAM stack `auth-gate-<stage>` and print the one `BaseUrl`.
+4. `03-deploy.sh`: deploy the SAM stack `auth-gate-<stage>` and print the one `BaseUrl`. The
+   first deploy of a stage runs under the admin profile; it will fail under the deployer
+   ([First deploy of a stage](#first-deploy-of-a-stage)).
    Without a custom domain the first deploy runs twice: it reads the distribution domain,
    then redeploys to set `BASE_URL`, which avoids a CloudFormation dependency cycle.
 5. `04-smoke.sh`: run the Bruno collection, then `cmd/smoke`, a real WebAuthn round trip.
@@ -346,7 +352,10 @@ The deploy and smoke steps are manual and run by a person with AWS access. They 
    (`ADMIN_PROFILE=default`): write the list-index item for clients created before it
    existed. It needs `Scan`, which no Lambda role or the deployer has, so it runs under the
    operator profile. Safe to rerun; prints counts only.
-7. `99-purge.sh`: tear the stage down.
+7. `99-purge.sh`: tear the stage down, after a typed confirmation. AuthGate's table has
+   deletion protection (it holds every client and every user's factors), so a plain
+   `delete-stack` fails; `99-purge.sh` turns it off just before the delete. Rebuilding the
+   stage afterwards is a first deploy, under the admin profile.
 
 Prerequisites: AWS CLI v2 and SAM CLI. A new AWS account may refuse the distribution with
 "Your account must be verified before you can add new CloudFront resources"; only AWS Support
@@ -356,9 +365,9 @@ If a deploy fails, CloudFormation rolls back and leaves the stack in `ROLLBACK_C
 (or `ROLLBACK_FAILED`), which cannot be updated: delete it with
 `aws cloudformation delete-stack --stack-name auth-gate-<stage>` before deploying again. A
 missing deployer permission goes into `infra/deployer-policy.json`; rerun `00-deployer.sh`.
-The Console's table has deletion protection, which blocks a plain `delete-stack`: to clear a
-failed Console stack, run `scripts/console/purge.sh`, which turns it off after its typed
-confirmation.
+Both tables have deletion protection, which blocks a plain `delete-stack`: to clear a failed
+stack, run `99-purge.sh` (AuthGate) or `scripts/console/purge.sh` (the Console), which turn it
+off after their typed confirmation.
 
 ### Permissions boundary
 
@@ -383,6 +392,94 @@ If a deployer-run update stops at `UPDATE_ROLLBACK_FAILED` because it could not 
 boundary, finish it with an admin profile, then deploy again:
 `aws cloudformation continue-update-rollback --profile <admin> --region <region> --stack-name auth-gate-<stage>`.
 Tearing down a stack whose roles never got the boundary needs an admin profile too.
+
+### Deployer scope
+
+The deployer's S3, KMS, CloudFront distribution and log rights reach only auth-gate's own
+resources:
+
+- **S3:** both deploys upload to their own prefix of the SAM bucket the account shares,
+  `aws-sam-cli-managed-default-samclisourcebucket-m5yrn5zzyiu6` (`--s3-prefix
+  auth-gate-<stage>`, `auth-gate-console-<stage>`). The deployer may read and write objects
+  only under `auth-gate-*` in that bucket, and list only that prefix. Artifacts of deploys from
+  before the prefix stay at the bucket root; a lifecycle rule comes with the later CI/CD work.
+- **KMS:** every right on a key requires the tag `app = auth-gate`, including `PutKeyPolicy`,
+  `TagResource` and `DescribeKey`, so tagging cannot pull another project's key into scope.
+  `CreateKey` requires the request to carry that tag.
+- **CloudFront:** both distributions carry `app = auth-gate`. Reading, changing, deleting,
+  tagging and invalidating a distribution requires that tag; creating one requires it in the
+  request. Cache, origin request, response headers and origin access control policies stay
+  account-wide: CloudFront has no tag or name condition for them.
+- **Logs:** reading log events only from `/aws/lambda/auth-gate-*`.
+
+The tags, the prefix and AuthGate's table protection must be in AWS before the narrowed policy
+is. Once `00-deployer.sh` applies it, a deploy from a tree without `--s3-prefix` fails at the
+upload, so the first rollout runs from `main`, and every other worktree rebases on `main` before
+it deploys again:
+
+1. Merge this change to `main`. From `main`, with the old policy still applied: `02-build.sh`,
+   `03-deploy.sh`, then `scripts/console/deploy.sh`. The old policy already allows the tags, the
+   new prefix and the table update. If this step fails, CloudFormation rolls the update back and
+   nothing else has changed yet.
+2. `ADMIN_PROFILE=default 00-deployer.sh`, then wait one minute.
+3. From `main`, as the deployer: `02-build.sh`, `03-deploy.sh`, `scripts/console/deploy.sh`,
+   `04-smoke.sh`, `scripts/console/smoke.sh`. Both builds zip with fresh file times, so both
+   deploys upload new code under their prefix and CloudFormation reads the templates from there.
+   The one tag-gated write this step exercises is the Console's `create-invalidation` on its
+   tagged distribution; the KMS and CloudFront writes that a change would need (`PutKeyPolicy`,
+   `TagResource`, `UpdateDistribution`) are shown only by the simulator in step 4.
+4. The proofs below, read-only, under the admin profile in a subshell, so it does not leak into
+   later deploys. The simulator does not read the resources' tags: it evaluates the policy against
+   the tag value given as context. So it runs on auth-gate's own key and distribution twice, once
+   with `app = auth-gate` (expect `allowed`) and once with another value (expect
+   `implicitDeny`); the real tags are read at the end.
+
+```bash
+(
+export AWS_PROFILE=default AWS_REGION=ap-southeast-1 STAGE=stg
+acct="$(aws sts get-caller-identity --query Account --output text)"
+deployer="arn:aws:iam::$acct:user/auth-gate-deployer"
+bucket=aws-sam-cli-managed-default-samclisourcebucket-m5yrn5zzyiu6
+res() { aws cloudformation describe-stack-resource --stack-name "$1" --logical-resource-id "$2" \
+  --query StackResourceDetail.PhysicalResourceId --output text; }
+key="$(aws kms describe-key --key-id "$(res "auth-gate-$STAGE" SigningKey)" --query KeyMetadata.Arn --output text)"
+dist="arn:aws:cloudfront::$acct:distribution/$(res "auth-gate-$STAGE" Distribution)"
+sim() { aws iam simulate-principal-policy --policy-source-arn "$deployer" "$@" \
+  --query 'EvaluationResults[].[EvalActionName,EvalResourceName,EvalDecision]' --output table; }
+app() { printf 'ContextKeyName=aws:ResourceTag/app,ContextKeyValues=%s,ContextKeyType=string' "$1"; }
+
+# Expect allowed.
+sim --action-names kms:PutKeyPolicy kms:TagResource --resource-arns "$key" --context-entries "$(app auth-gate)"
+sim --action-names cloudfront:UpdateDistribution cloudfront:TagResource --resource-arns "$dist" --context-entries "$(app auth-gate)"
+sim --action-names s3:PutObject --resource-arns "arn:aws:s3:::$bucket/auth-gate-$STAGE/x"
+# Expect implicitDeny: the same resources tagged for another project, and outside the prefix.
+sim --action-names kms:PutKeyPolicy kms:TagResource --resource-arns "$key" --context-entries "$(app other-project)"
+sim --action-names cloudfront:UpdateDistribution cloudfront:TagResource --resource-arns "$dist" --context-entries "$(app other-project)"
+sim --action-names s3:PutObject --resource-arns "arn:aws:s3:::$bucket/other-project/x"
+
+# The tags the allowed cases assume, and the table protection.
+aws kms list-resource-tags --key-id "$key" --query Tags
+aws cloudfront list-tags-for-resource --resource "$dist" --query Tags.Items
+aws dynamodb describe-table --table-name "auth-gate-$STAGE" --query Table.DeletionProtectionEnabled
+)
+```
+
+### First deploy of a stage
+
+A deploy that creates the stacks runs under the admin profile: a new stage's first deploy, and
+stg rebuilt after `99-purge.sh` and `scripts/console/purge.sh`. Under the deployer it will fail.
+KMS authorises the `Tags` of `CreateKey` as `kms:TagResource`, which must come from an IAM
+policy not restricted to particular keys, and its key-policy lockout check needs `PutKeyPolicy`
+in the same way (commit `d06865b` hit that). The deployer holds both only on keys already
+tagged `app = auth-gate`. The Console's first pass creates its tagged distribution the same
+way, so it runs as admin too:
+
+```bash
+AWS_PROFILE=default scripts/setup-and-deploy/03-deploy.sh
+AWS_PROFILE=default scripts/console/deploy.sh
+```
+
+Every later deploy, including the Console's second pass, runs as the deployer.
 
 ## Repository layout
 
