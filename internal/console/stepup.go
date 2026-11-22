@@ -2,7 +2,6 @@ package console
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -82,7 +81,7 @@ func normalizeTarget(kind targetKind, target string) (string, bool) {
 		return target, clientIDRE.MatchString(target)
 	case subjectTarget:
 		client, subject, ok := strings.Cut(target, "/")
-		return target, ok && clientIDRE.MatchString(client) && validSubject(subject)
+		return target, ok && clientIDRE.MatchString(client) && webapi.ValidSubject(subject)
 	case userTarget:
 		name, err := NormalizeUsername(target)
 		return name, err == nil
@@ -234,31 +233,11 @@ func (a *App) stepUpVerify(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return webapi.AuthGateError(err)
 	}
-	exp, ok := unverifiedExp(tok)
+	exp, ok := authgate.UnverifiedExp(tok)
 	if !ok {
 		slog.Warn("console: step-up token without a readable exp")
 		return &webapi.Error{Status: http.StatusBadGateway, Code: "authgate_unavailable"}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stepUpToken": tok, "expiresAt": exp})
 	return nil
-}
-
-// unverifiedExp reads the exp claim for the browser to show. The token came from
-// AuthGate in answer to our own call and is fully checked when an action uses it.
-func unverifiedExp(tok string) (time.Time, bool) {
-	parts := strings.Split(tok, ".")
-	if len(parts) != 3 {
-		return time.Time{}, false
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return time.Time{}, false
-	}
-	var c struct {
-		Exp int64 `json:"exp"`
-	}
-	if json.Unmarshal(raw, &c) != nil || c.Exp <= 0 {
-		return time.Time{}, false
-	}
-	return time.Unix(c.Exp, 0).UTC(), true
 }

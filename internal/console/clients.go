@@ -35,18 +35,10 @@ func clientID(r *http.Request) (string, error) {
 // no '/', '?', '#', '%', control character, and not a dot segment.
 func subjectID(r *http.Request) (string, error) {
 	v := r.PathValue("subjectId")
-	if !validSubject(v) {
+	if !webapi.ValidSubject(v) {
 		return "", &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_id"}
 	}
 	return v, nil
-}
-
-func validSubject(v string) bool {
-	bad := v == "" || len(v) > 256 || v == "." || v == ".." || strings.ContainsAny(v, "/?#%")
-	for _, c := range []byte(v) {
-		bad = bad || c < 0x20 || c == 0x7f
-	}
-	return !bad
 }
 
 // clientRoutes serves /api/clients/* and /api/audit for a full session. The

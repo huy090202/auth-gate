@@ -2,11 +2,13 @@ package authgate
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,4 +107,25 @@ func (v *Verifier) fetch(ctx context.Context) error {
 	}
 	v.jwks, v.fetched = set, v.now()
 	return nil
+}
+
+// UnverifiedExp reads the exp claim of a token for a browser to show. It checks
+// nothing else: the token came from AuthGate in answer to our own call and is
+// fully checked by Verify when an action uses it.
+func UnverifiedExp(tok string) (time.Time, bool) {
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		return time.Time{}, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	var c struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(raw, &c) != nil || c.Exp <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(c.Exp, 0).UTC(), true
 }

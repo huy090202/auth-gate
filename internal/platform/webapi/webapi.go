@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/huy090202/auth-gate/internal/platform/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
@@ -121,4 +122,15 @@ func WriteRaw(w http.ResponseWriter, status int, raw json.RawMessage) {
 	w.WriteHeader(status)
 	//nolint:gosec // G705: AuthGate's own JSON, served as application/json (and no-store), never as HTML.
 	_, _ = w.Write(raw)
+}
+
+// ValidSubject is the rule for an end user's id in a path: AuthGate's (1 to 256
+// bytes) minus what could change the path. No '/', '?', '#', '%', control
+// character, and not a dot segment.
+func ValidSubject(v string) bool {
+	bad := v == "" || len(v) > 256 || v == "." || v == ".." || strings.ContainsAny(v, "/?#%")
+	for _, c := range []byte(v) {
+		bad = bad || c < 0x20 || c == 0x7f
+	}
+	return !bad
 }
