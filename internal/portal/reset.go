@@ -71,13 +71,16 @@ func (st *Store) PutFactorReset(ctx context.Context, userID string, requestedAt,
 // and not suspended. Anything else silently gets nothing.
 func mailable(u User) bool { return u.EmailVerifiedAt != nil && u.SuspendedAt == nil }
 
-// sendRecoveryLink stores a token of the purpose for u and mails its link.
+// sendRecoveryLink stores a token of the purpose for u and mails its link. The
+// token holds the epoch and the address it was sent to, so a later epoch bump
+// or email change voids it.
 func (a *App) sendRecoveryLink(ctx context.Context, u User, purpose, kind, path string, life time.Duration) error {
 	token, hash, err := a.newToken()
 	if err != nil {
 		return err
 	}
-	if err := a.Store.PutToken(ctx, Token{Hash: hash, Purpose: purpose, UserID: u.ID, ExpiresAt: a.now().Add(life), Epoch: u.SessionEpoch}); err != nil {
+	if err := a.Store.PutToken(ctx, Token{Hash: hash, Purpose: purpose, UserID: u.ID, Email: NormalizeEmail(u.Email),
+		ExpiresAt: a.now().Add(life), Epoch: u.SessionEpoch}); err != nil {
 		return err
 	}
 	a.mailBestEffort(ctx, pmail.Message{To: u.Email, Lang: u.Lang, Kind: kind,
@@ -121,7 +124,8 @@ func (a *App) recoveryRequest(ipScope string, ipLimit ratelimit.Settings, purpos
 }
 
 // recoveryUser is the account a spent recovery token belongs to. One that is
-// gone, unverified or suspended is an invalid token like any other.
+// gone, unverified or suspended, whose epoch moved, or whose address is no
+// longer the one the link was sent to, is an invalid token like any other.
 func (a *App) recoveryUser(ctx context.Context, purpose, token string) (User, error) {
 	invalid := apiErr(http.StatusBadRequest, "invalid_token")
 	t, err := a.Store.UseToken(ctx, purpose, hashToken(token), a.now())
@@ -132,8 +136,9 @@ func (a *App) recoveryUser(ctx context.Context, purpose, token string) (User, er
 		return User{}, err
 	}
 	u, err := a.Store.GetUser(ctx, t.UserID)
-	// A bump of sessionEpoch (password reset or change, applied factor reset) voids every link issued before it.
-	if errors.Is(err, ErrUserNotFound) || (err == nil && (!mailable(u) || u.SessionEpoch != t.Epoch)) {
+	// A bump of sessionEpoch (password reset or change, applied factor reset) voids every link issued before it,
+	// and an email change voids every link sent to the old address.
+	if errors.Is(err, ErrUserNotFound) || (err == nil && (!mailable(u) || u.SessionEpoch != t.Epoch || NormalizeEmail(u.Email) != t.Email)) {
 		return User{}, invalid
 	}
 	if err != nil {

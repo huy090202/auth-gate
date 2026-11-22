@@ -417,8 +417,10 @@ admin key; `make check` fails if either import appears. It shares `internal/plat
   person adds a new factor; it does not open `full`.
 - A lost factor without a code: an emailed link (1 hour), then a 24-hour wait that the next sign-in
   with the old factor cancels. It is applied at the first sign-in after the wait.
-- Reset and factor-reset links are bound to the account's session epoch: a password reset, a
-  password change or an applied factor reset voids every link already sent.
+- Reset and factor-reset links are bound to the account's session epoch and to the address they
+  were sent to: a password reset, a password change or an applied factor reset voids every link
+  already sent, and an email change voids those sent to the old address and cancels a pending
+  factor reset.
 - Sessions are the Console's model: cookie `__Host-portal_session`, server-side, stages `half` (10
   minutes), `enroll` (30 minutes) and `full` (30 minutes idle, 8 hours absolute). Five failed
   sign-ins lock the account for 15 minutes; the count resets only on a completed sign-in.
@@ -513,8 +515,6 @@ verified addresses.
 ### Known limits
 
 - A deleted avatar can stay in CloudFront's cache for up to 24 hours.
-- An email change does not void recovery links already sent to the old address; they die within
-  their 1-hour life.
 - A tenant can register any `rpId` and origins for its own client: there is no domain-ownership
   check. The browser still binds a passkey to the origin it was made on.
 - Anyone can force a Turnstile challenge on a given address by failing a sign-in for it twice; that

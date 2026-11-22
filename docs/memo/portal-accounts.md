@@ -52,7 +52,7 @@ Without a recovery code, the person asks for a factor-reset link (1 hour). Confi
 
 The reset is applied at sign-in rather than by a timer because the Portal has no scheduler and no fixed cost (a scheduled function would be a second Lambda, a rule and a queue for a rare event). The cost is that the factors still exist in AuthGate until that sign-in; nothing can use them without the password and the factor itself.
 
-Reset and factor-reset links carry the account's `sessionEpoch` at issue and are refused (`400 invalid_token`) once it has moved, so a password reset, a password change or an applied factor reset voids every link already sent. Two known gaps: a cancelled reset does not bump the epoch (that would end the person's other sessions), so a stale confirm link can restart the wait, which is accepted because the owner is mailed and cancels by signing in; and an email change does not void recovery links already sent to the old address, which live at most 1 hour.
+Reset and factor-reset links carry the account's `sessionEpoch` and the (normalised) address they were sent to, and are refused (`400 invalid_token`) once either has moved, so a password reset, a password change or an applied factor reset voids every link already sent, and so does an email change for the links sent to the old address. An email change also cancels a pending factor reset, which was confirmed from the old mailbox. One known gap: a cancelled reset does not bump the epoch (that would end the person's other sessions), so a stale confirm link can restart the wait, which is accepted because the owner is mailed and cancels by signing in.
 
 ## Turnstile, adaptive on sign-in
 
@@ -84,7 +84,6 @@ The browser asks for an upload form, posts the file to S3 directly (no credentia
 - The four email routes always take about 1.5 s.
 - An unconfirmed avatar upload lives under `pending/` for up to a day, unserved, then expires.
 - A deleted avatar can stay in CloudFront's cache for up to 24 hours.
-- An email change does not void recovery links already sent to the old address; they die within their 1-hour life.
 - Tenants register any `rpId` and origins without a domain-ownership check. The browser still binds a passkey to the origin it was made on, so this cannot be used to steal another site's passkeys, but a tenant can name a domain it does not own in its own client.
 - The factors of an account with a due, unapplied reset exist in AuthGate until that account's next sign-in.
 - Anyone can force a Turnstile challenge on a given address.

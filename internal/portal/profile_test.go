@@ -466,3 +466,42 @@ func TestAvatarConfirmMovesThePendingUpload(t *testing.T) {
 		t.Fatalf("audit = %v", acts)
 	}
 }
+
+// Why: once the address moves, whoever still holds the old mailbox must lose every way back in that it gave: the
+// reset and factor-reset links already sent there, and a factor reset already waiting.
+func TestEmailChangeVoidsOldMailboxRecovery(t *testing.T) {
+	e := newAuthEnv(t)
+	u := e.user(t, "a@x.com", goodPW)
+	e.withPIN(t, u, pin1)
+	e.post("/api/auth/factor-reset/request", recoveryBody("a@x.com"))
+	if r := e.post("/api/auth/factor-reset/confirm", map[string]string{"token": e.lastLink(t, "factor-reset-confirm")}); r.Code != 200 {
+		t.Fatalf("factor reset confirm = %d %s", r.Code, r.Body)
+	}
+	e.post("/api/auth/factor-reset/request", recoveryBody("a@x.com"))
+	frTok := e.lastLink(t, "factor-reset-confirm")
+	e.post("/api/auth/forgot", recoveryBody("a@x.com"))
+	resetTok := e.lastLink(t, "reset")
+
+	b := e.fullSession(t, u, "203.0.113.1") // this sign-in would cancel the pending reset; put it back
+	if _, _, err := e.a.Store.PutFactorReset(context.Background(), u.ID, e.a.now(), e.a.now().Add(factorResetWait)); err != nil {
+		t.Fatal(err)
+	}
+	want(t, emailChange(b, "n@x.com"), 202, "")
+	if r := e.post("/api/auth/confirm-email", map[string]string{"token": e.lastLink(t, "email-change-confirm")}); r.Code != 204 {
+		t.Fatalf("confirm email = %d %s", r.Code, r.Body)
+	}
+
+	if fr, err := e.a.Store.GetFactorReset(context.Background(), u.ID); err != nil || fr != nil {
+		t.Fatalf("pending factor reset after the change: %+v %v", fr, err)
+	}
+	if r := e.post("/api/auth/reset-password", map[string]string{"token": resetTok, "newPassword": "another-long-passphrase"}); r.Code != 400 || code(t, r) != "invalid_token" {
+		t.Fatalf("old reset link = %d %s", r.Code, r.Body)
+	}
+	if r := e.post("/api/auth/factor-reset/confirm", map[string]string{"token": frTok}); r.Code != 400 || code(t, r) != "invalid_token" {
+		t.Fatalf("old factor-reset link = %d %s", r.Code, r.Body)
+	}
+	if fr, _ := e.a.Store.GetFactorReset(context.Background(), u.ID); fr != nil {
+		t.Fatalf("a factor reset was started from the old mailbox: %+v", fr)
+	}
+	want(t, e.browser(t, "203.0.113.9").login("n@x.com", goodPW), 200, "") // the password still works
+}

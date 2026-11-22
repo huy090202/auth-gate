@@ -60,8 +60,9 @@ func (st *Store) SetPasswordAtEpoch(ctx context.Context, userID, hash string, ep
 }
 
 // ChangeEmail moves the user's address from oldEmail to newEmail in one
-// transaction: EMAIL#old goes, EMAIL#new is written and the user's email is
-// updated. A new address held by another account gives ErrEmailTaken (an
+// transaction: EMAIL#old goes, EMAIL#new is written, the user's email is
+// updated and a pending factor reset is cancelled (it was confirmed from the
+// old mailbox). A new address held by another account gives ErrEmailTaken (an
 // unverified holder past its ttl, not yet reaped, does not count); an old
 // address that is no longer the user's gives ErrConflict.
 func (st *Store) ChangeEmail(ctx context.Context, userID, oldEmail, newEmail string) error {
@@ -85,9 +86,10 @@ func (st *Store) ChangeEmail(ctx context.Context, userID, oldEmail, newEmail str
 			UpdateExpression:          aws.String("SET email = :new"),
 			ConditionExpression:       aws.String(exists + " AND email = :old"),
 			ExpressionAttributeValues: item{":new": s(newEmail), ":old": s(oldEmail)},
-		}})
+		}},
+		types.TransactWriteItem{Delete: &types.Delete{TableName: aws.String(st.Table), Key: factorResetKey(userID)}})
 	var tx *types.TransactionCanceledException
-	if errors.As(err, &tx) && len(tx.CancellationReasons) == 3 {
+	if errors.As(err, &tx) && len(tx.CancellationReasons) == 4 {
 		switch {
 		case aws.ToString(tx.CancellationReasons[1].Code) == "ConditionalCheckFailed":
 			return ErrEmailTaken
