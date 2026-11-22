@@ -408,7 +408,7 @@ func (s *Service) DisableClient(ctx context.Context, clientID string) (client.Cl
 	if err := validateIDs(clientID); err != nil {
 		return client.Client{}, err
 	}
-	return s.Clients.Disable(ctx, clientID)
+	return s.Clients.Disable(ctx, clientID, client.ByOperator)
 }
 
 // EnableClient lets the client's keys authenticate again.
@@ -416,7 +416,7 @@ func (s *Service) EnableClient(ctx context.Context, clientID string) (client.Cli
 	if err := validateIDs(clientID); err != nil {
 		return client.Client{}, err
 	}
-	return s.Clients.Enable(ctx, clientID)
+	return s.Clients.Enable(ctx, clientID, client.ByOperator)
 }
 
 // RevokePreviousKeys ends the grace of every replaced key and returns how many were still valid.

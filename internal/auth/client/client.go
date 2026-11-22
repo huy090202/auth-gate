@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
@@ -32,6 +33,8 @@ var (
 	ErrQuotaExceeded = errors.New("client: quota exceeded")
 	// ErrOwnerSuspended is returned when the owner is suspended and may not create clients.
 	ErrOwnerSuspended = errors.New("client: owner suspended")
+	// ErrDisabledByOperator is returned when a tenant tries to enable a client an operator disabled.
+	ErrDisabledByOperator = errors.New("client: disabled by operator")
 )
 
 const (
@@ -41,6 +44,7 @@ const (
 	maxRateBurst       = 10000
 	maxRatePerSecond   = 5000
 	maxClientQuota     = 1000
+	defaultOwnerTTL    = 30 * time.Second
 	defaultPageSize    = 50
 )
 
@@ -87,6 +91,14 @@ type Client struct {
 	DisabledBy  string     // "operator" or "tenant" when disabled through a route that records it
 	DeletedAt   *time.Time // set by a soft delete; the Service treats such a client as not found
 }
+
+// DisabledBy says who disabled a client; an operator's disable outranks a tenant's.
+type DisabledBy string
+
+const (
+	ByOperator DisabledBy = "operator"
+	ByTenant   DisabledBy = "tenant"
+)
 
 // Summary is the list view of a client.
 type Summary struct {
@@ -208,6 +220,18 @@ type Service struct {
 	Store    Store
 	Now      func() time.Time
 	PageSize int // clients per List page; zero means 50
+	// OwnerCacheTTL is how long Authenticate trusts a tenant's suspension state
+	// on this instance; zero means 30 seconds. A suspension therefore refuses
+	// keys within the TTL, not at once.
+	OwnerCacheTTL time.Duration
+
+	ownerMu    sync.Mutex
+	ownerCache map[string]ownerEntry
+}
+
+type ownerEntry struct {
+	owner  Owner
+	readAt time.Time
 }
 
 func (s *Service) now() time.Time {
@@ -426,9 +450,10 @@ func (s *Service) pageSize() int32 {
 	return int32(s.PageSize)
 }
 
-// Disable stops the client's keys from authenticating. Disabling again keeps
-// the first time.
-func (s *Service) Disable(ctx context.Context, clientID string) (Client, error) {
+// Disable stops the client's keys from authenticating and records who did it.
+// Disabling again keeps the first time, and a tenant never replaces an
+// operator's mark.
+func (s *Service) Disable(ctx context.Context, clientID string, by DisabledBy) (Client, error) {
 	c, err := s.live(ctx, clientID)
 	if err != nil {
 		return Client{}, err
@@ -438,22 +463,79 @@ func (s *Service) Disable(ctx context.Context, clientID string) (Client, error) 
 		t := s.now().UTC().Truncate(time.Second)
 		at = &t
 	}
-	if err := s.Store.SetDisabled(ctx, c, at); err != nil {
+	if err := s.Store.SetDisabled(ctx, c, at, by); err != nil {
 		return Client{}, err
 	}
 	return s.live(ctx, clientID)
 }
 
-// Enable clears the disabled mark.
-func (s *Service) Enable(ctx context.Context, clientID string) (Client, error) {
+// Enable clears the disabled mark. A tenant cannot clear one an operator set
+// (ErrDisabledByOperator); an operator can clear any.
+func (s *Service) Enable(ctx context.Context, clientID string, by DisabledBy) (Client, error) {
 	c, err := s.live(ctx, clientID)
 	if err != nil {
 		return Client{}, err
 	}
-	if err := s.Store.SetDisabled(ctx, c, nil); err != nil {
+	if by == ByTenant && c.DisabledAt != nil && c.DisabledBy == string(ByOperator) {
+		return Client{}, ErrDisabledByOperator
+	}
+	if err := s.Store.SetDisabled(ctx, c, nil, by); err != nil {
 		return Client{}, err
 	}
 	return s.live(ctx, clientID)
+}
+
+// Suspend stops a tenant from creating clients and, once this instance's owner
+// cache expires, stops its clients' keys from authenticating. It creates the
+// tenant's counters item if there is none; the quota defaults still apply.
+func (s *Service) Suspend(ctx context.Context, tenantID string) (Owner, error) {
+	at := s.now().UTC().Truncate(time.Second)
+	return s.setSuspended(ctx, tenantID, &at)
+}
+
+// Unsuspend lifts a suspension.
+func (s *Service) Unsuspend(ctx context.Context, tenantID string) (Owner, error) {
+	return s.setSuspended(ctx, tenantID, nil)
+}
+
+func (s *Service) setSuspended(ctx context.Context, tenantID string, at *time.Time) (Owner, error) {
+	if err := id.Validate(tenantID); err != nil {
+		return Owner{}, fmt.Errorf("%w: tenant id", ErrInvalid)
+	}
+	if err := s.Store.SetSuspended(ctx, tenantID, at); err != nil {
+		return Owner{}, err
+	}
+	s.ownerMu.Lock()
+	delete(s.ownerCache, tenantID)
+	s.ownerMu.Unlock()
+	return s.Store.GetOwner(ctx, tenantID)
+}
+
+// cachedOwner returns the tenant's counters from this instance's cache while
+// the entry is younger than the TTL, else reads and caches them.
+func (s *Service) cachedOwner(ctx context.Context, tenantID string) (Owner, error) {
+	ttl := s.OwnerCacheTTL
+	if ttl <= 0 {
+		ttl = defaultOwnerTTL
+	}
+	now := s.now()
+	s.ownerMu.Lock()
+	e, ok := s.ownerCache[tenantID]
+	s.ownerMu.Unlock()
+	if ok && now.Sub(e.readAt) < ttl {
+		return e.owner, nil
+	}
+	o, err := s.Store.GetOwner(ctx, tenantID)
+	if err != nil {
+		return Owner{}, err
+	}
+	s.ownerMu.Lock()
+	if s.ownerCache == nil {
+		s.ownerCache = map[string]ownerEntry{}
+	}
+	s.ownerCache[tenantID] = ownerEntry{owner: o, readAt: now}
+	s.ownerMu.Unlock()
+	return o, nil
 }
 
 // Update applies a patch to an existing client and returns the stored result.
@@ -527,6 +609,13 @@ func (s *Service) Authenticate(ctx context.Context, rawKey string) (Client, erro
 	}
 	if c.DisabledAt != nil {
 		return Client{}, ErrUnauthorized
+	}
+	if c.Owner != "" {
+		// Operator clients never read the owner item. A failed read denies (fail closed).
+		o, err := s.cachedOwner(ctx, tenantOf(c.Owner))
+		if err != nil || o.SuspendedAt != nil {
+			return Client{}, ErrUnauthorized
+		}
 	}
 	return c, nil
 }

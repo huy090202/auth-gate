@@ -41,11 +41,16 @@ type Store interface {
 	GetOwner(ctx context.Context, tenantID string) (Owner, error)
 	// SetQuota sets the tenant's client quota, creating its counters if needed.
 	SetQuota(ctx context.Context, tenantID string, quota int) error
+	// SetSuspended sets the tenant's suspendedAt to at, or clears it when at is nil.
+	// A tenant without counters gets an item holding only that attribute.
+	SetSuspended(ctx context.Context, tenantID string, at *time.Time) error
 	// UpdateClient writes only the attributes set in p; a missing client is ErrNotFound.
 	// c is the stored client. A name change also updates the index item.
 	UpdateClient(ctx context.Context, c Client, p Patch) error
-	// SetDisabled sets disabledAt to at (keeping an earlier value), or clears it when at is nil.
-	SetDisabled(ctx context.Context, c Client, at *time.Time) error
+	// SetDisabled sets disabledAt to at (keeping an earlier value) and records who
+	// disabled the client, or clears both when at is nil. A tenant never replaces
+	// an operator's mark.
+	SetDisabled(ctx context.Context, c Client, at *time.Time, by DisabledBy) error
 	// SetKeys replaces keyHashes and retiredKeys and nothing else, but only while
 	// keyHashes still equals expected. A missing client is ErrNotFound; a changed
 	// keyHashes is ErrRotateConflict.
@@ -461,11 +466,15 @@ func (s *dynamoStore) txError(err error, what string) error {
 	return fmt.Errorf("%s: %w", what, err)
 }
 
-func (s *dynamoStore) SetDisabled(ctx context.Context, c Client, at *time.Time) error {
-	clientExpr, idxExpr := "REMOVE disabledAt", "SET #name = if_not_exists(#name, :n), rpId = if_not_exists(rpId, :r), createdAt = if_not_exists(createdAt, :c) REMOVE disabledAt"
+func (s *dynamoStore) SetDisabled(ctx context.Context, c Client, at *time.Time, by DisabledBy) error {
+	clientExpr, idxExpr := "REMOVE disabledAt, disabledBy", "SET #name = if_not_exists(#name, :n), rpId = if_not_exists(rpId, :r), createdAt = if_not_exists(createdAt, :c) REMOVE disabledAt"
 	vals := map[string]types.AttributeValue{}
 	if at != nil {
-		clientExpr = "SET disabledAt = if_not_exists(disabledAt, :now)"
+		byExpr := ":by"
+		if by != ByOperator {
+			byExpr = "if_not_exists(disabledBy, :by)" // a tenant's disable never replaces an operator's
+		}
+		clientExpr = "SET disabledAt = if_not_exists(disabledAt, :now), disabledBy = " + byExpr
 		idxExpr = "SET #name = if_not_exists(#name, :n), rpId = if_not_exists(rpId, :r), createdAt = if_not_exists(createdAt, :c), disabledAt = if_not_exists(disabledAt, :now)"
 		vals[":now"] = ts(*at)
 	}
@@ -474,11 +483,31 @@ func (s *dynamoStore) SetDisabled(ctx context.Context, c Client, at *time.Time) 
 		ConditionExpression: aws.String(liveCond),
 	}
 	if len(vals) > 0 {
-		upd.ExpressionAttributeValues = vals
+		// :by is for the client item only; DynamoDB rejects unused values on the index items.
+		cv := map[string]types.AttributeValue{":by": str(string(by))}
+		for k, v := range vals {
+			cv[k] = v
+		}
+		upd.ExpressionAttributeValues = cv
 	}
 	items := append([]types.TransactWriteItem{{Update: upd}}, s.indexUpdates(c, idxExpr, vals)...)
 	err := dynamo.TransactWrite(ctx, s.c, items...)
 	return s.txError(err, "set disabled")
+}
+
+func (s *dynamoStore) SetSuspended(ctx context.Context, tenantID string, at *time.Time) error {
+	in := &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: ownerMetaKey(tenantID),
+		UpdateExpression: aws.String("REMOVE suspendedAt"),
+	}
+	if at != nil {
+		in.UpdateExpression = aws.String("SET suspendedAt = :at")
+		in.ExpressionAttributeValues = map[string]types.AttributeValue{":at": ts(*at)}
+	}
+	if _, err := s.c.UpdateItem(ctx, in); err != nil {
+		return fmt.Errorf("set suspended: %w", err)
+	}
+	return nil
 }
 
 func (s *dynamoStore) SetKeys(ctx context.Context, id string, expected, hashes []string, retired map[string]time.Time) error {

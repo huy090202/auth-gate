@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -382,8 +383,8 @@ func TestDisableKeepsIndexName(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, act := range []func(context.Context, string) (client.Client, error){svc.Disable, svc.Enable} {
-		if _, err := act(ctx, cl.ID); err != nil {
+	for _, act := range []func(context.Context, string, client.DisabledBy) (client.Client, error){svc.Disable, svc.Enable} {
+		if _, err := act(ctx, cl.ID, client.ByOperator); err != nil {
 			t.Fatal(err)
 		}
 		out, err := db.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(table), Key: idx, ConsistentRead: aws.Bool(true)})
@@ -692,9 +693,9 @@ func TestDeleteHidesClientAndFreesSlot(t *testing.T) {
 	name := "x"
 	_, err = svc.Update(ctx, cl.ID, client.Patch{Name: &name})
 	notFound("Update", err)
-	_, err = svc.Disable(ctx, cl.ID)
+	_, err = svc.Disable(ctx, cl.ID, client.ByOperator)
 	notFound("Disable", err)
-	_, err = svc.Enable(ctx, cl.ID)
+	_, err = svc.Enable(ctx, cl.ID, client.ByOperator)
 	notFound("Enable", err)
 	_, err = svc.RotateKey(ctx, cl.ID)
 	notFound("RotateKey", err)
@@ -754,7 +755,7 @@ func TestWriteAfterDeleteDoesNotResurrect(t *testing.T) {
 		t.Fatalf("stored %+v %v", stored, err)
 	}
 	now := time.Now()
-	if err := st.SetDisabled(ctx, stored, &now); !errors.Is(err, client.ErrNotFound) {
+	if err := st.SetDisabled(ctx, stored, &now, client.ByOperator); !errors.Is(err, client.ErrNotFound) {
 		t.Fatalf("SetDisabled: %v", err)
 	}
 	if err := st.UpdateClient(ctx, stored, client.Patch{Name: &name}); !errors.Is(err, client.ErrNotFound) {
@@ -787,7 +788,7 @@ func TestDisableRacingDeleteDoesNotResurrect(t *testing.T) {
 	svc := &client.Service{Store: seam}
 	cl, _ := mustCreate(t, plain)
 	seam.afterGet = func() { _ = plain.Delete(ctx, cl.ID) }
-	if _, err := svc.Disable(ctx, cl.ID); !errors.Is(err, client.ErrNotFound) {
+	if _, err := svc.Disable(ctx, cl.ID, client.ByOperator); !errors.Is(err, client.ErrNotFound) {
 		t.Fatalf("Disable: %v", err)
 	}
 	if rawItem(t, c, table, "C#"+cl.ID)["disabledAt"] != nil || rawItemSK(t, c, table, "CLIENTS", "C#"+cl.ID) != nil {
@@ -852,14 +853,14 @@ func TestRenameAndDisableKeepOwnerIndexInStep(t *testing.T) {
 	if _, err := svc.Update(ctx, cl.ID, client.Patch{Name: &name}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Disable(ctx, cl.ID); err != nil {
+	if _, err := svc.Disable(ctx, cl.ID, client.ByOperator); err != nil {
 		t.Fatal(err)
 	}
 	it := rawItemSK(t, db, table, "OWNER#"+t1, "C#"+cl.ID)
 	if attrS(it, "name") != "renamed" || attrS(it, "disabledAt") == "" {
 		t.Fatalf("owner index item %v", it)
 	}
-	if _, err := svc.Enable(ctx, cl.ID); err != nil {
+	if _, err := svc.Enable(ctx, cl.ID, client.ByOperator); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := rawItemSK(t, db, table, "OWNER#"+t1, "C#"+cl.ID)["disabledAt"]; ok {
@@ -873,5 +874,130 @@ func TestGetOwnerDefaults(t *testing.T) {
 	o, err := svc.GetOwner(context.Background(), t1)
 	if err != nil || o.ClientCount != 0 || o.ClientQuota != 5 || o.SuspendedAt != nil || o.TenantID != t1 {
 		t.Fatalf("%+v %v", o, err)
+	}
+}
+
+func TestTenantCannotEnableOperatorDisabled(t *testing.T) {
+	svc, db, table := newSvc(t)
+	ctx := context.Background()
+	t1 := newTenant()
+	cl, _ := mustOwned(t, svc, t1)
+
+	if _, err := svc.Disable(ctx, cl.ID, client.ByOperator); err != nil {
+		t.Fatal(err)
+	}
+	if got := attrS(rawItemSK(t, db, table, "C#"+cl.ID, "META"), "disabledBy"); got != "operator" {
+		t.Fatalf("disabledBy %q, want operator", got)
+	}
+	if _, err := svc.Enable(ctx, cl.ID, client.ByTenant); !errors.Is(err, client.ErrDisabledByOperator) {
+		t.Fatalf("tenant enable: want ErrDisabledByOperator, got %v", err)
+	}
+	// A tenant disabling an already operator-disabled client must not take the mark over.
+	if _, err := svc.Disable(ctx, cl.ID, client.ByTenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Enable(ctx, cl.ID, client.ByTenant); !errors.Is(err, client.ErrDisabledByOperator) {
+		t.Fatalf("after tenant disable: want ErrDisabledByOperator, got %v", err)
+	}
+	got, err := svc.Enable(ctx, cl.ID, client.ByOperator)
+	if err != nil || got.DisabledAt != nil || got.DisabledBy != "" {
+		t.Fatalf("operator enable: %+v %v", got, err)
+	}
+	if _, ok := rawItemSK(t, db, table, "C#"+cl.ID, "META")["disabledBy"]; ok {
+		t.Fatal("disabledBy not cleared")
+	}
+
+	if got, err = svc.Disable(ctx, cl.ID, client.ByTenant); err != nil || got.DisabledBy != "tenant" {
+		t.Fatalf("tenant disable: %+v %v", got, err)
+	}
+	if got, err = svc.Enable(ctx, cl.ID, client.ByTenant); err != nil || got.DisabledAt != nil {
+		t.Fatalf("tenant enable own disable: %+v %v", got, err)
+	}
+}
+
+// ownerCountStore counts GetOwner calls.
+type ownerCountStore struct {
+	client.Store
+	mu    sync.Mutex
+	reads int
+}
+
+func (s *ownerCountStore) GetOwner(ctx context.Context, tenantID string) (client.Owner, error) {
+	s.mu.Lock()
+	s.reads++
+	s.mu.Unlock()
+	return s.Store.GetOwner(ctx, tenantID)
+}
+
+func TestSuspendRefusesKeysWithinCacheTTL(t *testing.T) {
+	c, table := dynamotest.NewTable(t)
+	store := &ownerCountStore{Store: client.NewDynamoStore(c, table)}
+	now := time.Now()
+	svc := &client.Service{Store: store, Now: func() time.Time { return now }}
+	ctx := context.Background()
+	t1 := newTenant()
+	_, raw := mustOwned(t, svc, t1)
+	authOK := func(step string, want error) {
+		t.Helper()
+		if _, err := svc.Authenticate(ctx, raw); !errors.Is(err, want) {
+			t.Fatalf("%s: want %v, got %v", step, want, err)
+		}
+	}
+	authOK("before suspend", nil)
+
+	// Another instance suspends the tenant: this one's cache still says active.
+	other := &client.Service{Store: client.NewDynamoStore(c, table), Now: svc.Now}
+	if _, err := other.Suspend(ctx, t1); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(29 * time.Second)
+	authOK("29s after (cached)", nil)
+	now = now.Add(2 * time.Second)
+	authOK("31s after", client.ErrUnauthorized)
+
+	// Suspend on the same instance drops its own cache entry at once.
+	if _, err := other.Unsuspend(ctx, t1); err != nil {
+		t.Fatal(err)
+	}
+	authOK("still cached as suspended", client.ErrUnauthorized)
+	now = now.Add(31 * time.Second)
+	authOK("31s after unsuspend", nil)
+	o, err := svc.Suspend(ctx, t1)
+	if err != nil || o.SuspendedAt == nil {
+		t.Fatalf("suspend: %+v %v", o, err)
+	}
+	authOK("own cache dropped", client.ErrUnauthorized)
+	if o, err = svc.Unsuspend(ctx, t1); err != nil || o.SuspendedAt != nil {
+		t.Fatalf("unsuspend: %+v %v", o, err)
+	}
+	authOK("own cache dropped again", nil)
+
+	// An operator's client never reads the owner item.
+	store.reads = 0
+	_, opRaw := mustCreate(t, svc)
+	if _, err := svc.Authenticate(ctx, opRaw); err != nil {
+		t.Fatal(err)
+	}
+	if store.reads != 0 {
+		t.Fatalf("operator client read the owner item %d times", store.reads)
+	}
+}
+
+func TestSuspendedOwnerCannotCreate(t *testing.T) {
+	svc, _, _ := newSvc(t)
+	ctx := context.Background()
+	t1 := newTenant()
+	if _, err := svc.Suspend(ctx, t1); err != nil { // no META item yet: this creates it
+		t.Fatal(err)
+	}
+	if _, _, err := createOwned(svc, t1); !errors.Is(err, client.ErrOwnerSuspended) {
+		t.Fatalf("want ErrOwnerSuspended, got %v", err)
+	}
+	if o, err := svc.Unsuspend(ctx, t1); err != nil || o.SuspendedAt != nil || o.ClientQuota != client.DefaultClientQuota {
+		t.Fatalf("unsuspend: %+v %v", o, err)
+	}
+	mustOwned(t, svc, t1)
+	if _, err := svc.Suspend(ctx, "bad#tenant"); !errors.Is(err, client.ErrInvalid) {
+		t.Fatalf("bad tenant: %v", err)
 	}
 }
