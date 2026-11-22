@@ -110,13 +110,15 @@ func (a *App) limitEmail(ctx context.Context, normalised string) error {
 
 // sendVerify stores a fresh verify token for the user and mails its link. The
 // link carries the token in the fragment, so it never reaches CloudFront or a
-// server log.
+// server log. The token holds the account's epoch and address, so a later
+// sign-up that replaces the pending account voids it.
 func (a *App) sendVerify(ctx context.Context, u User) error {
 	token, hash, err := a.newToken()
 	if err != nil {
 		return err
 	}
-	if err := a.Store.PutToken(ctx, Token{Hash: hash, Purpose: PurposeVerify, UserID: u.ID, ExpiresAt: a.now().Add(verifyTokenLife)}); err != nil {
+	if err := a.Store.PutToken(ctx, Token{Hash: hash, Purpose: PurposeVerify, UserID: u.ID, Email: NormalizeEmail(u.Email),
+		ExpiresAt: a.now().Add(verifyTokenLife), Epoch: u.SessionEpoch}); err != nil {
 		return err
 	}
 	a.mailBestEffort(ctx, pmail.Message{To: u.Email, Lang: u.Lang, Kind: "verify",
@@ -138,7 +140,11 @@ type signupReq struct {
 	Email, DisplayName, Password, Lang, TurnstileToken string
 }
 
-// signup answers 202 check_email for a new and for a known address alike.
+// signup answers 202 check_email for a new and for a known address alike. An
+// address held by a pending (unverified) account is taken over by the newest
+// sign-up: whoever can read the mailbox and knows the password typed last is
+// the one who verifies it, so a stranger who signed up first with someone
+// else's address cannot keep it. A verified holder is mailed signup-exists.
 func (a *App) signup(w http.ResponseWriter, r *http.Request) error {
 	var in signupReq
 	if err := webapi.DecodeBody(r, &in); err != nil {
@@ -185,11 +191,7 @@ func (a *App) signup(w http.ResponseWriter, r *http.Request) error {
 			slog.Error("portal: sign-up verify email not issued", "err", err)
 		}
 	case errors.Is(err, ErrEmailTaken):
-		lang := in.Lang
-		if known, gerr := a.Store.GetUserByEmail(r.Context(), email); gerr == nil && validLang(known.Lang) {
-			lang = known.Lang // the owner's language, not the stranger's
-		}
-		a.mailBestEffort(r.Context(), pmail.Message{To: email, Lang: lang, Kind: "signup-exists"})
+		a.signupTaken(r.Context(), u)
 	default:
 		slog.Error("portal: sign-up account write failed", "err", err)
 	}
@@ -197,32 +199,96 @@ func (a *App) signup(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// verifyEmail spends the token, creates the personal workspace and opens an
-// enroll session. Every failure is the same 400 invalid_token.
+// signupTaken handles a sign-up u for an address that already has an account.
+// A pending holder is replaced by u and mailed a fresh link; a verified one is
+// told someone tried. Failures are logged: the answer is 202 either way.
+func (a *App) signupTaken(ctx context.Context, u User) {
+	known, err := a.Store.GetUserByEmail(ctx, u.Email)
+	switch {
+	case errors.Is(err, ErrUserNotFound):
+		return // lapsed or deleted between the two calls; the next sign-up creates it
+	case err != nil:
+		slog.Error("portal: sign-up lookup failed", "err", err)
+		return
+	case known.EmailVerifiedAt == nil:
+		cur, err := a.Store.ReplacePending(ctx, known, u, a.now())
+		if err != nil {
+			slog.Error("portal: sign-up over a pending account failed", "err", err)
+			return
+		}
+		if err := a.sendVerify(ctx, cur); err != nil {
+			slog.Error("portal: sign-up verify email not issued", "err", err)
+		}
+		return
+	}
+	lang := u.Lang
+	if validLang(known.Lang) {
+		lang = known.Lang // the owner's language, not the stranger's
+	}
+	a.mailBestEffort(ctx, pmail.Message{To: u.Email, Lang: lang, Kind: "signup-exists"})
+}
+
+// verifyEmail checks the link and the account's password, then spends the
+// link, creates the personal workspace and opens an enroll session. A bad link
+// and a wrong password are the same 400 invalid_token. A wrong password counts
+// like a failed sign-in and leaves the link unspent, so the owner can retype;
+// a locked account is refused whatever the password.
 func (a *App) verifyEmail(w http.ResponseWriter, r *http.Request) error {
-	var in struct{ Token string }
+	var in struct{ Token, Password string }
 	if err := webapi.DecodeBody(r, &in); err != nil {
 		return err
 	}
+	ctx := r.Context()
 	invalid := apiErr(http.StatusBadRequest, "invalid_token")
 	if in.Token == "" || len(in.Token) > 128 {
 		return invalid
 	}
-	t, err := a.Store.UseToken(r.Context(), PurposeVerify, hashToken(in.Token), a.now())
+	hash := hashToken(in.Token)
+	t, err := a.Store.PeekToken(ctx, PurposeVerify, hash, a.now())
 	if errors.Is(err, ErrTokenInvalid) {
 		return invalid
 	}
 	if err != nil {
 		return err
 	}
+	u, err := a.Store.GetUser(ctx, t.UserID)
+	switch {
+	case errors.Is(err, ErrUserNotFound):
+		return invalid
+	case err != nil:
+		return err
+	case u.EmailVerifiedAt != nil || u.SessionEpoch != t.Epoch || NormalizeEmail(u.Email) != t.Email:
+		return invalid
+	}
+	ip, _ := a.clientIP(r)
+	acct := emailHash(NormalizeEmail(u.Email))
+	if u.LockedUntil != nil && a.now().Before(*u.LockedUntil) {
+		setAuditDetail(ctx, "reason", "locked")
+		if err := a.countFailure(ctx, ip, acct); err != nil {
+			return err
+		}
+		return invalid
+	}
+	if !a.verifyPassword(in.Password, u.PasswordHash) {
+		setAuditDetail(ctx, "reason", "wrong_password")
+		if err := a.failSignIn(ctx, u, ip, acct); err != nil {
+			return err
+		}
+		return invalid
+	}
+	if _, err := a.Store.UseToken(ctx, PurposeVerify, hash, a.now()); errors.Is(err, ErrTokenInvalid) {
+		return invalid
+	} else if err != nil {
+		return err
+	}
 	tenant := Tenant{ID: id.New()}
-	switch err := a.Store.VerifyEmail(r.Context(), t.UserID, tenant, a.now()); {
+	switch err := a.Store.VerifyPending(ctx, u, tenant, a.now()); {
 	case errors.Is(err, ErrUserNotFound), errors.Is(err, ErrAlreadyVerified), errors.Is(err, ErrConflict):
 		return invalid
 	case err != nil:
 		return err
 	}
-	u, err := a.Store.GetUser(r.Context(), t.UserID)
+	u, err = a.Store.GetUser(ctx, t.UserID)
 	if err != nil {
 		return err
 	}

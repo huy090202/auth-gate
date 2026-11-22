@@ -406,8 +406,12 @@ admin key; `make check` fails if either import appears. It shares `internal/plat
   API, which fails open) and a Turnstile token. Sign-up, resend, forgotten password and
   factor-reset request always answer `202 {"status":"check_email"}`, whether or not the address has
   an account, and take at least 1500 ms. A sign-in failure is always `401 invalid_credentials`.
-- The email link verifies the address (24 hours), creates the personal workspace and starts a
-  session in stage `enroll`. An unverified account expires after 7 days.
+- The email link, with the account's password, verifies the address (24 hours), creates the
+  personal workspace and starts a session in stage `enroll`. A wrong password answers like a bad
+  link, counts as a failed sign-in and leaves the link usable. A new sign-up for an address whose
+  account is still unverified replaces that account (password, name, language) and voids its older
+  links, so whoever signed up first with someone else's address does not keep it. An unverified
+  account expires after 7 days.
 - A second factor, a PIN or a passkey checked by AuthGate, is mandatory. Ten recovery codes
   (`XXXXX-XXXXX`) are shown once with the first factor. A recovery code signs in to `enroll`, so the
   person adds a new factor; it does not open `full`.
@@ -439,7 +443,7 @@ All under `/api`, JSON, errors `{"error": "<snake_case>"}`.
 | --- | --- | --- |
 | `GET /config` | none | The Turnstile site key. |
 | `POST /auth/signup`, `/auth/resend-verification`, `/auth/forgot`, `/auth/factor-reset/request` | none | Turnstile; always `202 check_email`. |
-| `POST /auth/verify-email`, `/auth/reset-password`, `/auth/factor-reset/confirm`, `/auth/confirm-email` | none | A single-use token from an email link. |
+| `POST /auth/verify-email`, `/auth/reset-password`, `/auth/factor-reset/confirm`, `/auth/confirm-email` | none | A single-use token from an email link. `verify-email` also takes the account's `password`. |
 | `POST /auth/login`, `/auth/second-factor/start`, `/auth/second-factor/verify`, `/auth/recovery`, `/auth/logout` | by stage | |
 | `GET /me`, `POST /me/pin`, `/me/passkeys/start`, `/me/passkeys/finish`, `/me/recovery-codes`, `DELETE /me/pin`, `/me/passkeys/{id}` | any stage for `GET /me`; enroll or full for the rest | Writes need step-up in `full`, never in `enroll`. The last factor cannot be removed. |
 | `POST /me/display-name`, `/me/password`, `/me/email`, `/me/avatar`, `/me/avatar/confirm`, `DELETE /me/avatar`, `DELETE /me` | full | Password, email and account deletion need step-up. |

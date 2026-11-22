@@ -111,11 +111,12 @@ func kinds(ms []sent) string {
 // Why: the answer must not reveal whether an address has an account.
 func TestSignupAnswersSameForNewAndKnownEmail(t *testing.T) {
 	e := newSignupEnv(t)
+	e.verified(t, "v@x.com")
 	first := e.post("/api/auth/signup", signupBody("a@x.com"))
 	if kinds(e.mails(t)) != "verify" {
 		t.Fatalf("mails = %v", kinds(e.mails(t)))
 	}
-	second := e.post("/api/auth/signup", signupBody("a@x.com"))
+	second := e.post("/api/auth/signup", signupBody("v@x.com"))
 	if first.Code != 202 || second.Code != 202 || first.Body.String() != second.Body.String() ||
 		strings.TrimSpace(first.Body.String()) != `{"status":"check_email"}` {
 		t.Fatalf("new %d %q, known %d %q", first.Code, first.Body, second.Code, second.Body)
@@ -129,15 +130,15 @@ func TestSignupAnswersSameForNewAndKnownEmail(t *testing.T) {
 func TestSignupNormalisesEmail(t *testing.T) {
 	e := newSignupEnv(t)
 	e.post("/api/auth/signup", signupBody(" A@X.com "))
+	first, _ := e.a.Store.GetUserByEmail(context.Background(), "a@x.com")
 	e.post("/api/auth/signup", signupBody("a@x.com"))
-	n := 0
-	for _, m := range e.mails(t) {
-		if m.Kind == "signup-exists" && m.To == "a@x.com" {
-			n++
-		}
+	if again, err := e.a.Store.GetUserByEmail(context.Background(), "a@x.com"); err != nil || again.ID != first.ID {
+		t.Fatalf("a second account: %+v %v (first %s)", again, err, first.ID)
 	}
-	if n != 1 {
-		t.Fatalf("mails = %v", kinds(e.mails(t)))
+	for _, m := range e.mails(t) {
+		if m.To != "a@x.com" || m.Kind != "verify" {
+			t.Fatalf("mails = %+v", e.mails(t))
+		}
 	}
 }
 
@@ -232,7 +233,7 @@ func TestSignupRateLimits(t *testing.T) {
 func TestVerifyEmailCreatesWorkspaceAndEnrollSession(t *testing.T) {
 	e := newSignupEnv(t)
 	e.post("/api/auth/signup", signupBody("a@x.com"))
-	rec := e.post("/api/auth/verify-email", map[string]string{"token": e.token(t)})
+	rec := e.post("/api/auth/verify-email", verifyBody(e.token(t), signupPW))
 	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"next":"enroll"}` {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
 	}
@@ -261,18 +262,18 @@ func TestVerifyTokenSingleUse(t *testing.T) {
 	e := newSignupEnv(t)
 	e.post("/api/auth/signup", signupBody("a@x.com"))
 	tok := e.token(t)
-	if rec := e.post("/api/auth/verify-email", map[string]string{"token": tok}); rec.Code != 200 {
+	if rec := e.post("/api/auth/verify-email", verifyBody(tok, signupPW)); rec.Code != 200 {
 		t.Fatalf("first: %d", rec.Code)
 	}
 	u, _ := e.a.Store.GetUserByEmail(context.Background(), "a@x.com")
-	rec := e.post("/api/auth/verify-email", map[string]string{"token": tok})
+	rec := e.post("/api/auth/verify-email", verifyBody(tok, signupPW))
 	if rec.Code != 400 || code(t, rec) != "invalid_token" || len(rec.Result().Cookies()) != 0 {
 		t.Fatalf("second: %d %s", rec.Code, rec.Body)
 	}
 	if u2, _ := e.a.Store.GetUserByEmail(context.Background(), "a@x.com"); u2.PersonalTenantID != u.PersonalTenantID {
 		t.Fatal("a second workspace was made")
 	}
-	if rec := e.post("/api/auth/verify-email", map[string]string{"token": "nope"}); rec.Code != 400 || code(t, rec) != "invalid_token" {
+	if rec := e.post("/api/auth/verify-email", verifyBody("nope", signupPW)); rec.Code != 400 || code(t, rec) != "invalid_token" {
 		t.Fatalf("unknown: %d %s", rec.Code, rec.Body)
 	}
 }
@@ -283,7 +284,7 @@ func TestVerifyTokenExpires(t *testing.T) {
 	e.post("/api/auth/signup", signupBody("a@x.com"))
 	tok := e.token(t)
 	*e.clock = e.clock.Add(25 * 60 * 60 * 1e9)
-	if rec := e.post("/api/auth/verify-email", map[string]string{"token": tok}); rec.Code != 400 || code(t, rec) != "invalid_token" {
+	if rec := e.post("/api/auth/verify-email", verifyBody(tok, signupPW)); rec.Code != 400 || code(t, rec) != "invalid_token" {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
 	}
 }
@@ -361,5 +362,103 @@ func TestResendFailureStillAnswers202(t *testing.T) {
 		if rec.Code != 202 || strings.TrimSpace(rec.Body.String()) != `{"status":"check_email"}` {
 			t.Fatalf("resend %d: %d %s", i, rec.Code, rec.Body)
 		}
+	}
+}
+
+const signupPW = "correct horse battery" // signupBody's password
+
+func verifyBody(tok, pw string) map[string]string {
+	return map[string]string{"token": tok, "password": pw}
+}
+
+// Why: a stranger who signs up first with the owner's address must not win the account when the owner clicks the
+// link: the owner's own sign-up replaces the pending account, and only the owner's password then verifies it.
+func TestSignupReplacesPendingSquatter(t *testing.T) {
+	e := newSignupEnv(t)
+	const attackerPW, ownerPW = "attacker long password", "owner long passphrase"
+	b := signupBody("a@x.com")
+	b["password"], b["displayName"], b["lang"] = attackerPW, "Mallory", "vi"
+	e.post("/api/auth/signup", b)
+	squat := e.lastLink(t, "verify")
+	squatter, err := e.a.Store.GetUserByEmail(context.Background(), "a@x.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b = signupBody(" A@x.com ")
+	b["password"] = ownerPW
+	if rec := e.post("/api/auth/signup", b); rec.Code != 202 {
+		t.Fatalf("owner sign-up = %d %s", rec.Code, rec.Body)
+	}
+	if got := kinds(e.mails(t)); got != "verify,verify" {
+		t.Fatalf("mails = %s, want a fresh verify link for the owner", got)
+	}
+	owner := e.lastLink(t, "verify")
+	u, err := e.a.Store.GetUserByEmail(context.Background(), "a@x.com")
+	if err != nil || u.ID != squatter.ID || u.DisplayName != "Ann" || u.Lang != "en" || u.SessionEpoch != squatter.SessionEpoch+1 {
+		t.Fatalf("pending account not replaced: %+v %v", u, err)
+	}
+	// The squatter's link died with the old epoch, and the squatter's password opens nothing.
+	if rec := e.post("/api/auth/verify-email", verifyBody(squat, ownerPW)); rec.Code != 400 || code(t, rec) != "invalid_token" {
+		t.Fatalf("old link = %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.post("/api/auth/verify-email", verifyBody(owner, attackerPW)); rec.Code != 400 || code(t, rec) != "invalid_token" {
+		t.Fatalf("attacker password = %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.post("/api/auth/verify-email", verifyBody(owner, ownerPW)); rec.Code != 200 {
+		t.Fatalf("owner password = %d %s", rec.Code, rec.Body)
+	}
+	if u, _ := e.a.Store.GetUserByEmail(context.Background(), "a@x.com"); u.EmailVerifiedAt == nil {
+		t.Fatal("not verified")
+	}
+}
+
+// Why: a wrong password at the link must look like a bad link, count like a failed sign-in, and leave the link
+// usable so the owner can retype.
+func TestVerifyEmailWrongPasswordKeepsToken(t *testing.T) {
+	e := newSignupEnv(t)
+	e.post("/api/auth/signup", signupBody("a@x.com"))
+	tok := e.lastLink(t, "verify")
+	bad := e.post("/api/auth/verify-email", verifyBody(tok, "not the password at all"))
+	unknown := e.post("/api/auth/verify-email", verifyBody("nope", signupPW))
+	if bad.Code != 400 || bad.Body.String() != unknown.Body.String() || len(bad.Result().Cookies()) != 0 {
+		t.Fatalf("wrong password = %d %s, unknown token = %s", bad.Code, bad.Body, unknown.Body)
+	}
+	u, _ := e.a.Store.GetUserByEmail(context.Background(), "a@x.com")
+	if u.FailedCount != 1 || u.EmailVerifiedAt != nil {
+		t.Fatalf("after a wrong password: %+v", u)
+	}
+	if n, _ := e.a.Store.FailCount(context.Background(), failAcct, emailHash("a@x.com"), e.a.now()); n != 1 {
+		t.Fatalf("account window = %d", n)
+	}
+	if rec := e.post("/api/auth/verify-email", verifyBody(tok, signupPW)); rec.Code != 200 {
+		t.Fatalf("right password after a wrong one = %d %s", rec.Code, rec.Body)
+	}
+}
+
+// Why: sign-up for a new, a pending and a verified address must answer the same bytes after the same floor.
+func TestSignupAnswersSameForNewPendingAndVerified(t *testing.T) {
+	e := newSignupEnv(t)
+	e.verified(t, "v@x.com")
+	e.post("/api/auth/signup", signupBody("p@x.com"))
+	e.slept = nil
+	var bodies []string
+	for _, addr := range []string{"n@x.com", "p@x.com", "v@x.com"} {
+		rec := e.post("/api/auth/signup", signupBody(addr))
+		if rec.Code != 202 {
+			t.Fatalf("%s: %d %s", addr, rec.Code, rec.Body)
+		}
+		bodies = append(bodies, rec.Body.String())
+	}
+	if bodies[0] != bodies[1] || bodies[1] != bodies[2] || len(e.slept) != 3 || e.slept[0] != answerFloor ||
+		e.slept[1] != answerFloor || e.slept[2] != answerFloor {
+		t.Fatalf("bodies %q, waits %v", bodies, e.slept)
+	}
+	got := map[string]string{}
+	for _, m := range e.mails(t) {
+		got[m.To] += m.Kind + ";"
+	}
+	if got["n@x.com"] != "verify;" || got["p@x.com"] != "verify;verify;" || got["v@x.com"] != "signup-exists;" {
+		t.Fatalf("mails = %v", got)
 	}
 }

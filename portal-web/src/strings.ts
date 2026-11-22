@@ -75,8 +75,9 @@ const enStrings = {
     sent: 'If the address can be used, a new link is on its way.',
   },
   verifyEmail: {
-    working: 'Confirming your email.',
-    ok: 'Your email is confirmed.',
+    intro: 'Type the password you chose at sign-up to confirm this address.',
+    submit: 'Confirm email',
+    refused: 'This link has expired or the password is wrong. Check the password and try again, or send a new link.',
     expired: 'This link has expired, was already used, or is not valid. Links work once and last 24 hours.',
     signUpAgain: 'Send a new link',
   },
@@ -540,8 +541,9 @@ export const vi: Strings = {
     sent: 'Nếu địa chỉ dùng được, một đường dẫn mới đang được gửi.',
   },
   verifyEmail: {
-    working: 'Đang xác nhận email của bạn.',
-    ok: 'Email của bạn đã được xác nhận.',
+    intro: 'Nhập mật khẩu bạn đã chọn khi đăng ký để xác nhận địa chỉ này.',
+    submit: 'Xác nhận email',
+    refused: 'Đường dẫn đã hết hạn hoặc mật khẩu không đúng. Hãy kiểm tra mật khẩu và thử lại, hoặc gửi đường dẫn mới.',
     expired: 'Đường dẫn đã hết hạn, đã được dùng hoặc không hợp lệ. Mỗi đường dẫn chỉ dùng một lần và có hiệu lực 24 giờ.',
     signUpAgain: 'Gửi đường dẫn mới',
   },

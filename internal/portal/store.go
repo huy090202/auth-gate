@@ -83,9 +83,11 @@ type Membership struct {
 // Token is an email token. Only the hash of the secret is stored.
 type Token struct {
 	Hash, Purpose, UserID string
-	Email                 string // the new address, for email-change
-	ExpiresAt             time.Time
-	// Epoch is the user's sessionEpoch when a recovery link was issued; a later bump voids it.
+	// Email is the address the link was sent to, normalised: the new address for
+	// email-change, the account's address for every other purpose.
+	Email     string
+	ExpiresAt time.Time
+	// Epoch is the user's sessionEpoch when the link was issued; a later bump voids it.
 	Epoch int
 }
 
@@ -302,6 +304,43 @@ func (st *Store) CreateUser(ctx context.Context, u User) error {
 	return nil
 }
 
+// ReplacePending overwrites the pending account cur with a new sign-up u for
+// its address, in one transaction: the password hash, display name and
+// language become u's, sessionEpoch moves up by one (so every verify link
+// already sent dies), and the seven-day ttl restarts at now on the user and
+// email items. It holds only while cur is still unverified, unexpired, at the
+// epoch read and at that address; otherwise ErrConflict. It returns the account
+// as written.
+func (st *Store) ReplacePending(ctx context.Context, cur, u User, now time.Time) (User, error) {
+	ttl := n(now.Add(unverifiedTTL).Unix())
+	names := map[string]string{"#ttl": "ttl"}
+	err := dynamo.TransactWrite(ctx, st.DB,
+		types.TransactWriteItem{Update: &types.Update{
+			TableName: aws.String(st.Table), Key: userKey(cur.ID),
+			UpdateExpression: aws.String("SET passwordHash = :h, displayName = :d, lang = :l, #ttl = :ttl ADD sessionEpoch :one"),
+			ConditionExpression: aws.String(epochCond(cur.SessionEpoch) +
+				" AND email = :email AND attribute_not_exists(emailVerifiedAt) AND #ttl > :now"),
+			ExpressionAttributeNames: names,
+			ExpressionAttributeValues: item{":h": s(u.PasswordHash), ":d": s(u.DisplayName), ":l": s(u.Lang), ":ttl": ttl,
+				":one": n(1), ":e": n(int64(cur.SessionEpoch)), ":email": s(cur.Email), ":now": n(now.Unix())},
+		}},
+		types.TransactWriteItem{Update: &types.Update{
+			TableName: aws.String(st.Table), Key: emailKey(cur.Email),
+			UpdateExpression:          aws.String("SET #ttl = :ttl"),
+			ConditionExpression:       aws.String(exists + " AND userId = :u"),
+			ExpressionAttributeNames:  names,
+			ExpressionAttributeValues: item{":ttl": ttl, ":u": s(cur.ID)},
+		}})
+	if dynamo.IsConditionFailed(err) {
+		return User{}, ErrConflict
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("replace pending account: %w", err)
+	}
+	cur.PasswordHash, cur.DisplayName, cur.Lang, cur.SessionEpoch = u.PasswordHash, u.DisplayName, u.Lang, cur.SessionEpoch+1
+	return cur, nil
+}
+
 // GetUser reads an account with a consistent read. An unverified account past
 // its ttl counts as gone.
 func (st *Store) GetUser(ctx context.Context, userID string) (User, error) {
@@ -343,6 +382,15 @@ func (st *Store) VerifyEmail(ctx context.Context, userID string, t Tenant, now t
 	if err != nil {
 		return err
 	}
+	return st.VerifyPending(ctx, u, t, now)
+}
+
+// VerifyPending is VerifyEmail for the account u as the caller read it: the
+// write also holds only while its sessionEpoch is still u's, so a sign-up that
+// replaced the pending account (and its password) after the caller checked the
+// password gives ErrConflict instead of verifying the new one.
+func (st *Store) VerifyPending(ctx context.Context, u User, t Tenant, now time.Time) error {
+	userID := u.ID
 	if u.EmailVerifiedAt != nil {
 		return ErrAlreadyVerified
 	}
@@ -356,13 +404,14 @@ func (st *Store) VerifyEmail(ctx context.Context, userID string, t Tenant, now t
 	umi := userTenantKey(userID, t.ID)
 	umi["role"], umi["joinedAt"] = s(RoleOwner), s(ts(now))
 	names := map[string]string{"#ttl": "ttl"}
-	err = dynamo.TransactWrite(ctx, st.DB,
+	err := dynamo.TransactWrite(ctx, st.DB,
 		types.TransactWriteItem{Update: &types.Update{
 			TableName: aws.String(st.Table), Key: userKey(userID),
-			UpdateExpression:          aws.String("SET emailVerifiedAt = :now, personalTenantId = :t REMOVE #ttl"),
-			ConditionExpression:       aws.String(exists + " AND attribute_not_exists(emailVerifiedAt) AND (attribute_not_exists(#ttl) OR #ttl > :nowSec)"),
+			UpdateExpression: aws.String("SET emailVerifiedAt = :now, personalTenantId = :t REMOVE #ttl"),
+			ConditionExpression: aws.String(epochCond(u.SessionEpoch) +
+				" AND attribute_not_exists(emailVerifiedAt) AND (attribute_not_exists(#ttl) OR #ttl > :nowSec)"),
 			ExpressionAttributeNames:  names,
-			ExpressionAttributeValues: item{":now": s(ts(now)), ":t": s(t.ID), ":nowSec": n(now.Unix())},
+			ExpressionAttributeValues: item{":now": s(ts(now)), ":t": s(t.ID), ":nowSec": n(now.Unix()), ":e": n(int64(u.SessionEpoch))},
 		}},
 		types.TransactWriteItem{Update: &types.Update{
 			TableName: aws.String(st.Table), Key: emailKey(u.Email),
@@ -522,12 +571,40 @@ func (st *Store) UseToken(ctx context.Context, purpose, hash string, now time.Ti
 	if err != nil {
 		return Token{}, fmt.Errorf("use token: %w", err)
 	}
-	exp, err := getT(out.Attributes, "expiresAt")
+	return decodeToken(hash, out.Attributes)
+}
+
+// PeekToken reads an unexpired token of the given purpose without spending it,
+// so a check that fails after it (a wrong password) leaves the link usable. A
+// token that is absent, expired or of another purpose gives ErrTokenInvalid.
+// UseToken still decides who spends it.
+func (st *Store) PeekToken(ctx context.Context, purpose, hash string, now time.Time) (Token, error) {
+	out, err := st.DB.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(st.Table), Key: tokenKey(hash), ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return Token{}, fmt.Errorf("peek token: %w", err)
+	}
+	if out.Item == nil || getS(out.Item, "purpose") != purpose {
+		return Token{}, ErrTokenInvalid
+	}
+	t, err := decodeToken(hash, out.Item)
+	if err != nil {
+		return Token{}, err
+	}
+	if !t.ExpiresAt.After(now) {
+		return Token{}, ErrTokenInvalid
+	}
+	return t, nil
+}
+
+func decodeToken(hash string, it item) (Token, error) {
+	exp, err := getT(it, "expiresAt")
 	if err != nil || exp == nil {
 		return Token{}, fmt.Errorf("token expiresAt: %v", err)
 	}
-	return Token{Hash: hash, Purpose: getS(out.Attributes, "purpose"), UserID: getS(out.Attributes, "userId"),
-		Email: getS(out.Attributes, "email"), ExpiresAt: *exp, Epoch: getN(out.Attributes, "epoch")}, nil
+	return Token{Hash: hash, Purpose: getS(it, "purpose"), UserID: getS(it, "userId"),
+		Email: getS(it, "email"), ExpiresAt: *exp, Epoch: getN(it, "epoch")}, nil
 }
 
 // ---- tenants and memberships ----

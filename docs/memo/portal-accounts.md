@@ -19,7 +19,7 @@ The Console has no public sign-up, so it can say "unknown user" in the same brea
 
 ## Sign-up without enumeration
 
-A new address gets a verification link (24 hours). A known address gets a different email, "someone tried to sign up with this address", and the browser sees the same `202`. Both answers are the same bytes, and both take the same time:
+A new address gets a verification link (24 hours). An address held by a pending (unverified) account is taken over by the new sign-up and gets a fresh link (below). A verified address gets a different email, "someone tried to sign up with this address", and the browser sees the same `202`. All three answers are the same bytes, and all take the same time:
 
 - The route is padded to a floor of 1500 ms measured from the start of the request. A Lambda cannot keep working after it answers, so the send cannot be moved off the critical path, and without the floor the path that sends mail would be visibly slower than the path that does not.
 - An internal failure on these routes (a token write, an SES error) is logged and still answers `202`. An error that appeared only for known addresses would be the same leak.
@@ -30,6 +30,13 @@ A new address gets a verification link (24 hours). A known address gets a differ
 Emails are trimmed and lower-cased before any key or comparison, so `A@x.com ` and `a@x.com` are one account. A limiter key never holds an address, only its SHA-256. The email index item does hold the normalised address, because a unique index must key on it; that is visible to an operator with table read access, as in the Console.
 
 An unverified account and its email index expire after 7 days (DynamoDB TTL), which frees the address. A verification link works once. A second use, an expired link and an unknown token all answer the same `400 invalid_token`. The link carries the token in the URL fragment, so it does not reach a log or a `Referer`.
+
+### A pre-registered address does not win
+
+Without more, a stranger could sign up first with someone else's address, wait for the owner to click the link the owner never asked for, and sign in with the stranger's own password to enrol the first factor. Two rules close that:
+
+- The verification link asks for the account's password (`POST /api/auth/verify-email` takes `{token, password}`). The token is checked first (single use, purpose, expiry, the account's `sessionEpoch` and address at issue), then the password. A wrong password answers the same `400 invalid_token` as a bad link, counts like a failed sign-in (the lockout and the two Turnstile windows, keyed as sign-in keys them), and does not spend the link, so the owner can retype. A locked account is refused whatever the password. Only then is the address marked verified, in a write that also holds only at the epoch the password was checked at.
+- A sign-up for an address held by a pending account replaces that account in one conditional write: the new password hash, display name and language, `sessionEpoch` up by one (every verify link already sent dies) and the 7-day TTL restarted. It answers the same `202` after the same floor and mails a fresh link. So the person who reads the mailbox and signs up last holds the password the link wants. The cost: two people racing for one pending address can keep displacing each other, within the per-address limit of 3 emails per hour; neither gets in without the mailbox.
 
 ## A mandatory second factor, and the recovery codes
 
@@ -63,6 +70,8 @@ The browser asks for an upload form, posts the file to S3 directly (no credentia
 
 - Saying "email already registered": a lookup for anyone.
 - Answering fast on the path that does nothing: a timing oracle.
+- Verifying from the link alone: the account's first password would be a stranger's.
+- Mailing `signup-exists` to an address held by a pending account: the stranger who got there first keeps it.
 - Sending the "already registered" mail without a limit: a mail bomb with our name on it.
 - Letting a recovery code open `full`: it also opens step-up, which the lost factor was meant to guard.
 - Purging the factors the moment the reset is confirmed: whoever controls the mailbox could remove the second factor in one click, with no time for the owner to react.
