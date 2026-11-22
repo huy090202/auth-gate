@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Refuse to deploy from CI unless both stacks already exist and can be updated. CI never
+# Refuse to deploy from CI unless all three stacks already exist and can be updated. CI never
 # creates a stack: a first deploy or a recovery runs by hand under the admin profile.
-# Reads STAGE (default stg) and AWS_REGION. Exit 0 only when both stacks are deployable.
+# Reads STAGE (default stg) and AWS_REGION. Exit 0 only when all three stacks are deployable.
 set -euo pipefail
 # shellcheck source=../setup-and-deploy/lib.sh
 # shellcheck source-path=SCRIPTDIR
@@ -10,7 +10,7 @@ set -euo pipefail
 err="$(mktemp)"
 trap 'rm -f "$err"' EXIT
 
-for stack in "auth-gate-$STAGE" "auth-gate-console-$STAGE"; do
+for stack in "auth-gate-$STAGE" "auth-gate-console-$STAGE" "auth-gate-portal-$STAGE"; do
   status="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$stack" \
     --query 'Stacks[0].StackStatus' --output text 2>"$err")" || {
     grep -q 'does not exist' "$err" || { cat "$err" >&2; die "cannot read $stack"; }
@@ -23,11 +23,14 @@ for stack in "auth-gate-$STAGE" "auth-gate-console-$STAGE"; do
   echo "ok $stack $status"
 done
 
-# The backticks are JMESPath literals, not shell.
-# shellcheck disable=SC2016
-client_id="$(aws cloudformation describe-stacks --region "$REGION" \
-  --stack-name "auth-gate-console-$STAGE" \
-  --query 'Stacks[0].Outputs[?OutputKey==`AuthGateClientId`].OutputValue | [0]' --output text)"
-case "$client_id" in
-  "" | None) die "auth-gate-console-$STAGE has no AuthGateClientId output: its second deploy pass has not run; do it by hand (README, First deploy of a stage)" ;;
-esac
+# The backticks are JMESPath literals, not shell. An app's second deploy pass has run only
+# when its stack reports the client id it was deployed with.
+for app in console portal; do
+  # shellcheck disable=SC2016
+  client_id="$(aws cloudformation describe-stacks --region "$REGION" \
+    --stack-name "auth-gate-$app-$STAGE" \
+    --query 'Stacks[0].Outputs[?OutputKey==`AuthGateClientId`].OutputValue | [0]' --output text)"
+  case "$client_id" in
+    "" | None) die "auth-gate-$app-$STAGE has no AuthGateClientId output: its second deploy pass has not run; do it by hand (README, First deploy of a stage)" ;;
+  esac
+done

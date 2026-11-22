@@ -123,8 +123,10 @@ summary.
 Also under the admin key, asked for by the owner on 2026-11-22 to clean stg up:
 
 - `DELETE /api/clients/{id}`: the same soft delete as the portal route, for any client. The
-  Console's own client and the Portal's answer `409 own_client_protected`. The Console gains a
-  Delete action on a client, with step-up and the client's name typed again.
+  Console's own client and the Portal's are protected by the Console, which answers
+  `409 own_client_protected` (and later by the Portal's own guard). AuthGate's admin `DELETE` has
+  no such guard: a direct call with the admin key deletes any client. The Console gains a Delete
+  action on a client, with step-up and the client's name typed again.
 - The smoke runs delete what they create: `cmd/smoke` and the Bruno collection end by deleting
   their clients, so CI no longer adds six clients to stg on every merge (`bruno boundary A`, `B`,
   `C`, `bruno demo renamed`, `bruno rate limit`, `smoke`).
@@ -228,8 +230,9 @@ or passkey: control of the email alone is not enough.
 
 ### Lost factor
 
-- With a recovery code: password plus code reaches `full`, and the person is asked to enrol a new
-  factor.
+- With a recovery code: password plus code lands the person in `enroll` (not `full`), with the
+  code counted as proof, to add a new factor. In `full`, adding a factor needs step-up with a
+  factor the person has just said they have lost.
 - Without: a factor reset requested by email link. Confirming it starts a 24-hour wait and emails
   the owner of the account. A successful sign-in with an existing factor during the wait cancels it.
   After the wait, the factors are purged through the Portal's own client, and the next sign-in

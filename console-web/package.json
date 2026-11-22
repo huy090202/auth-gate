@@ -13,6 +13,7 @@
     "gen:vars": "GEN_VARS=1 vitest run test/csp.test.tsx -t mantine-vars"
   },
   "dependencies": {
+    "@authgate/web-kit": "workspace:*",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@fontsource-variable/plus-jakarta-sans": "^5.3.0",
     "@mantine/core": "^7.17.8",

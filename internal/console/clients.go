@@ -8,9 +8,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/huy090202/auth-gate/internal/platform/webapi"
 )
 
-var errOwnClient = &apiError{Status: http.StatusConflict, Code: "own_client_protected"}
+var errOwnClient = &webapi.Error{Status: http.StatusConflict, Code: "own_client_protected"}
 
 // clientIDRE is the form id.New gives every client: a 26-character ULID in
 // upper-case Crockford base 32.
@@ -23,7 +25,7 @@ var clientIDRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 func clientID(r *http.Request) (string, error) {
 	id := r.PathValue("id")
 	if !clientIDRE.MatchString(id) {
-		return "", &apiError{Status: http.StatusNotFound, Code: "not_found"}
+		return "", &webapi.Error{Status: http.StatusNotFound, Code: "not_found"}
 	}
 	return id, nil
 }
@@ -33,18 +35,10 @@ func clientID(r *http.Request) (string, error) {
 // no '/', '?', '#', '%', control character, and not a dot segment.
 func subjectID(r *http.Request) (string, error) {
 	v := r.PathValue("subjectId")
-	if !validSubject(v) {
-		return "", &apiError{Status: http.StatusBadRequest, Code: "invalid_id"}
+	if !webapi.ValidSubject(v) {
+		return "", &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_id"}
 	}
 	return v, nil
-}
-
-func validSubject(v string) bool {
-	bad := v == "" || len(v) > 256 || v == "." || v == ".." || strings.ContainsAny(v, "/?#%")
-	for _, c := range []byte(v) {
-		bad = bad || c < 0x20 || c == 0x7f
-	}
-	return !bad
 }
 
 // clientRoutes serves /api/clients/* and /api/audit for a full session. The
@@ -52,10 +46,10 @@ func validSubject(v string) bool {
 // path that is not a route, what they were before the routes existed.
 func (a *App) clientRoutes(mux *http.ServeMux) {
 	full := a.session(StageFull)
-	mux.Handle("GET /api/clients", full(handlerFunc(a.listClients)))
-	mux.Handle("GET /api/clients/{id}", full(handlerFunc(a.getClient)))
-	mux.Handle("POST /api/clients", a.audited("create-client", full(handlerFunc(a.createClient))))
-	mux.Handle("PATCH /api/clients/{id}", a.audited("update-client", full(handlerFunc(a.updateClient))))
+	mux.Handle("GET /api/clients", full(webapi.HandlerFunc(a.listClients)))
+	mux.Handle("GET /api/clients/{id}", full(webapi.HandlerFunc(a.getClient)))
+	mux.Handle("POST /api/clients", a.audited("create-client", full(webapi.HandlerFunc(a.createClient))))
+	mux.Handle("PATCH /api/clients/{id}", a.audited("update-client", full(webapi.HandlerFunc(a.updateClient))))
 	mux.Handle("POST /api/clients/{id}/keys", a.audited("rotate-key", full(a.clientWrite("rotate-key", http.StatusCreated,
 		func(ctx context.Context, a *App, id string) (json.RawMessage, error) {
 			return a.AuthGate.RotateKey(ctx, id)
@@ -79,32 +73,21 @@ func (a *App) clientRoutes(mux *http.ServeMux) {
 		func(ctx context.Context, a *App, id string) (json.RawMessage, error) {
 			return nil, a.AuthGate.DeleteClient(ctx, id)
 		}))))
-	mux.Handle("POST /api/clients/{id}/enable", a.audited("enable-client", full(handlerFunc(a.enableClient))))
-	mux.Handle("DELETE /api/clients/{id}/subjects/{subjectId}", a.audited("purge-subject", full(handlerFunc(a.purgeSubject))))
-	mux.Handle("GET /api/audit", full(handlerFunc(a.listAudit)))
+	mux.Handle("POST /api/clients/{id}/enable", a.audited("enable-client", full(webapi.HandlerFunc(a.enableClient))))
+	mux.Handle("DELETE /api/clients/{id}/subjects/{subjectId}", a.audited("purge-subject", full(webapi.HandlerFunc(a.purgeSubject))))
+	mux.Handle("GET /api/audit", full(webapi.HandlerFunc(a.listAudit)))
 	// Not routes yet, or other methods on the routes above: they answer by stage, then 404.
 	for _, p := range []string{"/api/clients", "/api/clients/", "/api/audit"} {
 		mux.Handle(p, full(http.HandlerFunc(notFound)))
 	}
 }
 
-// writeRaw passes an AuthGate answer on as it is.
-func writeRaw(w http.ResponseWriter, status int, raw json.RawMessage) {
-	if len(raw) == 0 {
-		raw = json.RawMessage("{}")
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	//nolint:gosec // G705: AuthGate's own JSON, served as application/json (and no-store), never as HTML.
-	_, _ = w.Write(raw)
-}
-
 func (a *App) listClients(w http.ResponseWriter, r *http.Request) error {
 	raw, err := a.AuthGate.ListClients(r.Context(), r.URL.Query().Get("cursor"))
 	if err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
-	writeRaw(w, http.StatusOK, raw)
+	webapi.WriteRaw(w, http.StatusOK, raw)
 	return nil
 }
 
@@ -115,7 +98,7 @@ func (a *App) getClient(w http.ResponseWriter, r *http.Request) error {
 	}
 	raw, err := a.AuthGate.GetClient(r.Context(), id)
 	if err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	if id == a.Config.AuthGateClientID {
 		// Tell the SPA up front, so it shows the client read-only instead of learning from a refused write.
@@ -127,7 +110,7 @@ func (a *App) getClient(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 	}
-	writeRaw(w, http.StatusOK, raw)
+	webapi.WriteRaw(w, http.StatusOK, raw)
 	return nil
 }
 
@@ -152,7 +135,7 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) error {
 		PinPolicy   *pinPolicyBody `json:"pinPolicy"`
 		TokenTTLSec *int           `json:"tokenTtlSec"`
 	}
-	if err := decodeBody(r, &in); err != nil {
+	if err := webapi.DecodeBody(r, &in); err != nil {
 		return err
 	}
 	ctx := r.Context()
@@ -162,7 +145,7 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) error {
 	}
 	raw, err := a.AuthGate.CreateClient(r.Context(), body)
 	if err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	// What was typed is recorded only now that AuthGate has accepted it.
 	setAuditDetail(ctx, "name", in.Name)
@@ -173,7 +156,7 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) error {
 	}
 	_ = json.Unmarshal(raw, &out)
 	setAuditTarget(r.Context(), out.ClientID)
-	writeRaw(w, http.StatusCreated, raw)
+	webapi.WriteRaw(w, http.StatusCreated, raw)
 	return nil
 }
 
@@ -197,7 +180,7 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 		RateLimit   *rateLimitBody  `json:"rateLimit"`
 		RPID        json.RawMessage `json:"rpId"`
 	}
-	if err := decodeBody(r, &in); err != nil {
+	if err := webapi.DecodeBody(r, &in); err != nil {
 		return err
 	}
 	out := map[string]any{}
@@ -256,12 +239,12 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 	}
 	raw, err := a.AuthGate.UpdateClient(r.Context(), id, body)
 	if err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	for k, v := range values {
 		setAuditDetail(ctx, k, v)
 	}
-	writeRaw(w, http.StatusOK, raw)
+	webapi.WriteRaw(w, http.StatusOK, raw)
 	return nil
 }
 
@@ -269,7 +252,7 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 // token is checked first, the own-client guard next, and the token spent only
 // when the call is about to go out. An answer that carries a key is no-store like
 // every /api answer.
-func (a *App) clientWrite(action string, status int, call func(context.Context, *App, string) (json.RawMessage, error)) handlerFunc {
+func (a *App) clientWrite(action string, status int, call func(context.Context, *App, string) (json.RawMessage, error)) webapi.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id, err := clientID(r)
 		if err != nil {
@@ -289,13 +272,13 @@ func (a *App) clientWrite(action string, status int, call func(context.Context, 
 		}
 		raw, err := call(r.Context(), a, id)
 		if err != nil {
-			return agError(err)
+			return webapi.AuthGateError(err)
 		}
 		if status == http.StatusNoContent {
 			w.WriteHeader(status)
 			return nil
 		}
-		writeRaw(w, status, raw)
+		webapi.WriteRaw(w, status, raw)
 		return nil
 	}
 }
@@ -308,9 +291,9 @@ func (a *App) enableClient(w http.ResponseWriter, r *http.Request) error {
 	setAuditTarget(r.Context(), id)
 	raw, err := a.AuthGate.EnableClient(r.Context(), id)
 	if err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
-	writeRaw(w, http.StatusOK, raw)
+	webapi.WriteRaw(w, http.StatusOK, raw)
 	return nil
 }
 
@@ -336,7 +319,7 @@ func (a *App) purgeSubject(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if err := a.AuthGate.PurgeSubject(r.Context(), id, subject); err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil

@@ -1,2 +1,4 @@
 packages:
+  - packages/*
   - console-web
+  - portal-web

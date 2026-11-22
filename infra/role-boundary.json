@@ -31,7 +31,27 @@
       "Action": "ssm:GetParameter",
       "Resource": [
         "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate/*",
-        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate-console/*"
+        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate-console/*",
+        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate-portal/*"
+      ]
+    },
+    {
+      "Sid": "SendPortalEmail",
+      "Effect": "Allow",
+      "Action": "ses:SendEmail",
+      "Resource": "arn:aws:ses:ap-southeast-1:826113468815:identity/*"
+    },
+    {
+      "Sid": "PortalAvatars",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::auth-gate-portal-*/avatars/*",
+        "arn:aws:s3:::auth-gate-portal-*/pending/*"
       ]
     },
     {

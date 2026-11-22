@@ -2,7 +2,6 @@ package console
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,8 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huy090202/auth-gate/internal/console/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
+	"github.com/huy090202/auth-gate/internal/platform/webapi"
 )
 
 // stepUpActions maps an action to the purpose of the token that authorizes it.
@@ -48,7 +48,7 @@ var stepUpTargets = map[string]targetKind{
 	"admin-role": userRoleTarget,
 }
 
-var errInvalidTarget = &apiError{Status: http.StatusBadRequest, Code: "invalid_target"}
+var errInvalidTarget = &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_target"}
 
 // stepUpPurpose is the purpose of the challenge, and so of the token, for an
 // action on a target: the action's own purpose, then ":" and the first 32 hex
@@ -58,7 +58,7 @@ var errInvalidTarget = &apiError{Status: http.StatusBadRequest, Code: "invalid_t
 func stepUpPurpose(action, target string) (purpose, normalized string, err error) {
 	base, ok := stepUpActions[action]
 	if !ok {
-		return "", "", &apiError{Status: http.StatusBadRequest, Code: "invalid_action"}
+		return "", "", &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_action"}
 	}
 	kind := stepUpTargets[action]
 	if kind == noTarget {
@@ -81,7 +81,7 @@ func normalizeTarget(kind targetKind, target string) (string, bool) {
 		return target, clientIDRE.MatchString(target)
 	case subjectTarget:
 		client, subject, ok := strings.Cut(target, "/")
-		return target, ok && clientIDRE.MatchString(client) && validSubject(subject)
+		return target, ok && clientIDRE.MatchString(client) && webapi.ValidSubject(subject)
 	case userTarget:
 		name, err := NormalizeUsername(target)
 		return name, err == nil
@@ -95,7 +95,7 @@ func normalizeTarget(kind targetKind, target string) (string, bool) {
 
 const stepUpHeader = "x-step-up-token"
 
-var errStepUp = &apiError{Status: http.StatusForbidden, Code: "step_up_required"}
+var errStepUp = &webapi.Error{Status: http.StatusForbidden, Code: "step_up_required"}
 
 // stepUp is a checked, not yet spent, step-up token. A nil *stepUp is what an
 // enrolling session gets: there is nothing to spend.
@@ -121,7 +121,7 @@ func (a *App) checkStepUp(r *http.Request, s Session, action, target string) (*s
 	if err != nil {
 		// The handler names its own action and a target it has already checked.
 		slog.Error("console: bad step-up action or target", "action", action)
-		return nil, &apiError{Status: http.StatusInternalServerError, Code: "internal"}
+		return nil, &webapi.Error{Status: http.StatusInternalServerError, Code: "internal"}
 	}
 	tok := r.Header.Get(stepUpHeader)
 	if tok == "" {
@@ -130,7 +130,7 @@ func (a *App) checkStepUp(r *http.Request, s Session, action, target string) (*s
 	c, err := a.Tokens.Verify(r.Context(), tok, s.AdminID, purpose)
 	if errors.Is(err, authgate.ErrUnavailable) {
 		// The keys could not be fetched: AuthGate is down, the token may be fine.
-		return nil, agError(err)
+		return nil, webapi.AuthGateError(err)
 	}
 	if err != nil {
 		if !errors.Is(err, authgate.ErrInvalidToken) {
@@ -160,8 +160,8 @@ func (a *App) spendStepUp(r *http.Request, t *stepUp) error {
 // needs no token, and a half one has not signed in.
 func (a *App) stepUpRoutes(mux *http.ServeMux) {
 	full := a.session(StageFull)
-	mux.Handle("POST /api/stepup/start", a.audited("stepup-start", full(handlerFunc(a.stepUpStart))))
-	mux.Handle("POST /api/stepup/verify", a.audited("stepup-verify", full(handlerFunc(a.stepUpVerify))))
+	mux.Handle("POST /api/stepup/start", a.audited("stepup-start", full(webapi.HandlerFunc(a.stepUpStart))))
+	mux.Handle("POST /api/stepup/verify", a.audited("stepup-verify", full(webapi.HandlerFunc(a.stepUpVerify))))
 }
 
 // stepUpStart opens a challenge for the action's purpose on its target and
@@ -171,11 +171,11 @@ func (a *App) stepUpRoutes(mux *http.ServeMux) {
 func (a *App) stepUpStart(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
 	var in struct{ Action, Factor, Target string }
-	if err := decodeBody(r, &in); err != nil {
+	if err := webapi.DecodeBody(r, &in); err != nil {
 		return err
 	}
 	if _, ok := stepUpActions[in.Action]; !ok {
-		return &apiError{Status: http.StatusBadRequest, Code: "invalid_action"}
+		return &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_action"}
 	}
 	// The purpose is worked out first and its error held, so the answer order stays
 	// forbidden, invalid_factor, invalid_target. Only what has passed its check is
@@ -184,10 +184,10 @@ func (a *App) stepUpStart(w http.ResponseWriter, r *http.Request) error {
 	setAuditDetail(r.Context(), "action", in.Action)
 	setAuditTarget(r.Context(), in.Action)
 	if strings.HasPrefix(in.Action, "admin-") && admin.Role != RoleMaster {
-		return &apiError{Status: http.StatusForbidden, Code: "forbidden"}
+		return &webapi.Error{Status: http.StatusForbidden, Code: "forbidden"}
 	}
 	if in.Factor != "pin" && in.Factor != "webauthn" {
-		return &apiError{Status: http.StatusBadRequest, Code: "invalid_factor"}
+		return &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_factor"}
 	}
 	setAuditDetail(r.Context(), "factor", in.Factor)
 	if perr != nil {
@@ -196,7 +196,7 @@ func (a *App) stepUpStart(w http.ResponseWriter, r *http.Request) error {
 	setAuditDetail(r.Context(), "target", truncate(target, maxAuditTarget))
 	ch, err := a.AuthGate.CreateChallenge(r.Context(), admin.ID, purpose, in.Factor)
 	if err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	if err := a.Store.SetStepUpChallenge(r.Context(), x.Hash, ch.ID, in.Action, in.Factor, target); err != nil {
 		return sessionGone(err)
@@ -218,7 +218,7 @@ func (a *App) stepUpVerify(w http.ResponseWriter, r *http.Request) error {
 		PIN         *string         `json:"pin"`
 		Credential  json.RawMessage `json:"credential"`
 	}
-	if err := decodeBody(r, &in); err != nil {
+	if err := webapi.DecodeBody(r, &in); err != nil {
 		return err
 	}
 	if x.ChallengeID == "" || in.ChallengeID != x.ChallengeID {
@@ -231,33 +231,13 @@ func (a *App) stepUpVerify(w http.ResponseWriter, r *http.Request) error {
 	}
 	tok, err := a.AuthGate.VerifyChallenge(r.Context(), in.ChallengeID, in.PIN, in.Credential)
 	if err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
-	exp, ok := unverifiedExp(tok)
+	exp, ok := authgate.UnverifiedExp(tok)
 	if !ok {
 		slog.Warn("console: step-up token without a readable exp")
-		return &apiError{Status: http.StatusBadGateway, Code: "authgate_unavailable"}
+		return &webapi.Error{Status: http.StatusBadGateway, Code: "authgate_unavailable"}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stepUpToken": tok, "expiresAt": exp})
 	return nil
-}
-
-// unverifiedExp reads the exp claim for the browser to show. The token came from
-// AuthGate in answer to our own call and is fully checked when an action uses it.
-func unverifiedExp(tok string) (time.Time, bool) {
-	parts := strings.Split(tok, ".")
-	if len(parts) != 3 {
-		return time.Time{}, false
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return time.Time{}, false
-	}
-	var c struct {
-		Exp int64 `json:"exp"`
-	}
-	if json.Unmarshal(raw, &c) != nil || c.Exp <= 0 {
-		return time.Time{}, false
-	}
-	return time.Unix(c.Exp, 0).UTC(), true
 }

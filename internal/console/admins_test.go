@@ -9,8 +9,9 @@ import (
 	"testing"
 
 	"github.com/huy090202/auth-gate/internal/console"
-	"github.com/huy090202/auth-gate/internal/console/authgate"
 	"github.com/huy090202/auth-gate/internal/console/consoletest"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/password"
 )
 
 var adminActions = []struct{ action, method, suffix string }{
@@ -104,7 +105,7 @@ func TestCreateAdminShowsTempPasswordOnce(t *testing.T) {
 		t.Fatalf("username %q, cache-control %q", r.Str("username"), r.Header.Get("Cache-Control"))
 	}
 	a := getAdmin(t, h, "newbie")
-	if !a.MustChangePassword || a.Role != console.RoleAdmin || a.PasswordHash == temp || !console.VerifyPassword(temp, a.PasswordHash) {
+	if !a.MustChangePassword || a.Role != console.RoleAdmin || a.PasswordHash == temp || !password.Verify(temp, a.PasswordHash) {
 		t.Fatalf("stored admin %+v", a)
 	}
 
@@ -156,7 +157,7 @@ func TestResetEndsSessionsAndForcesChange(t *testing.T) {
 	}
 	want(t, bb.Do("GET", "/api/me", nil), 401, "")
 	a := getAdmin(t, h, "bob")
-	if !a.MustChangePassword || a.LockedUntil != nil || a.FailedCount != 0 || a.SessionEpoch != bob.SessionEpoch+1 || !console.VerifyPassword(temp, a.PasswordHash) {
+	if !a.MustChangePassword || a.LockedUntil != nil || a.FailedCount != 0 || a.SessionEpoch != bob.SessionEpoch+1 || !password.Verify(temp, a.PasswordHash) {
 		t.Fatalf("bob after reset %+v", a)
 	}
 	n := h.NewBrowser()

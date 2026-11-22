@@ -4,62 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"log/slog"
-	"math"
 	"net/http"
 	"time"
 
-	"github.com/huy090202/auth-gate/internal/console/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/firstfactor"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
-	"github.com/huy090202/auth-gate/internal/platform/id"
+	"github.com/huy090202/auth-gate/internal/platform/password"
+	"github.com/huy090202/auth-gate/internal/platform/webapi"
 )
 
-// firstFactorLeaseFor is how long a first-factor lease lasts, counted from the
-// claim. It holds only while the write lands before it runs out. A write lands at
-// most authgate.Timeout after it is sent (AuthGate's own function timeout,
-// Timeout: 10 in infra/template.yaml; the Console's client timeout does not bound
-// when a write lands), so the write is sent only within firstFactorSendWindow of
-// the claim. The Console's Lambda timeout bounds nothing here: a write sent just
-// before it can still land later.
-const firstFactorLeaseFor = 25 * time.Second
-
 // firstFactorSendWindow is how long after the claim the first-factor write may
-// still be sent: the lease less the time a sent write can take to land, less
-// firstFactorSendMargin (the network before AuthGate's clock starts, and clock
-// skew between Console instances).
-const firstFactorSendWindow = firstFactorLeaseFor - authgate.Timeout - firstFactorSendMargin
-
-const firstFactorSendMargin = 2 * time.Second
-
-// errSendWindowClosed is a first-factor write that was not sent because its send
-// window had closed. Nothing went out, so nothing can land and the lease goes.
-var errSendWindowClosed = fmt.Errorf("%w: first-factor write not sent, past its send window", authgate.ErrUnavailable)
-
-// firstFactorLease is what beginFirstFactor hands the write. release must be
-// called once the write is over, with the write's error; send runs the write.
-type firstFactorLease struct {
-	release func(writeErr error)
-	sendBy  time.Time // the end of the send window; zero when no lease was taken
-	now     func() time.Time
-}
-
-// send runs the write under a deadline at the end of the send window, so a write
-// that cannot go out in time is not sent. One already past it is not tried at all
-// and answers errSendWindowClosed; one cut off by the deadline after it may have
-// gone out is a no-answer failure, and its lease is kept.
-func (l firstFactorLease) send(ctx context.Context, write func(context.Context) error) error {
-	if l.sendBy.IsZero() {
-		return write(ctx)
-	}
-	left := l.sendBy.Sub(l.now())
-	if left <= 0 {
-		return errSendWindowClosed
-	}
-	ctx, cancel := context.WithTimeout(ctx, left)
-	defer cancel()
-	return write(ctx)
-}
+// still be sent (see firstfactor).
+const firstFactorSendWindow = firstfactor.SendWindow
 
 // meRoutes serves /api/me/*. Every write checks the step-up token (a full
 // session needs one; an enrolling one passes factorsForWrite instead), runs its own
@@ -67,15 +24,15 @@ func (l firstFactorLease) send(ctx context.Context, write func(context.Context) 
 func (a *App) meRoutes(mux *http.ServeMux) {
 	anyStage := a.session(StageHalf, StageEnroll, StageFull)
 	self := a.session(StageEnroll, StageFull)
-	mux.Handle("GET /api/me", anyStage(handlerFunc(a.me)))
+	mux.Handle("GET /api/me", anyStage(webapi.HandlerFunc(a.me)))
 	// The password route is the one write with no step-up in stage enroll, so it
 	// shares the login limiter: it is a way to test guesses of the current password.
-	mux.Handle("POST /api/me/password", a.limitAuth(a.audited("change-password", self(handlerFunc(a.changePassword)))))
-	mux.Handle("POST /api/me/pin", a.audited("set-pin", self(handlerFunc(a.setPIN))))
-	mux.Handle("DELETE /api/me/pin", a.audited("delete-pin", self(handlerFunc(a.deletePIN))))
-	mux.Handle("POST /api/me/passkeys/start", a.audited("passkey-start", self(handlerFunc(a.passkeyStart))))
-	mux.Handle("POST /api/me/passkeys/finish", a.audited("passkey-finish", self(handlerFunc(a.passkeyFinish))))
-	mux.Handle("DELETE /api/me/passkeys/{id}", a.audited("delete-passkey", self(handlerFunc(a.deletePasskey))))
+	mux.Handle("POST /api/me/password", a.limitAuth(a.audited("change-password", self(webapi.HandlerFunc(a.changePassword)))))
+	mux.Handle("POST /api/me/pin", a.audited("set-pin", self(webapi.HandlerFunc(a.setPIN))))
+	mux.Handle("DELETE /api/me/pin", a.audited("delete-pin", self(webapi.HandlerFunc(a.deletePIN))))
+	mux.Handle("POST /api/me/passkeys/start", a.audited("passkey-start", self(webapi.HandlerFunc(a.passkeyStart))))
+	mux.Handle("POST /api/me/passkeys/finish", a.audited("passkey-finish", self(webapi.HandlerFunc(a.passkeyFinish))))
+	mux.Handle("DELETE /api/me/passkeys/{id}", a.audited("delete-passkey", self(webapi.HandlerFunc(a.deletePasskey))))
 }
 
 // me describes the signed-in admin. A session that has not proved a factor yet (half,
@@ -87,7 +44,7 @@ func (a *App) me(w http.ResponseWriter, r *http.Request) error {
 	}
 	f, err := a.AuthGate.Factors(r.Context(), admin.ID)
 	if err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	if x.Stage == StageHalf || (x.Stage == StageEnroll && !x.FactorProved) {
 		out["factors"] = map[string]bool{"pin": f.PIN, "webauthn": len(f.WebAuthn) > 0}
@@ -110,7 +67,7 @@ func (a *App) me(w http.ResponseWriter, r *http.Request) error {
 func (a *App) factorsForWrite(w http.ResponseWriter, r *http.Request, x Session) (authgate.Factors, error) {
 	f, err := a.AuthGate.Factors(r.Context(), x.AdminID)
 	if err != nil {
-		return f, agError(err)
+		return f, webapi.AuthGateError(err)
 	}
 	if x.Stage == StageEnroll && !x.FactorProved && (f.PIN || len(f.WebAuthn) > 0) {
 		return f, a.endSession(w, r, x)
@@ -140,38 +97,31 @@ func (a *App) factorAdded(r *http.Request, x *Session, had authgate.Factors) err
 // write goes through the returned lease's send, and its release must be called
 // once the write is over, with the write's error: a write that got no answer, or
 // an answered 5xx, may still land, so its lease is kept until it expires.
-func (a *App) beginFirstFactor(w http.ResponseWriter, r *http.Request, x Session) (authgate.Factors, firstFactorLease, error) {
+func (a *App) beginFirstFactor(w http.ResponseWriter, r *http.Request, x Session) (authgate.Factors, firstfactor.Lease, error) {
 	if x.Stage != StageEnroll || x.FactorProved {
 		f, err := a.factorsForWrite(w, r, x)
-		return f, firstFactorLease{release: func(error) {}}, err
+		return f, firstfactor.None(), err
 	}
-	holder := id.New() // not the session token, which must stay secret
-	now := a.now()
-	held, err := a.Store.ClaimFirstFactorLease(r.Context(), x.Username, holder, now, now.Add(firstFactorLeaseFor))
+	lease, err := firstfactor.Acquire(r.Context(), firstfactor.Account{
+		Claim: func(ctx context.Context, holder string, now, until time.Time) (time.Time, error) {
+			return a.Store.ClaimFirstFactorLease(ctx, x.Username, holder, now, until)
+		},
+		Release: func(ctx context.Context, holder string) error {
+			return a.Store.ReleaseFirstFactorLease(ctx, x.Username, holder)
+		},
+	}, a.now)
 	switch {
-	case errors.Is(err, ErrLeaseHeld):
-		wait := int(math.Ceil(held.Sub(now).Seconds()))
-		return authgate.Factors{}, firstFactorLease{}, &apiError{Status: http.StatusConflict, Code: "enrollment_in_progress", RetryAfter: max(wait, 1)}
 	case errors.Is(err, ErrAdminNotFound):
-		return authgate.Factors{}, firstFactorLease{}, errUnauthorized
+		return authgate.Factors{}, firstfactor.Lease{}, errUnauthorized
 	case err != nil:
-		return authgate.Factors{}, firstFactorLease{}, err
-	}
-	release := func(writeErr error) {
-		if errors.Is(writeErr, authgate.ErrNoAnswer) || errors.Is(writeErr, authgate.ErrServerError) {
-			return // the write may still land: let the lease run out
-		}
-		// The request may be cancelled; the lease should still go.
-		if err := a.Store.ReleaseFirstFactorLease(context.WithoutCancel(r.Context()), x.Username, holder); err != nil {
-			slog.Warn("console: release first-factor lease", "err", err)
-		}
+		return authgate.Factors{}, firstfactor.Lease{}, err
 	}
 	f, err := a.factorsForWrite(w, r, x)
 	if err != nil {
-		release(nil)
-		return f, firstFactorLease{}, err
+		lease.Release(nil)
+		return f, firstfactor.Lease{}, err
 	}
-	return f, firstFactorLease{release: release, sendBy: now.Add(firstFactorSendWindow), now: a.now}, nil
+	return f, lease, nil
 }
 
 // claimFirstFactor runs, under the lease, just before an enrolling session that
@@ -216,7 +166,7 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var in struct{ CurrentPassword, NewPassword string }
-	if err := decodeBody(r, &in); err != nil {
+	if err := webapi.DecodeBody(r, &in); err != nil {
 		return err
 	}
 	if !a.verifyPassword(in.CurrentPassword, admin.PasswordHash) {
@@ -233,13 +183,13 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) error {
 				return a.endSession(w, r, x)
 			}
 		}
-		return &apiError{Status: http.StatusBadRequest, Code: "wrong_password"}
+		return &webapi.Error{Status: http.StatusBadRequest, Code: "wrong_password"}
 	}
 	// The current password has just been verified, so equal strings mean "same as current".
-	if in.NewPassword == in.CurrentPassword || ValidatePassword(in.NewPassword) != nil {
-		return &apiError{Status: http.StatusBadRequest, Code: "invalid_password"}
+	if in.NewPassword == in.CurrentPassword || password.Validate(in.NewPassword) != nil {
+		return &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_password"}
 	}
-	hash, err := HashPassword(in.NewPassword)
+	hash, err := password.Hash(in.NewPassword)
 	if err != nil {
 		return err
 	}
@@ -276,7 +226,7 @@ func (a *App) setPIN(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var in struct{ PIN string }
-	if err := decodeBody(r, &in); err != nil {
+	if err := webapi.DecodeBody(r, &in); err != nil {
 		return err
 	}
 	had, lease, err := a.beginFirstFactor(w, r, x)
@@ -284,18 +234,18 @@ func (a *App) setPIN(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var writeErr error
-	defer func() { lease.release(writeErr) }()
+	defer func() { lease.Release(writeErr) }()
 	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
 	if err := a.claimFirstFactor(w, r, &x); err != nil {
 		return err
 	}
-	if err := lease.send(r.Context(), func(ctx context.Context) error {
+	if err := lease.Send(r.Context(), func(ctx context.Context) error {
 		return a.AuthGate.SetPIN(ctx, admin.ID, in.PIN)
 	}); err != nil {
 		writeErr = err
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	if err := a.factorAdded(r, &x, had); err != nil {
 		return err
@@ -319,16 +269,16 @@ func (a *App) deletePIN(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if !f.PIN {
-		return &apiError{Status: http.StatusConflict, Code: "factor_not_enrolled"}
+		return &webapi.Error{Status: http.StatusConflict, Code: "factor_not_enrolled"}
 	}
 	if len(f.WebAuthn) == 0 {
-		return &apiError{Status: http.StatusConflict, Code: "last_factor"}
+		return &webapi.Error{Status: http.StatusConflict, Code: "last_factor"}
 	}
 	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
 	if err := a.AuthGate.DeletePIN(r.Context(), admin.ID); err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stage": x.Stage})
 	return nil
@@ -350,7 +300,7 @@ func (a *App) passkeyStart(w http.ResponseWriter, r *http.Request) error {
 	}
 	id, publicKey, err := a.AuthGate.StartRegistration(r.Context(), admin.ID, admin.Username)
 	if err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	if err := a.Store.SetRegistration(r.Context(), x.Hash, id); err != nil {
 		return sessionGone(err)
@@ -365,7 +315,7 @@ func (a *App) passkeyFinish(w http.ResponseWriter, r *http.Request) error {
 		RegistrationID string          `json:"registrationId"`
 		Credential     json.RawMessage `json:"credential"`
 	}
-	if err := decodeBody(r, &in); err != nil {
+	if err := webapi.DecodeBody(r, &in); err != nil {
 		return err
 	}
 	if x.RegistrationID == "" || in.RegistrationID != x.RegistrationID {
@@ -376,18 +326,18 @@ func (a *App) passkeyFinish(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var writeErr error
-	defer func() { lease.release(writeErr) }()
+	defer func() { lease.Release(writeErr) }()
 	if err := a.claimFirstFactor(w, r, &x); err != nil {
 		return err
 	}
 	var credID string
-	err = lease.send(r.Context(), func(ctx context.Context) (err error) {
+	err = lease.Send(r.Context(), func(ctx context.Context) (err error) {
 		credID, err = a.AuthGate.FinishRegistration(ctx, in.RegistrationID, in.Credential)
 		return err
 	})
 	if err != nil {
 		writeErr = err
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	if err := a.factorAdded(r, &x, had); err != nil {
 		return err
@@ -416,16 +366,16 @@ func (a *App) deletePasskey(w http.ResponseWriter, r *http.Request) error {
 		found = found || c.CredentialID == id
 	}
 	if !found {
-		return &apiError{Status: http.StatusConflict, Code: "factor_not_enrolled"}
+		return &webapi.Error{Status: http.StatusConflict, Code: "factor_not_enrolled"}
 	}
 	if !f.PIN && len(f.WebAuthn) == 1 {
-		return &apiError{Status: http.StatusConflict, Code: "last_factor"}
+		return &webapi.Error{Status: http.StatusConflict, Code: "last_factor"}
 	}
 	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
 	if err := a.AuthGate.DeleteCredential(r.Context(), admin.ID, id); err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	setAuditTarget(r.Context(), id) // not a validated shape: recorded once AuthGate accepted the delete
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stage": x.Stage})

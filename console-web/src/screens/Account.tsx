@@ -4,7 +4,7 @@ import { consoleTitle, useTitle } from '../brand';
 import { api } from '../lib/api';
 import { formatDate } from '../lib/format';
 import { fmt, useLang, useStrings, type Lang } from '../lib/i18n';
-import { monoFont } from '../theme';
+import { monoFont } from '@authgate/web-kit/theme';
 import { Shell } from '../shell';
 import { SessionGuard, passkeyCount, type Me, type Passkey } from '../session';
 import { useStepUp } from '../stepup';

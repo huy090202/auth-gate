@@ -1,0 +1,50 @@
+info:
+  name: "Unknown account (401)"
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/auth/login"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "email": "{{boundaryEmail}}", "password": "not-the-password-1" }
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        bru.setVar("boundaryEmail", "boundary-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10) + "@example.com");
+    - type: tests
+      code: |-
+        // Every run is one failure for the caller's IP, and the third within 15 minutes from one IP must
+        // carry a Turnstile token: that refusal is as good a boundary as the 401, so it passes too.
+        test("401 invalid_credentials, or 403 turnstile_required once this IP failed twice in 15 minutes", function() {
+          const s = res.getStatus();
+          expect([401, 403]).to.include(s);
+          expect(res.getBody()).to.deep.equal({ error: s === 401 ? "invalid_credentials" : "turnstile_required" });
+        });
+
+        test("no session cookie is set", function() {
+          const c = res.getHeader("set-cookie");
+          expect(c === undefined || c === null || String(c).length === 0, "a cookie was set").to.equal(true);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 401 `invalid_credentials`.** The address is not an account. The server still
+  runs one password comparison against a dummy hash, so the answer takes about as long as a
+  real one. A fresh address is generated for every run: failures are counted per address as
+  well as per IP, and a fixed address would need Turnstile (403 `turnstile_required`) from
+  the third run within 15 minutes, from any IP. The per-IP count cannot be avoided: each run is
+  one failure for the caller's IP, so from one IP the third run within 15 minutes gets 403
+  `turnstile_required`, which the test accepts as a refusal too.

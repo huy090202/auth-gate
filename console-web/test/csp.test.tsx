@@ -7,7 +7,7 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, expect, test, vi } from 'vitest';
 import { SchemeToggle } from '../src/App';
-import { mantineVarsCss } from '../src/lib/mantine-vars';
+import { mantineVarsCss } from '@authgate/web-kit/mantine-vars';
 import { ShownOnce } from '../src/ShownOnce';
 import { Admins } from '../src/screens/Admins';
 import { Audit } from '../src/screens/Audit';
@@ -15,7 +15,7 @@ import { ClientDetail } from '../src/screens/ClientDetail';
 import { Clients } from '../src/screens/Clients';
 import { SessionProvider, type Me } from '../src/session';
 import { Shell } from '../src/shell';
-import { theme } from '../src/theme';
+import { theme } from '@authgate/web-kit/theme';
 
 const varsFile = join(import.meta.dirname, '../src/mantine-vars.css');
 

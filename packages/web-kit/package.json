@@ -1,0 +1,51 @@
+{
+  "name": "@authgate/web-kit",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "App-agnostic web code shared by the Console and the Portal: Canopy theme, UI parts, toasts, API client, i18n, WebAuthn helpers. TypeScript source, compiled by the apps.",
+  "exports": {
+    "./actions": "./src/actions.tsx",
+    "./api": "./src/lib/api.ts",
+    "./client-form": "./src/client-form.tsx",
+    "./clients": "./src/lib/clients.ts",
+    "./controls": "./src/controls.tsx",
+    "./format": "./src/lib/format.ts",
+    "./i18n": "./src/lib/i18n.ts",
+    "./mantine-vars": "./src/lib/mantine-vars.ts",
+    "./shell-layout": "./src/shell-layout.tsx",
+    "./shell.css": "./src/shell.css",
+    "./shown-once": "./src/ShownOnce.tsx",
+    "./step-up": "./src/step-up.tsx",
+    "./styles.css": "./src/kit.css",
+    "./theme": "./src/theme.ts",
+    "./toast": "./src/toast.tsx",
+    "./ui": "./src/ui.tsx",
+    "./webauthn": "./src/lib/webauthn.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint ."
+  },
+  "peerDependencies": {
+    "@mantine/core": "^7.17.8",
+    "@mantine/hooks": "^7.17.8",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@mantine/core": "^7.17.8",
+    "@mantine/hooks": "^7.17.8",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^10.13.0",
+    "jsdom": "^26.1.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^3.2.7"
+  }
+}

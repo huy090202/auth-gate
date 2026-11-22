@@ -1,0 +1,30 @@
+info:
+  name: "/api/t/<ulid>/clients without a cookie (401)"
+  type: http
+  seq: 6
+
+http:
+  method: GET
+  url: "{{baseUrl}}/api/t/01HZZZZZZZZZZZZZZZZZZZZZZZ/clients"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("401", function() {
+          expect(res.getStatus()).to.equal(401);
+        });
+
+        test('body is {"error":"unauthorized"}', function() {
+          expect(res.getBody()).to.deep.equal({ error: "unauthorized" });
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 401.** The session guard runs before the membership guard, so an anonymous
+  caller learns nothing about whether the workspace exists.

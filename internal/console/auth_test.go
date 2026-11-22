@@ -11,8 +11,9 @@ import (
 
 	"github.com/huy090202/auth-gate/internal/auth/client"
 	"github.com/huy090202/auth-gate/internal/console"
-	"github.com/huy090202/auth-gate/internal/console/authgate"
 	"github.com/huy090202/auth-gate/internal/console/consoletest"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/password"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 )
 
@@ -74,7 +75,7 @@ func TestLoginDoesNotEnumerate(t *testing.T) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
-		return console.VerifyPassword(p, stored)
+		return password.Verify(p, stored)
 	}))
 
 	cases := []struct{ name, user, pass string }{

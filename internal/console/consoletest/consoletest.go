@@ -20,7 +20,7 @@ import (
 	"github.com/huy090202/auth-gate/internal/auth/service"
 	"github.com/huy090202/auth-gate/internal/auth/token"
 	"github.com/huy090202/auth-gate/internal/console"
-	"github.com/huy090202/auth-gate/internal/console/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/dynamo/dynamotest"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 )

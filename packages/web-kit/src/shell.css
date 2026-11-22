@@ -1,0 +1,211 @@
+/* Signed-in frame and the screens inside it (sidebar shell, tables, forms, key list), shared by the Console and the Portal.
+   Import after styles.css of the kit and before the app's own stylesheet. */
+
+/* The focus ring is first here, not in the apps' stylesheets: the Select dropdown below must keep winning over it, as it did
+   when this file's rules still lived in the Console's stylesheet after it. */
+:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+
+.panel-form { margin-top: 18px; }
+.panel-form-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.panel .flush { margin-left: -8px; }
+.key-list { list-style: none; margin: 16px 0 0; padding: 0; }
+.key-list li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--mantine-color-default-border); }
+.key-list li:last-child { padding-bottom: 0; }
+.key-icon { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: var(--accent-text); background: var(--accent-soft); }
+.key-meta, .field-meta { flex: 1; min-width: 0; }
+.field-row { display: flex; align-items: center; gap: 16px; padding: 14px 0; border-top: 1px solid var(--mantine-color-default-border); }
+.field-row:first-child { border-top: 0; padding-top: 0; }
+.field-row:last-of-type { padding-bottom: 0; }
+.panel-stack { display: grid; gap: 14px; }
+
+/* Signed-in shell: sticky sidebar (collapsible to a rail), sticky header, centred container. */
+:root { --content-max: 1040px; --sidebar-w: 240px; --rail-w: 64px; }
+.shell { display: flex; align-items: flex-start; min-height: 100vh; }
+.sidebar {
+  position: sticky; top: 0; z-index: 100; flex: none; width: var(--sidebar-w); height: 100vh; height: 100dvh;
+  display: flex; flex-direction: column; gap: 20px; padding: 18px 14px;
+  border-width: 0 1px 0 0; border-radius: 0; box-shadow: none; overflow-y: auto; overflow-x: hidden;
+}
+.sidebar-brand { padding: 0 6px; }
+.sidebar-nav { display: flex; flex-direction: column; gap: 2px; }
+.sidebar-nav .nav-link { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: 8px; color: var(--mantine-color-text); }
+.sidebar-nav .nav-link svg { flex: none; }
+/* Hover and focus are a faint tint; the active item is the full tint plus an edge bar. */
+.sidebar-nav .nav-link:hover, .sidebar-nav .nav-link:focus-visible { background: var(--nav-hover); }
+.sidebar-nav .nav-link[aria-current='page'] { color: var(--accent-text); background: var(--accent-soft); font-weight: 650; box-shadow: inset 3px 0 0 var(--accent-text); }
+.sidebar-nav .nav-link[aria-current='page']:hover { background: var(--accent-soft); }
+.sidebar-foot { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--mantine-color-default-border); }
+.sidebar-collapse {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 12px; border: 0; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--mantine-color-text); font: inherit; font-size: 0.875rem; text-align: left;
+}
+.sidebar-collapse svg { flex: none; }
+.sidebar-collapse:hover, .sidebar-collapse:focus-visible { background: var(--nav-hover); }
+
+.shell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.content-header {
+  position: sticky; top: 0; z-index: 90; display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  min-height: var(--header-h); padding: 8px clamp(16px, 4vw, 32px); border-width: 0 0 1px; border-radius: 0; box-shadow: none;
+}
+.shell-content { padding: 32px clamp(16px, 4vw, 40px) 96px; }
+.shell-container { width: 100%; max-width: var(--content-max); margin-inline: auto; }
+
+/* Wide screens: the width animates; icons keep one fixed column (the side padding is the same in both
+   states), labels stay in the flow, clipped by the sidebar, and only fade. */
+@media (min-width: 769px) {
+  .sidebar { padding-inline: 10px; transition: width 200ms ease; }
+  .sidebar-brand { padding: 0 8px; }
+  .brand, .brand .word, .nav-label { white-space: nowrap; }
+  .brand .word, .nav-label { transition: opacity 140ms ease; }
+  .sidebar[data-collapsed='true'] { width: var(--rail-w); }
+  .sidebar[data-collapsed='true'] .brand .word, .sidebar[data-collapsed='true'] .nav-label { opacity: 0; pointer-events: none; }
+}
+@media (min-width: 769px) and (prefers-reduced-motion: reduce) {
+  .sidebar, .brand .word, .nav-label { transition: none; }
+}
+
+@media (max-width: 768px) {
+  .shell { display: block; }
+  .sidebar {
+    position: static; width: auto; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    padding: 10px 16px; border-width: 0 0 1px; overflow: visible;
+  }
+  .sidebar-nav { flex-direction: row; flex-wrap: wrap; order: 3; width: 100%; }
+  .sidebar-foot { display: none; }
+  .shell-content { padding: 24px 16px 64px; }
+}
+@media (max-width: 520px) { .avatar-name { display: none; } }
+
+/* One PIN field at full width with its button below it, wherever FactorForm is used. */
+.factor-pin { display: grid; gap: 12px; }
+
+/* Header account menu */
+.avatar-btn {
+  display: inline-flex; align-items: center; gap: 10px; padding: 4px 10px 4px 4px; border-radius: 999px; cursor: pointer;
+  color: var(--mantine-color-text); background: transparent; border: 1px solid transparent; font: inherit; font-size: 0.875rem;
+}
+.avatar-btn:hover { background: var(--nav-hover); }
+.avatar { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; font-weight: 700; color: #ecfdf3; background: #0b7041; }
+.avatar-name { font-weight: 600; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.content-header .mantine-Menu-dropdown { background: var(--glass-strong); }
+.content-header .mantine-Menu-dropdown { padding-block: 6px; }
+.content-header .mantine-Menu-label { padding-block: 4px 8px; }
+.content-header .mantine-Menu-item { padding-block: 9px; }
+.content-header .mantine-Menu-label + .mantine-Menu-item { margin-top: 4px; }
+.pref-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 14px 0 0; }
+
+/* Screens: clients, audit, admins. Cards are the glass panels above; these are their insides. */
+.crumb { margin-bottom: 12px; }
+.panel-stack { gap: 20px; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.inset-error { margin-top: 16px; }
+.inset-error .panel { box-shadow: none; }
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
+.toolbar > * { min-width: 180px; }
+.toolbar-grow { flex: 1 1 260px; }
+.toolbar-form { margin-top: 18px; }
+.toolbar > [role='status'] { align-self: center; min-width: 0; margin-left: auto; }
+
+/* Tables: the container scrolls sideways on a narrow screen; the table keeps room to breathe. */
+.table-wrap { margin: 18px -24px 0; padding: 0 24px; overflow-x: auto; }
+.data-table { --table-vertical-spacing: 14px; --table-horizontal-spacing: 16px; min-width: 640px; width: 100%; }
+.data-table thead th {
+  padding-block: 12px; font-size: 0.75rem; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--mantine-color-dimmed); white-space: nowrap; border-bottom: 1px solid var(--mantine-color-default-border);
+}
+.data-table td { padding-block: 16px; vertical-align: middle; border-bottom: 1px solid var(--mantine-color-default-border); }
+.data-table tbody tr:last-child td { border-bottom: 0; }
+.data-table th:first-child, .data-table td:first-child { padding-left: 4px; }
+.cell-mono { font-family: var(--mantine-font-family-monospace); font-size: 0.8125rem; }
+.cell-clip { display: inline-block; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.cell-muted { color: var(--mantine-color-dimmed); font-size: 0.875rem; }
+.cell-nowrap { white-space: nowrap; }
+.cell-strong { font-weight: 600; }
+.cell-name { display: block; margin-bottom: 4px; }
+
+
+.actor { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.actor-name { overflow-wrap: break-word; }
+.chips { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 2px 10px; border-radius: 999px; font-size: 0.8125rem; background: var(--accent-soft); color: var(--mantine-color-text); }
+.chip-mono { font-family: var(--mantine-font-family-monospace); font-size: 0.78rem; }
+
+/* Audit: a row opens into labelled pairs. Fixed layout: the widths below come from the header cells, so
+   no cell's content, however long, and no open row can move another column. */
+.audit-table { table-layout: fixed; min-width: 980px; }
+.audit-table .col-toggle { width: 48px; padding-inline: 4px; }
+.audit-table .col-time { width: 176px; }
+.audit-table .col-actor { width: 176px; }
+.audit-table .col-target { width: 196px; }
+.audit-table .col-result { width: 200px; }
+.audit-table td { overflow-wrap: anywhere; }
+.audit-table .cell-nowrap { white-space: normal; }
+.audit-table .mantine-Badge-root { height: auto; min-height: 22px; padding-block: 3px; white-space: normal; text-align: center; line-height: 1.3; }
+.audit-table .mantine-Badge-label { white-space: normal; }
+.row-toggle {
+  display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--mantine-color-dimmed);
+}
+.row-toggle:hover { background: var(--nav-hover); color: var(--mantine-color-text); }
+.row-toggle svg { transition: transform 180ms ease; }
+.row-toggle[aria-expanded='true'] svg { transform: rotate(90deg); }
+.audit-table .row-open td { border-bottom-color: transparent; }
+/* The detail row is always there. Closed, it is 0 high: no padding or border of its own on the cell. */
+.audit-table .row-detail { border: 0; }
+.audit-table .row-detail td { border: 0; padding: 0; background: var(--accent-soft); }
+.audit-table tbody tr.row-detail:last-child td { border: 0; }
+.detail-reveal { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 180ms ease, visibility 0s linear 180ms; }
+.row-detail[data-open='true'] .detail-reveal { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 180ms ease, visibility 0s; }
+.detail-clip { min-height: 0; overflow: hidden; }
+.detail-body { padding: 8px 16px 20px 52px; border-bottom: 1px solid var(--mantine-color-default-border); }
+@media (prefers-reduced-motion: reduce) {
+  .row-toggle svg, .detail-reveal, .row-detail[data-open='true'] .detail-reveal { transition: none; }
+}
+.detail-grid { display: grid; grid-template-columns: 160px minmax(0, 1fr); align-items: baseline; gap: 10px 24px; margin: 0; padding: 4px 0 0; }
+.detail-grid dt { font-size: 0.8125rem; font-weight: 600; color: var(--mantine-color-dimmed); }
+.detail-grid dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-size: 0.9375rem; line-height: 1.5; }
+.detail-grid .detail-empty { grid-column: 1 / -1; }
+.more-row { display: flex; justify-content: center; margin-top: 24px; }
+
+/* Forms */
+.form-stack { display: grid; gap: 20px; }
+.form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+.form-foot { display: flex; justify-content: flex-end; margin-top: 24px; }
+.readonly-field .mantine-Input-input { opacity: 0.75; cursor: default; }
+.notice { margin-bottom: 20px; border-left: 3px solid var(--mantine-color-orange-6); }
+
+/* Client detail: a row of consequence text and its button. */
+.action-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px 32px; padding: 20px 0; border-top: 1px solid var(--mantine-color-default-border); }
+.panel h2 + .action-row { margin-top: 14px; }
+.action-text { flex: 1 1 320px; max-width: 62ch; }
+.action-ctl { flex: none; }
+.action-row:last-of-type { padding-bottom: 4px; }
+.purge-form { display: grid; gap: 14px; justify-items: start; min-width: min(100%, 300px); }
+.row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.panel .mantine-Checkbox-root { margin-top: 2px; }
+
+@media (max-width: 520px) { .table-wrap { margin-inline: -18px; padding-inline: 18px; } .detail-grid { grid-template-columns: 1fr; gap: 2px; } .detail-grid dd { margin-bottom: 10px; } .detail-body { padding-left: 16px; } }
+
+.data-table .mantine-Badge-root { max-width: none; flex-shrink: 0; white-space: nowrap; }
+.data-table .mantine-Badge-label { overflow: visible; text-overflow: clip; }
+.data-table td:first-child:not(.col-toggle) { min-width: 140px; }
+
+/* Select: Mantine's Combobox, in the glass language. The list is in a portal, so it is styled by its static class. */
+.mantine-Select-input { cursor: pointer; }
+.mantine-Select-dropdown {
+  padding: 6px; border-radius: 12px; border: 1px solid var(--glass-border); outline: 1px solid var(--glass-edge); outline-offset: -1px;
+  background: var(--glass-strong); backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: var(--glass-shadow); min-width: 200px;
+}
+.mantine-Select-options { display: grid; gap: 2px; }
+.mantine-Select-option {
+  min-height: 40px; padding: 8px 12px; border-radius: 8px; font-size: 0.9375rem; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer;
+}
+.mantine-Select-option[data-combobox-selected], .mantine-Select-option:hover { background: var(--nav-hover); color: var(--mantine-color-text); }
+.mantine-Select-option[data-checked] { background: var(--accent-soft); color: var(--accent-text); font-weight: 650; }
+.mantine-Select-option[data-checked] svg { color: var(--accent-text); }
+.mantine-Select-option[data-combobox-disabled] { opacity: 0.5; cursor: not-allowed; }
+
+

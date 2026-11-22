@@ -1,0 +1,32 @@
+info:
+  name: The boundary
+  type: folder
+  seq: 1
+
+request: {}
+
+docs:
+  content: |-
+    ## Every request here is expected to FAIL
+
+    Nothing here needs a credential, and `scripts/portal/smoke.sh` runs this folder
+    on its own against a deployed stage. Each request fails on purpose; a request
+    that succeeds is the bug.
+
+    | request | expected | why it matters |
+    | --- | --- | --- |
+    | unknown API path | **404** `not_found` JSON | /api never falls through to the SPA page |
+    | `text/plain` POST | **415** | a cross-site form post cannot send `application/json` |
+    | unknown account | **401** `invalid_credentials` | no hint whether the address exists |
+    | sign-up without Turnstile | **403** `turnstile_failed` | no bot can create an account |
+    | `/api/me` without a cookie | **401** | no session, no data |
+    | `/api/t/<ulid>/clients` without a cookie | **401** | no session, no workspace data |
+
+    The unknown-account login uses a fresh address on every run, so the per-address failure
+    count never builds up. It still counts as one failure for the caller's IP, and it spends one
+    token of the per-IP login limiter: from one IP the third run within 15 minutes is answered
+    403 `turnstile_required` instead of 401, and the request accepts that. The sign-up refusal
+    spends one token of the per-IP sign-up limiter (burst 5, then one per 10 minutes) and
+    accepts 429 `rate_limited` once they are gone. So the folder passes any number of times,
+    but only the first runs from an IP exercise the 401 and 403 `turnstile_failed` paths.
+  type: text/markdown
