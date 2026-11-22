@@ -42,7 +42,7 @@ func setAuditDetail(ctx context.Context, k, v string) { auditlog.SetDetail(ctx, 
 func (a *App) audited(action string, h http.Handler) http.Handler {
 	return auditlog.Wrap(action, h, func(r *http.Request, e auditlog.Entry) {
 		entry := AuditEntry{
-			TenantID: e.Note.Scope, ActorID: e.Note.ActorID, Action: action,
+			TenantID: e.Note.Scope, ActorID: e.Note.ActorID, ActorName: e.Note.ActorName, Action: action,
 			Target: e.Note.Target, Result: e.Result, IP: a.auditIP(r), Detail: e.Note.Detail, At: a.now(),
 		}
 		if entry.TenantID != "" {

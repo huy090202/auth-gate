@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -696,9 +697,9 @@ func (st *Store) SetFactorProved(ctx context.Context, hash string) error {
 // password or token, nor a hash of one. Detail is a small allow-listed set of
 // facts about the action, built field by field where the action runs.
 type AuditEntry struct {
-	TenantID, ActorID, Action, Target, Result, IP string
-	Detail                                        map[string]string
-	At                                            time.Time
+	TenantID, ActorID, ActorName, Action, Target, Result, IP string
+	Detail                                                   map[string]string
+	At                                                       time.Time
 }
 
 // PutAudit appends one entry to its tenant's partition, with a 180-day ttl.
@@ -706,7 +707,7 @@ func (st *Store) PutAudit(ctx context.Context, e AuditEntry) error {
 	at := e.At.UTC()
 	it := item{
 		"pk": s("TENANT#" + e.TenantID), "sk": s("AUDIT#" + ts(at) + "#" + id.New()),
-		"actorId": s(e.ActorID), "action": s(e.Action), "target": s(e.Target), "result": s(e.Result), "ip": s(e.IP),
+		"actorId": s(e.ActorID), "actorName": s(truncate(e.ActorName, maxAuditTarget)), "action": s(e.Action), "target": s(e.Target), "result": s(e.Result), "ip": s(e.IP),
 		"ttl": n(at.Add(auditTTL).Unix()),
 	}
 	if len(e.Detail) > 0 {
@@ -722,9 +723,20 @@ func (st *Store) PutAudit(ctx context.Context, e AuditEntry) error {
 	return nil
 }
 
+// ErrInvalidCursor means a page cursor is not one ListAudit produced.
+var ErrInvalidCursor = errors.New("portal: invalid cursor")
+
+// auditCursorRE is the sort key of an audit item: a timestamp in the table's
+// layout and a ULID. A cursor is that key, so nothing else is accepted.
+var auditCursorRE = regexp.MustCompile(`^AUDIT#[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z#[0-9A-HJKMNP-TV-Z]{26}$`)
+
 // ListAudit returns up to 50 entries of a tenant, newest first. The returned
-// cursor is empty on the last page; pass it back to read the next.
+// cursor is empty on the last page; pass it back to read the next. A cursor
+// that is not the sort key of an audit item is ErrInvalidCursor.
 func (st *Store) ListAudit(ctx context.Context, tenantID, cursor string) ([]AuditEntry, string, error) {
+	if cursor != "" && (len(cursor) > 100 || !auditCursorRE.MatchString(cursor)) {
+		return nil, "", ErrInvalidCursor
+	}
 	pk := "TENANT#" + tenantID
 	in := &dynamodb.QueryInput{
 		TableName: aws.String(st.Table), ConsistentRead: aws.Bool(true),
@@ -749,7 +761,7 @@ func (st *Store) ListAudit(ctx context.Context, tenantID, cursor string) ([]Audi
 			}
 		}
 		e := AuditEntry{
-			TenantID: tenantID, ActorID: getS(it, "actorId"), Action: getS(it, "action"),
+			TenantID: tenantID, ActorID: getS(it, "actorId"), ActorName: getS(it, "actorName"), Action: getS(it, "action"),
 			Target: getS(it, "target"), Result: getS(it, "result"), IP: getS(it, "ip"), At: t,
 		}
 		if m, ok := it["detail"].(*types.AttributeValueMemberM); ok {

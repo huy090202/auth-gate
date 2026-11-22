@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/huy090202/auth-gate/internal/platform/auditlog"
 	"github.com/huy090202/auth-gate/internal/platform/websession"
 )
 
@@ -66,7 +67,7 @@ func (a *App) guard() websession.Guard {
 			}
 			return u, u.SessionEpoch, true, nil
 		},
-		Known: func(ctx context.Context, acct any) { setAuditActor(ctx, acct.(User).ID) },
+		Known: func(ctx context.Context, acct any) { auditlog.SetActor(ctx, acct.(User).ID, acct.(User).DisplayName) },
 		Limit: func(ctx context.Context, _ websession.Session, acct any) error {
 			return a.spendUser(ctx, acct.(User).ID)
 		},
