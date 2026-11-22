@@ -120,6 +120,18 @@ Under the admin key: `GET` and `PATCH /api/owners/{tenantId}` (read and change t
 `POST /api/owners/{tenantId}/suspend` and `/unsuspend`. `GET /api/clients` gains `owner` in each
 summary.
 
+Also under the admin key, asked for by the owner on 2026-11-22 to clean stg up:
+
+- `DELETE /api/clients/{id}`: the same soft delete as the portal route, for any client. The
+  Console's own client and the Portal's answer `409 own_client_protected`. The Console gains a
+  Delete action on a client, with step-up and the client's name typed again.
+- The smoke runs delete what they create: `cmd/smoke` and the Bruno collection end by deleting
+  their clients, so CI no longer adds three clients to stg on every merge.
+- `scripts/setup-and-deploy/06-prune-clients.sh`, run by hand under the admin profile: lists every
+  client with its id, name, rpId, creation date and owner; proposes the ones named `smoke`,
+  `bruno demo`, `bruno demo renamed` or `bruno rate limit`; lets the operator add or drop ids; never
+  offers the Console's or the Portal's own client; and deletes only after a typed confirmation.
+
 ### 4.4 Verification
 
 The key lookup also refuses a deleted client and a client whose owner is suspended, with the same
@@ -333,7 +345,7 @@ only the Console reads. The Console's new screens:
 
 | Phase | Scope | Done when |
 |---|---|---|
-| P1: tenant-aware AuthGate | 4.1 to 4.4; the factor cleanup script; the deployer policy split | smoke proves a tenant cannot reach another tenant's or an operator's client |
+| P1: tenant-aware AuthGate | 4.1 to 4.4, including operator delete, self-cleaning smokes and the prune script; the factor cleanup script; the deployer policy split | smoke proves a tenant cannot reach another tenant's or an operator's client |
 | P2: Portal, accounts, personal workspace | stack, sections 5, 7, 9; clients in the personal workspace; CI deploys and smokes the Portal | a stranger signs up, creates a client, gets a key and calls AuthGate with it |
 | P3: organisations | section 8 | teams work |
 | P4: operator and finish | section 10, the WAF stack (off), the auth-app "Get a key" page | ready to open once the domain exists |
