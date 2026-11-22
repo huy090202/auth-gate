@@ -41,6 +41,12 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_cursor", nil)
 	case errors.Is(err, client.ErrRotateConflict):
 		httpx.WriteError(w, http.StatusConflict, "rotate_conflict", nil)
+	case errors.Is(err, client.ErrQuotaExceeded):
+		httpx.WriteError(w, http.StatusConflict, "quota_exceeded", nil)
+	case errors.Is(err, client.ErrOwnerSuspended):
+		httpx.WriteError(w, http.StatusConflict, "tenant_suspended", nil)
+	case errors.Is(err, client.ErrDisabledByOperator):
+		httpx.WriteError(w, http.StatusConflict, "disabled_by_operator", nil)
 	case errors.Is(err, client.ErrNotFound):
 		httpx.WriteError(w, http.StatusNotFound, "client_not_found", nil)
 	case errors.Is(err, service.ErrFactorNotFound):

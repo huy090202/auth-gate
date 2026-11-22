@@ -20,7 +20,7 @@ request:
           else if (url.startsWith(base)) path = url.slice(base.length);
           if (path !== null) {
             let prefix = "/verify";
-            if (path.startsWith("/api/clients")) prefix = "/admin";
+            if (/^\/api\/(clients|portal|owners)/.test(path)) prefix = "/admin";
             else if (path.startsWith("/.well-known/")) prefix = "/jwks";
             req.setUrl(base + prefix + path);
           }

@@ -78,7 +78,7 @@ func rolePath(base, path string) string {
 		return base + path
 	}
 	switch {
-	case strings.HasPrefix(path, "/api/clients"):
+	case strings.HasPrefix(path, "/api/clients"), strings.HasPrefix(path, "/api/portal"), strings.HasPrefix(path, "/api/owners"):
 		return base + "/admin" + path
 	case strings.HasPrefix(path, "/.well-known/"):
 		return base + "/jwks" + path

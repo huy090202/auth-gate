@@ -22,22 +22,27 @@ import (
 	"github.com/huy090202/auth-gate/internal/auth/service"
 	"github.com/huy090202/auth-gate/internal/platform/dynamo"
 	"github.com/huy090202/auth-gate/internal/platform/dynamo/dynamotest"
+	"github.com/huy090202/auth-gate/internal/platform/id"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 )
 
-const adminKey = "admin-secret"
+const (
+	adminKey  = "admin-secret"
+	portalKey = "portal-secret"
+)
 
 type env struct {
-	verify, admin http.Handler
-	clients       *client.Service
-	db            *dynamodb.Client
-	table         string
+	verify, admin, portal http.Handler
+	clients               *client.Service
+	db                    *dynamodb.Client
+	table                 string
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	db, table := dynamotest.NewTable(t)
-	clients := &client.Service{Store: client.NewDynamoStore(db, table)}
+	// A nanosecond owner cache makes a suspension refuse keys on the next call.
+	clients := &client.Service{Store: client.NewDynamoStore(db, table), OwnerCacheTTL: time.Nanosecond}
 	svc := &service.Service{
 		Clients:    clients,
 		Factors:    factor.NewDynamoStore(db, table),
@@ -46,6 +51,7 @@ func newEnv(t *testing.T) *env {
 	return &env{
 		verify:  handler.NewVerify(svc, clients, &ratelimit.Limiter{DB: db, Table: table}),
 		admin:   handler.NewAdmin(svc, adminKey),
+		portal:  handler.NewPortal(svc, portalKey),
 		clients: clients, db: db, table: table,
 	}
 }
@@ -64,9 +70,17 @@ func (e *env) newClient(t *testing.T, s ratelimit.Settings) (client.Client, stri
 }
 
 func do(h http.Handler, method, path, key, body string) *httptest.ResponseRecorder {
+	return doTenant(h, method, path, key, "", body)
+}
+
+// doTenant is do with an x-tenant-id header, sent when tenant is not empty.
+func doTenant(h http.Handler, method, path, key, tenant, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	if key != "" {
 		r.Header.Set("x-internal-access-key", key)
+	}
+	if tenant != "" {
+		r.Header.Set("x-tenant-id", tenant)
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -566,5 +580,299 @@ func TestRotateConflictAnswers409(t *testing.T) {
 	w := e.admin_(http.MethodPost, "/api/clients/"+c.ID+"/keys", "")
 	if w.Code != http.StatusConflict || w.Body.String() != "{\"error\":\"rotate_conflict\"}\n" {
 		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
+
+const newClientBody = `{"name":"shop","rpId":"example.com","origins":["https://app.example.com"]}`
+
+func (e *env) portal_(method, path, tenant, body string) *httptest.ResponseRecorder {
+	return doTenant(e.portal, method, path, portalKey, tenant, body)
+}
+
+// portalCreate creates a client as tenant and returns its id and first key.
+func (e *env) portalCreate(t *testing.T, tenant string) (string, string) {
+	t.Helper()
+	w := e.portal_(http.MethodPost, "/api/portal/clients", tenant, newClientBody)
+	var b struct {
+		ClientID  string `json:"clientId"`
+		AccessKey string `json:"accessKey"`
+	}
+	if w.Code != http.StatusCreated || json.Unmarshal(w.Body.Bytes(), &b) != nil || b.ClientID == "" || b.AccessKey == "" {
+		t.Fatalf("portal create: %d %s", w.Code, w.Body)
+	}
+	return b.ClientID, b.AccessKey
+}
+
+func wantError(t *testing.T, w *httptest.ResponseRecorder, status int, code string) {
+	t.Helper()
+	if w.Code != status || w.Body.String() != `{"error":"`+code+`"}`+"\n" {
+		t.Fatalf("got %d %s, want %d %s", w.Code, w.Body, status, code)
+	}
+}
+
+// Why: this is the tenant boundary. A client of another tenant, of an operator
+// or a deleted one must look exactly like an unknown id on every portal route,
+// and the refused call must change nothing.
+func TestPortalIsolation(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a, b := id.New(), id.New()
+	ownA, _ := e.portalCreate(t, a)
+	ofB, keyB := e.portalCreate(t, b)
+	op, keyOp := e.newClient(t, fast())
+	gone, _ := e.portalCreate(t, a)
+	if w := e.portal_(http.MethodDelete, "/api/portal/clients/"+gone, a, ""); w.Code != http.StatusNoContent {
+		t.Fatalf("delete own: %d %s", w.Code, w.Body)
+	}
+	// A PIN on each live target, so a purge that got through would show.
+	for _, k := range []string{keyB, keyOp} {
+		if w := do(e.verify, http.MethodPost, "/api/factors/pin", k, `{"subjectId":"u1","pin":"493817"}`); w.Code != http.StatusCreated {
+			t.Fatalf("enroll: %d %s", w.Code, w.Body)
+		}
+	}
+	routes := []struct{ method, suffix, body string }{
+		{http.MethodGet, "", ""},
+		{http.MethodPatch, "", `{"name":"stolen"}`},
+		{http.MethodPost, "/disable", ""},
+		{http.MethodPost, "/enable", ""},
+		{http.MethodPost, "/keys", ""},
+		{http.MethodDelete, "/keys/previous", ""},
+		{http.MethodDelete, "/subjects/u1", ""},
+		{http.MethodDelete, "", ""},
+	}
+	targets := []struct{ name, id, key string }{
+		{"another tenant's client", ofB, keyB},
+		{"an operator's client", op.ID, keyOp},
+		{"a deleted client", gone, ""},
+	}
+	for _, tg := range targets {
+		before := e.admin_(http.MethodGet, "/api/clients/"+tg.id, "").Body.String()
+		stored, _ := e.clients.Store.GetClient(ctx, tg.id)
+		for _, rt := range routes {
+			w := e.portal_(rt.method, "/api/portal/clients/"+tg.id+rt.suffix, a, rt.body)
+			if w.Code != http.StatusNotFound || w.Body.String() != "{\"error\":\"client_not_found\"}\n" {
+				t.Errorf("%s: %s %s: %d %s", tg.name, rt.method, rt.suffix, w.Code, w.Body)
+			}
+		}
+		if after := e.admin_(http.MethodGet, "/api/clients/"+tg.id, "").Body.String(); after != before {
+			t.Errorf("%s changed:\n%s\n%s", tg.name, before, after)
+		}
+		now, _ := e.clients.Store.GetClient(ctx, tg.id)
+		if strings.Join(now.KeyHashes, ",") != strings.Join(stored.KeyHashes, ",") || len(now.RetiredKeys) != len(stored.RetiredKeys) {
+			t.Errorf("%s: keys changed", tg.name)
+		}
+		if tg.key == "" {
+			continue
+		}
+		if w := e.call(tg.key); w.Code != http.StatusOK || w.Body.String() != "{\"pin\":true,\"webauthn\":[]}\n" {
+			t.Errorf("%s: key or PIN lost: %d %s", tg.name, w.Code, w.Body)
+		}
+	}
+	w := e.portal_(http.MethodGet, "/api/portal/clients", a, "")
+	var p listPage
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &p) != nil || len(p.Clients) != 1 || p.Clients[0].ClientID != ownA {
+		t.Fatalf("tenant A's list: %d %s", w.Code, w.Body)
+	}
+}
+
+// Why: each key opens only its own routes; a leaked portal key must not reach
+// the operator's routes, and the admin key must not act as a tenant.
+func TestPortalAndAdminKeysDoNotCross(t *testing.T) {
+	e := newEnv(t)
+	c, _ := e.newClient(t, fast())
+	wantError(t, doTenant(e.portal, http.MethodGet, "/api/portal/clients", adminKey, id.New(), ""), http.StatusUnauthorized, "unauthorized")
+	wantError(t, do(e.admin, http.MethodGet, "/api/clients", portalKey, ""), http.StatusUnauthorized, "unauthorized")
+	wantError(t, do(e.admin, http.MethodDelete, "/api/clients/"+c.ID, portalKey, ""), http.StatusUnauthorized, "unauthorized")
+	if w := e.admin_(http.MethodGet, "/api/clients/"+c.ID, ""); w.Code != http.StatusOK {
+		t.Fatalf("client after a refused delete: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestPortalCreateForcesRateLimit(t *testing.T) {
+	e := newEnv(t)
+	tenant := id.New()
+	w := e.portal_(http.MethodPost, "/api/portal/clients", tenant,
+		`{"name":"shop","rpId":"example.com","origins":["https://app.example.com"],"rateLimit":{"burst":500,"perSecond":500}}`)
+	var created struct {
+		ClientID string `json:"clientId"`
+	}
+	if w.Code != http.StatusCreated || json.Unmarshal(w.Body.Bytes(), &created) != nil {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	w = e.admin_(http.MethodGet, "/api/clients/"+created.ClientID, "")
+	var view struct {
+		Owner     string `json:"owner"`
+		RateLimit struct {
+			Burst     int     `json:"burst"`
+			PerSecond float64 `json:"perSecond"`
+		} `json:"rateLimit"`
+	}
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &view) != nil {
+		t.Fatalf("admin get: %d %s", w.Code, w.Body)
+	}
+	if view.RateLimit.Burst != 20 || view.RateLimit.PerSecond != 10 || view.Owner != tenant {
+		t.Fatalf("view %s", w.Body)
+	}
+	wantError(t, e.portal_(http.MethodPatch, "/api/portal/clients/"+created.ClientID, tenant, `{"rateLimit":{"burst":20,"perSecond":10}}`),
+		http.StatusBadRequest, "invalid_client")
+}
+
+func TestPortalTenantHeader(t *testing.T) {
+	e := newEnv(t)
+	for _, tenant := range []string{"", "nope", strings.ToLower(id.New())} {
+		wantError(t, e.portal_(http.MethodGet, "/api/portal/clients", tenant, ""), http.StatusBadRequest, "invalid_tenant")
+	}
+}
+
+type ownerBody struct {
+	TenantID    string  `json:"tenantId"`
+	ClientCount int     `json:"clientCount"`
+	ClientQuota int     `json:"clientQuota"`
+	SuspendedAt *string `json:"suspendedAt"`
+}
+
+func (e *env) owner(t *testing.T, method, path, body string) ownerBody {
+	t.Helper()
+	w := e.admin_(method, path, body)
+	var o ownerBody
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &o) != nil {
+		t.Fatalf("%s %s: %d %s", method, path, w.Code, w.Body)
+	}
+	return o
+}
+
+func TestPortalQuotaAndSuspension(t *testing.T) {
+	e := newEnv(t)
+	tenant := id.New()
+	var first, key string
+	for i := 0; i < 5; i++ {
+		c, k := e.portalCreate(t, tenant)
+		if i == 0 {
+			first, key = c, k
+		}
+	}
+	wantError(t, e.portal_(http.MethodPost, "/api/portal/clients", tenant, newClientBody), http.StatusConflict, "quota_exceeded")
+
+	path := "/api/owners/" + tenant
+	if o := e.owner(t, http.MethodPatch, path, `{"clientQuota":6}`); o.TenantID != tenant || o.ClientQuota != 6 || o.ClientCount != 5 {
+		t.Fatalf("patch quota: %+v", o)
+	}
+	e.portalCreate(t, tenant)
+	if o := e.owner(t, http.MethodGet, path, ""); o.ClientCount != 6 || o.SuspendedAt != nil {
+		t.Fatalf("get owner: %+v", o)
+	}
+
+	if w := e.call(key); w.Code != http.StatusOK {
+		t.Fatalf("key before suspend: %d %s", w.Code, w.Body)
+	}
+	if o := e.owner(t, http.MethodPost, path+"/suspend", ""); o.SuspendedAt == nil {
+		t.Fatalf("suspend: %+v", o)
+	}
+	wantError(t, e.portal_(http.MethodPost, "/api/portal/clients", tenant, newClientBody), http.StatusConflict, "tenant_suspended")
+	wantError(t, e.portal_(http.MethodPost, "/api/portal/clients/"+first+"/keys", tenant, ""), http.StatusConflict, "tenant_suspended")
+	if w := e.portal_(http.MethodGet, "/api/portal/clients/"+first, tenant, ""); w.Code != http.StatusOK {
+		t.Fatalf("read while suspended: %d %s", w.Code, w.Body)
+	}
+	wantError(t, e.call(key), http.StatusUnauthorized, "unauthorized")
+
+	if o := e.owner(t, http.MethodPost, path+"/unsuspend", ""); o.SuspendedAt != nil {
+		t.Fatalf("unsuspend: %+v", o)
+	}
+	if w := e.call(key); w.Code != http.StatusOK {
+		t.Fatalf("key after unsuspend: %d %s", w.Code, w.Body)
+	}
+	wantError(t, e.admin_(http.MethodGet, "/api/owners/nope", ""), http.StatusBadRequest, "invalid_id")
+	wantError(t, e.admin_(http.MethodPost, "/api/owners/"+strings.ToLower(tenant)+"/suspend", ""), http.StatusBadRequest, "invalid_id")
+}
+
+func TestPortalEnableAfterOperatorDisable(t *testing.T) {
+	e := newEnv(t)
+	tenant := id.New()
+	c, _ := e.portalCreate(t, tenant)
+	if w := e.admin_(http.MethodPost, "/api/clients/"+c+"/disable", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"disabledBy":"operator"`) {
+		t.Fatalf("admin disable: %d %s", w.Code, w.Body)
+	}
+	wantError(t, e.portal_(http.MethodPost, "/api/portal/clients/"+c+"/enable", tenant, ""), http.StatusConflict, "disabled_by_operator")
+	if w := e.admin_(http.MethodGet, "/api/clients/"+c, ""); !strings.Contains(w.Body.String(), `"disabledAt"`) {
+		t.Fatalf("still disabled: %s", w.Body)
+	}
+}
+
+func TestAdminDeleteClient(t *testing.T) {
+	e := newEnv(t)
+	c, key := e.newClient(t, fast())
+	if w := e.admin_(http.MethodDelete, "/api/clients/"+c.ID, ""); w.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", w.Code, w.Body)
+	}
+	wantError(t, e.admin_(http.MethodGet, "/api/clients/"+c.ID, ""), http.StatusNotFound, "client_not_found")
+	wantError(t, e.call(key), http.StatusUnauthorized, "unauthorized")
+	if p := e.list(t, ""); len(p.Clients) != 0 {
+		t.Fatalf("list %+v", p)
+	}
+	wantError(t, e.admin_(http.MethodDelete, "/api/clients/"+c.ID, ""), http.StatusNotFound, "client_not_found")
+}
+
+// Why: operator clients predate tenants; the Console and scripts read these
+// views, so the new fields must not appear on them.
+func TestLegacyClientViewUnchanged(t *testing.T) {
+	e := newEnv(t)
+	c, _ := e.newClient(t, fast())
+	var view map[string]any
+	if w := e.admin_(http.MethodGet, "/api/clients/"+c.ID, ""); json.Unmarshal(w.Body.Bytes(), &view) != nil {
+		t.Fatalf("get: %d %s", w.Code, w.Body)
+	}
+	var page struct {
+		Clients []map[string]any `json:"clients"`
+	}
+	if w := e.admin_(http.MethodGet, "/api/clients", ""); json.Unmarshal(w.Body.Bytes(), &page) != nil || len(page.Clients) != 1 {
+		t.Fatalf("list: %d %s", w.Code, w.Body)
+	}
+	for _, m := range []map[string]any{view, page.Clients[0]} {
+		for _, k := range []string{"owner", "disabledBy"} {
+			if _, ok := m[k]; ok {
+				t.Errorf("%s present in %v", k, m)
+			}
+		}
+	}
+}
+
+// beforeExpireStore runs f once, just before the first ExpireKey.
+type beforeExpireStore struct {
+	client.Store
+	f func()
+}
+
+func (s *beforeExpireStore) ExpireKey(ctx context.Context, hash string, at time.Time) error {
+	if f := s.f; f != nil {
+		s.f = nil
+		f()
+	}
+	return s.Store.ExpireKey(ctx, hash, at)
+}
+
+// Why: a delete that lands inside a rotate removes the key items the rotate
+// is expiring; the rotate must then answer like a missing client, not 500.
+func TestRotateRacingDeleteAnswers404(t *testing.T) {
+	e := newEnv(t)
+	seam := &beforeExpireStore{Store: e.clients.Store}
+	e.clients.Store = seam
+	tenant := id.New()
+	own, _ := e.portalCreate(t, tenant)
+	op, _ := e.newClient(t, fast())
+	for _, tc := range []struct {
+		id   string
+		call func() *httptest.ResponseRecorder
+	}{
+		{own, func() *httptest.ResponseRecorder {
+			return e.portal_(http.MethodPost, "/api/portal/clients/"+own+"/keys", tenant, "")
+		}},
+		{op.ID, func() *httptest.ResponseRecorder { return e.admin_(http.MethodPost, "/api/clients/"+op.ID+"/keys", "") }},
+	} {
+		seam.f = func() {
+			if err := e.clients.Delete(context.Background(), tc.id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wantError(t, tc.call(), http.StatusNotFound, "client_not_found")
 	}
 }

@@ -202,7 +202,7 @@ func (a *api) url(path string) string {
 		return a.base + path
 	}
 	switch {
-	case strings.HasPrefix(path, "/api/clients"):
+	case strings.HasPrefix(path, "/api/clients"), strings.HasPrefix(path, "/api/portal"), strings.HasPrefix(path, "/api/owners"):
 		return a.base + "/admin" + path
 	case strings.HasPrefix(path, "/.well-known/"):
 		return a.base + "/jwks" + path
