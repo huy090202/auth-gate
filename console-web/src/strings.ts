@@ -281,6 +281,7 @@ const enStrings = {
       'rotate-key': 'Key rotated',
       'revoke-previous-keys': 'Previous keys revoked',
       'disable-client': 'Client disabled',
+      'delete-client': 'Client deleted',
       'enable-client': 'Client enabled',
       'purge-subject': 'User factors cleared',
       'admin-create': 'Admin created',
@@ -289,7 +290,7 @@ const enStrings = {
       'admin-disable': 'Admin disabled',
       'admin-enable': 'Admin enabled',
       'admin-role': 'Admin role changed',
-    },
+    } satisfies Record<AuditAction, string>,
     detailKeys: {
       reason: 'Reason',
       role: 'Role',
@@ -453,6 +454,35 @@ const enStrings = {
     busy: 'The service is busy. Confirm again and retry.',
   } satisfies Record<ErrorCode, string>,
 };
+
+/** Every action the backend audits (`audited(...)` in internal/console); a label missing here is a compile error. */
+export type AuditAction =
+  | 'login'
+  | 'logout'
+  | 'second-factor-start'
+  | 'second-factor-verify'
+  | 'stepup-start'
+  | 'stepup-verify'
+  | 'change-password'
+  | 'set-pin'
+  | 'delete-pin'
+  | 'passkey-start'
+  | 'passkey-finish'
+  | 'delete-passkey'
+  | 'create-client'
+  | 'update-client'
+  | 'rotate-key'
+  | 'revoke-previous-keys'
+  | 'disable-client'
+  | 'delete-client'
+  | 'enable-client'
+  | 'purge-subject'
+  | 'admin-create'
+  | 'admin-reset-password'
+  | 'admin-clear-factors'
+  | 'admin-disable'
+  | 'admin-enable'
+  | 'admin-role';
 
 export type Strings = Widen<typeof enStrings>;
 export const en: Strings = enStrings;
@@ -733,6 +763,7 @@ export const vi: Strings = {
       'rotate-key': 'Đổi khóa',
       'revoke-previous-keys': 'Thu hồi các khóa trước',
       'disable-client': 'Vô hiệu hóa ứng dụng khách',
+      'delete-client': 'Xóa ứng dụng khách',
       'enable-client': 'Bật ứng dụng khách',
       'purge-subject': 'Xóa yếu tố của người dùng',
       'admin-create': 'Tạo quản trị viên',
