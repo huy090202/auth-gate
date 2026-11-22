@@ -129,12 +129,15 @@ Resources:
               Condition:
                 StringEquals:
                   ses:FromAddress: !Ref EmailFrom
+            # pending/ takes the uploads; a confirm copies one to avatars/ and deletes it.
             - Effect: Allow
               Action:
                 - s3:PutObject
                 - s3:GetObject
                 - s3:DeleteObject
-              Resource: !Sub "${AvatarBucket.Arn}/avatars/*"
+              Resource:
+                - !Sub "${AvatarBucket.Arn}/avatars/*"
+                - !Sub "${AvatarBucket.Arn}/pending/*"
 
   SiteBucket:
     Type: AWS::S3::Bucket
@@ -152,9 +155,9 @@ Resources:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
 
-  # Profile pictures. The browser POSTs here with a presigned form (CORS below); CloudFront
-  # serves them at /avatars/* through OAC. An unconfirmed upload stays as an object: a known
-  # minor, as objects are never expired here.
+  # Profile pictures. The browser POSTs to pending/ with a presigned form (CORS below); the API
+  # confirms an upload by copying it to avatars/, which is all CloudFront serves (at /avatars/*,
+  # through OAC). An upload never confirmed is never served and expires after a day.
   AvatarBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -187,6 +190,10 @@ Resources:
             Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 1
+          - Id: expire-unconfirmed-uploads
+            Status: Enabled
+            Prefix: pending/
+            ExpirationInDays: 1
 
   SiteOac:
     Type: AWS::CloudFront::OriginAccessControl

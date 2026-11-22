@@ -37,8 +37,9 @@ func (n noListing) Open(name string) (http.File, error) {
 // PORTAL_DEV=1, so a deployed Portal has neither.
 func DevRoutes(next http.Handler, root string, dir *avatar.Dir) http.Handler {
 	mux := http.NewServeMux()
-	// Keys are avatars/<userId>/<ulid>.<ext>, and production serves "/" + key
-	// through CloudFront's /avatars/* behaviour, so the root is served as is.
+	// Confirmed keys are avatars/<userId>/<ulid>.<ext>, and production serves
+	// "/" + key through CloudFront's /avatars/* behaviour, so the root is served
+	// as is; uploads waiting under pending/ are not served, as in production.
 	mux.Handle("GET /avatars/", http.FileServer(noListing{http.Dir(root)}))
 	mux.HandleFunc("POST "+DevAvatarUploadPath, func(w http.ResponseWriter, r *http.Request) {
 		if err := saveUpload(w, r, dir); err != nil {

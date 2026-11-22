@@ -64,7 +64,7 @@ A password has 12 to 128 bytes and is argon2id hashed with the Console's paramet
 
 ## Avatars: a presigned POST, then a server confirm
 
-The browser asks for an upload form, posts the file to S3 directly (no credentials; conditions `content-length-range` up to 1 MiB and the content type, PNG, JPEG or WebP; key `avatars/<userId>/<ulid>.<ext>`), then asks the API to confirm. The API `HeadObject`s the key, checks size and type (and that the type matches the key's extension), and only then sets it on the account. The file never passes through the Lambda, so there is no body size limit to hit and no image decoding in a function that holds keys. CloudFront serves `/avatars/*` from the bucket through an origin access control, with `Content-Security-Policy: default-src 'none'; sandbox` so an uploaded object cannot run as a page.
+The browser asks for an upload form, posts the file to S3 directly (no credentials; conditions `content-length-range` up to 1 MiB and the content type, PNG, JPEG or WebP; key `pending/<userId>/<ulid>.<ext>`), then asks the API to confirm. The API `HeadObject`s the pending key, checks size and type (and that the type matches the key's extension), copies it to `avatars/<userId>/<ulid>.<ext>`, deletes the pending object, and only then sets it on the account. CloudFront and the bucket policy serve only `avatars/*`, and a lifecycle rule expires `pending/` after 1 day, so an upload that is never confirmed is never public and does not stay. Account deletion removes the confirmed avatar and relies on that expiry for any pending upload (the function has no right to list the bucket). The file never passes through the Lambda, so there is no body size limit to hit and no image decoding in a function that holds keys. CloudFront serves `/avatars/*` from the bucket through an origin access control, with `Content-Security-Policy: default-src 'none'; sandbox` so an uploaded object cannot run as a page.
 
 ## Alternatives rejected
 
@@ -82,7 +82,7 @@ The browser asks for an upload form, posts the file to S3 directly (no credentia
 ## Consequences
 
 - The four email routes always take about 1.5 s.
-- Unconfirmed avatar uploads stay in the bucket (a lifecycle rule removes only incomplete multipart uploads, after 1 day).
+- An unconfirmed avatar upload lives under `pending/` for up to a day, unserved, then expires.
 - A deleted avatar can stay in CloudFront's cache for up to 24 hours.
 - An email change does not void recovery links already sent to the old address; they die within their 1-hour life.
 - Tenants register any `rpId` and origins without a domain-ownership check. The browser still binds a passkey to the origin it was made on, so this cannot be used to steal another site's passkeys, but a tenant can name a domain it does not own in its own client.

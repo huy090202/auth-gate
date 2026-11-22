@@ -49,7 +49,10 @@
         "s3:GetObject",
         "s3:DeleteObject"
       ],
-      "Resource": "arn:aws:s3:::auth-gate-portal-*/avatars/*"
+      "Resource": [
+        "arn:aws:s3:::auth-gate-portal-*/avatars/*",
+        "arn:aws:s3:::auth-gate-portal-*/pending/*"
+      ]
     },
     {
       "Sid": "UseTheSigningKey",

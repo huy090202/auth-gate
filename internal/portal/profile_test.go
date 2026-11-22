@@ -328,9 +328,29 @@ func (m *memAvatars) Delete(_ context.Context, key string) error {
 	m.deleted = append(m.deleted, key)
 	return nil
 }
+func (m *memAvatars) Copy(_ context.Context, from, to string) error {
+	o, ok := m.objs[from]
+	if !ok {
+		return errors.New("no such object")
+	}
+	m.objs[to] = o
+	return nil
+}
 
-// Why: a confirm names an object key; it must be the caller's own, within the size and type the form allowed,
-// or one person could claim or destroy another's picture, or park a huge file.
+// served is what CloudFront would serve: the objects under avatars/.
+func (m *memAvatars) served() []string {
+	var out []string
+	for k := range m.objs {
+		if strings.HasPrefix(k, "avatars/") {
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// Why: a confirm names an object key; it must be the caller's own pending upload, within the size and type the
+// form allowed, or one person could claim or destroy another's picture, or park a huge file.
 func TestAvatarConfirmRejectsOthersKeyAndOversize(t *testing.T) {
 	e := newAuthEnv(t)
 	u := e.user(t, "a@x.com", goodPW)
@@ -344,7 +364,7 @@ func TestAvatarConfirmRejectsOthersKeyAndOversize(t *testing.T) {
 		r := form(ct)
 		want(t, r, 200, "")
 		key := r.str("key")
-		if !strings.HasPrefix(key, "avatars/"+u.ID+"/") {
+		if !strings.HasPrefix(key, "pending/"+u.ID+"/") {
 			t.Fatalf("key = %q", key)
 		}
 		mem.objs[key] = memObj{size, ct}
@@ -354,14 +374,20 @@ func TestAvatarConfirmRejectsOthersKeyAndOversize(t *testing.T) {
 	want(t, form("image/gif"), 400, "invalid_avatar")
 	want(t, form("text/html"), 400, "invalid_avatar")
 
-	other := "avatars/" + id.New() + "/" + id.New() + ".png"
-	mem.objs[other] = memObj{10, "image/png"}
-	want(t, confirm(other), 400, "invalid_avatar")
-	want(t, confirm("avatars/"+u.ID+"/../"+id.New()+".png"), 400, "invalid_avatar")
-	want(t, confirm("avatars/"+u.ID+"/nope.png"), 400, "invalid_avatar")
-	if _, ok := mem.objs[other]; !ok || len(mem.deleted) != 0 {
-		t.Fatalf("a refused key was touched: deleted %v", mem.deleted)
+	otherPending := "pending/" + id.New() + "/" + id.New() + ".png"
+	otherServed := "avatars/" + id.New() + "/" + id.New() + ".png"
+	ownServed := "avatars/" + u.ID + "/" + id.New() + ".png" // not an upload: a confirmed key is not confirmed again
+	for _, k := range []string{otherPending, otherServed, ownServed} {
+		mem.objs[k] = memObj{10, "image/png"}
+		want(t, confirm(k), 400, "invalid_avatar")
 	}
+	want(t, confirm("pending/"+u.ID+"/../"+id.New()+".png"), 400, "invalid_avatar")
+	want(t, confirm("pending/"+u.ID+"/nope.png"), 400, "invalid_avatar")
+	if len(mem.objs) != 3 || len(mem.deleted) != 0 {
+		t.Fatalf("a refused key was touched: objects %v, deleted %v", mem.objs, mem.deleted)
+	}
+	delete(mem.objs, otherServed)
+	delete(mem.objs, ownServed)
 
 	big := put("image/png", avatar.MaxBytes+1)
 	want(t, confirm(big), 400, "invalid_avatar")
@@ -376,31 +402,62 @@ func TestAvatarConfirmRejectsOthersKeyAndOversize(t *testing.T) {
 	if got := e.reload(t, u); got.AvatarKey != "" {
 		t.Fatalf("avatar set by a refused confirm: %q", got.AvatarKey)
 	}
+	if s := mem.served(); len(s) != 0 {
+		t.Fatalf("an unconfirmed upload is served: %v", s)
+	}
+}
 
-	first := put("image/png", 1000)
-	r := confirm(first)
+// Why: an upload lands under pending/, which nothing serves and a lifecycle rule expires; only a confirm moves it
+// under avatars/, so an unconfirmed upload is never public and never permanent.
+func TestAvatarConfirmMovesThePendingUpload(t *testing.T) {
+	e := newAuthEnv(t)
+	u := e.user(t, "a@x.com", goodPW)
+	e.withPIN(t, u, pin1)
+	b := e.fullSession(t, u, "203.0.113.1")
+	mem := &memAvatars{objs: map[string]memObj{}}
+	e.a.Avatars = mem
+	upload := func(ct string, size int64) string {
+		r := b.do("POST", "/api/me/avatar", map[string]string{"contentType": ct})
+		want(t, r, 200, "")
+		mem.objs[r.str("key")] = memObj{size, ct}
+		return r.str("key")
+	}
+	served := func(pending string) string { return "avatars/" + strings.TrimPrefix(pending, "pending/") }
+
+	first := upload("image/png", 1000)
+	if s := mem.served(); len(s) != 0 {
+		t.Fatalf("served before confirm: %v", s)
+	}
+	r := b.do("POST", "/api/me/avatar/confirm", map[string]string{"key": first})
 	want(t, r, 200, "")
-	if r.str("avatarUrl") != "/"+first {
+	if r.str("avatarUrl") != "/"+served(first) {
 		t.Fatalf("avatarUrl = %q", r.str("avatarUrl"))
 	}
-	if me := b.do("GET", "/api/me", nil); me.str("avatarUrl") != "/"+first {
+	if _, ok := mem.objs[first]; ok || !slices.Equal(mem.served(), []string{served(first)}) {
+		t.Fatalf("not moved: objects %v", mem.objs)
+	}
+	if got := e.reload(t, u); got.AvatarKey != served(first) {
+		t.Fatalf("avatarKey = %q", got.AvatarKey)
+	}
+	if me := b.do("GET", "/api/me", nil); me.str("avatarUrl") != "/"+served(first) {
 		t.Fatalf("/api/me avatarUrl = %q", me.str("avatarUrl"))
 	}
-	mem.deleted = nil
-	second := put("image/webp", 2000)
-	want(t, confirm(second), 200, "")
-	if !slices.Equal(mem.deleted, []string{first}) {
-		t.Fatalf("previous avatar not deleted: %v", mem.deleted)
+	// The pending key is spent: confirming it again finds nothing and changes nothing.
+	want(t, b.do("POST", "/api/me/avatar/confirm", map[string]string{"key": first}), 400, "invalid_avatar")
+	if got := e.reload(t, u); got.AvatarKey != served(first) {
+		t.Fatalf("avatarKey after a re-confirm = %q", got.AvatarKey)
 	}
-	want(t, confirm(second), 200, "") // confirming again keeps the object
-	if _, ok := mem.objs[second]; !ok {
-		t.Fatal("re-confirm deleted the current avatar")
+
+	second := upload("image/webp", 2000)
+	want(t, b.do("POST", "/api/me/avatar/confirm", map[string]string{"key": second}), 200, "")
+	if !slices.Equal(mem.served(), []string{served(second)}) {
+		t.Fatalf("previous avatar not deleted: %v", mem.served())
 	}
 	if r := b.do("DELETE", "/api/me/avatar", nil); r.Status != 204 {
 		t.Fatalf("remove = %d", r.Status)
 	}
-	if _, ok := mem.objs[second]; ok {
-		t.Fatal("removed avatar object kept")
+	if len(mem.objs) != 0 {
+		t.Fatalf("objects left after remove: %v", mem.objs)
 	}
 	if me := b.do("GET", "/api/me", nil); me.m()["avatarUrl"] != nil {
 		t.Fatalf("avatarUrl after remove: %s", me.Body)

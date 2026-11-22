@@ -423,6 +423,14 @@ func (a *App) confirmEmailChange(w http.ResponseWriter, r *http.Request) error {
 
 var errInvalidAvatar = apiErr(http.StatusBadRequest, "invalid_avatar")
 
+// Uploads land under pendingPrefix, which CloudFront does not serve and a
+// lifecycle rule expires after a day; a confirm moves one under avatarPrefix,
+// the only prefix /avatars/* serves.
+const (
+	pendingPrefix = "pending/"
+	avatarPrefix  = "avatars/"
+)
+
 func (a *App) avatarForm(w http.ResponseWriter, r *http.Request) error {
 	_, u := sessionFrom(r.Context())
 	var in struct{ ContentType string }
@@ -433,7 +441,7 @@ func (a *App) avatarForm(w http.ResponseWriter, r *http.Request) error {
 	if !ok {
 		return errInvalidAvatar
 	}
-	key := "avatars/" + u.ID + "/" + id.New() + "." + ext
+	key := pendingPrefix + u.ID + "/" + id.New() + "." + ext
 	f, err := a.Avatars.PresignPost(r.Context(), key, in.ContentType)
 	if err != nil {
 		return err
@@ -442,22 +450,29 @@ func (a *App) avatarForm(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// ownAvatarExt is the extension of key when it is exactly avatars/<userId>/<ulid>.<ext>.
-func ownAvatarExt(userID, key string) (string, bool) {
-	rest, ok := strings.CutPrefix(key, "avatars/"+userID+"/")
+// ownPendingAvatar is, when key is exactly pending/<userId>/<ulid>.<ext>, the
+// part after pending/ (the key's name under avatars/) and the extension.
+func ownPendingAvatar(userID, key string) (name, ext string, ok bool) {
+	name, ok = strings.CutPrefix(key, pendingPrefix)
 	if !ok {
-		return "", false
+		return "", "", false
 	}
-	name, ext, ok := strings.Cut(rest, ".")
-	if !ok || id.ValidateULID(name) != nil || avatarExts[ext] == "" {
-		return "", false
+	rest, ok := strings.CutPrefix(name, userID+"/")
+	if !ok {
+		return "", "", false
 	}
-	return ext, true
+	file, ext, ok := strings.Cut(rest, ".")
+	if !ok || id.ValidateULID(file) != nil || avatarExts[ext] == "" {
+		return "", "", false
+	}
+	return name, ext, true
 }
 
-// confirmAvatar accepts an uploaded object as the avatar once S3 reports a size
-// and type the form should have allowed. An object that is not as promised is
-// deleted. A key that is not the caller's is refused without touching it.
+// confirmAvatar accepts the caller's pending upload as the avatar once S3
+// reports a size and type the form should have allowed: it is copied under
+// avatars/, the pending object is deleted, and only then is it set on the
+// account. An object that is not as promised is deleted. A key that is not the
+// caller's own pending upload is refused without touching it.
 func (a *App) confirmAvatar(w http.ResponseWriter, r *http.Request) error {
 	_, u := sessionFrom(r.Context())
 	ctx := r.Context()
@@ -465,7 +480,7 @@ func (a *App) confirmAvatar(w http.ResponseWriter, r *http.Request) error {
 	if err := webapi.DecodeBody(r, &in); err != nil {
 		return err
 	}
-	ext, ok := ownAvatarExt(u.ID, in.Key)
+	name, ext, ok := ownPendingAvatar(u.ID, in.Key)
 	if !ok {
 		return errInvalidAvatar
 	}
@@ -480,13 +495,21 @@ func (a *App) confirmAvatar(w http.ResponseWriter, r *http.Request) error {
 		}
 		return errInvalidAvatar
 	}
-	prev, err := a.Store.swapAvatar(ctx, u.ID, in.Key)
+	key := avatarPrefix + name
+	if err := a.Avatars.Copy(ctx, in.Key, key); err != nil {
+		return fmt.Errorf("avatar copy: %w", err)
+	}
+	if err := a.Avatars.Delete(ctx, in.Key); err != nil {
+		slog.Warn("portal: confirmed avatar's upload not deleted; it expires in a day", "err", err)
+	}
+	prev, err := a.Store.swapAvatar(ctx, u.ID, key)
 	if err != nil {
+		a.dropAvatar(ctx, key, "")
 		return sessionUserGone(err)
 	}
-	a.dropAvatar(ctx, prev, in.Key)
-	setAuditTarget(ctx, in.Key)
-	httpx.WriteJSON(w, http.StatusOK, map[string]string{"avatarUrl": "/" + in.Key})
+	a.dropAvatar(ctx, prev, key)
+	setAuditTarget(ctx, key)
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"avatarUrl": "/" + key})
 	return nil
 }
 

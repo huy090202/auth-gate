@@ -87,6 +87,8 @@ type fakeS3 struct {
 	err   error
 	del   string
 	headK string
+
+	copySrc, copyDst string
 }
 
 func (f *fakeS3) HeadObject(_ context.Context, in *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
@@ -95,6 +97,11 @@ func (f *fakeS3) HeadObject(_ context.Context, in *s3.HeadObjectInput, _ ...func
 		return nil, f.err
 	}
 	return &s3.HeadObjectOutput{ContentLength: aws.Int64(f.size), ContentType: aws.String(f.ct)}, nil
+}
+
+func (f *fakeS3) CopyObject(_ context.Context, in *s3.CopyObjectInput, _ ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+	f.copySrc, f.copyDst = *in.CopySource, *in.Key
+	return &s3.CopyObjectOutput{}, nil
 }
 
 func (f *fakeS3) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
@@ -111,6 +118,10 @@ func TestS3HeadAndDelete(t *testing.T) {
 	}
 	if err := s.Delete(context.Background(), "avatars/u/k.webp"); err != nil || f.del != "avatars/u/k.webp" {
 		t.Fatalf("delete %v %q", err, f.del)
+	}
+	if err := s.Copy(context.Background(), "pending/u/k.webp", "avatars/u/k.webp"); err != nil ||
+		f.copySrc != "bkt/pending/u/k.webp" || f.copyDst != "avatars/u/k.webp" {
+		t.Fatalf("copy %v %q -> %q", err, f.copySrc, f.copyDst)
 	}
 	f.err = errors.New("boom")
 	if _, _, err := s.Head(context.Background(), "k"); err == nil {
@@ -144,6 +155,18 @@ func TestDirStore(t *testing.T) {
 	}
 	if _, _, err := d.Head(ctx, "avatars/u1/big.png"); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("an oversized upload must leave nothing: %v", err)
+	}
+	if err := d.Copy(ctx, "avatars/u1/01A.png", "copied/u1/01A.png"); err != nil {
+		t.Fatal(err)
+	}
+	if size, ct, err := d.Head(ctx, "copied/u1/01A.png"); err != nil || size != int64(len(png)) || ct != "image/png" {
+		t.Fatalf("head of the copy %d %q %v", size, ct, err)
+	}
+	if err := d.Copy(ctx, "avatars/u1/none.png", "copied/u1/none.png"); err == nil {
+		t.Error("a copy of a missing key must fail")
+	}
+	if err := d.Copy(ctx, "avatars/u1/01A.png", "../x"); err == nil {
+		t.Error("a copy to an invalid key must fail")
 	}
 	if err := d.Delete(ctx, "avatars/u1/01A.png"); err != nil {
 		t.Fatal(err)

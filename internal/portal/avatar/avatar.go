@@ -29,10 +29,12 @@ type PostForm struct {
 	Fields map[string]string
 }
 
-// Store presigns uploads and inspects or deletes stored avatars.
+// Store presigns uploads and inspects, copies or deletes stored avatars.
 type Store interface {
 	PresignPost(ctx context.Context, key, contentType string) (PostForm, error)
 	Head(ctx context.Context, key string) (size int64, contentType string, err error)
+	// Copy copies the object at from to to, with its content type.
+	Copy(ctx context.Context, from, to string) error
 	Delete(ctx context.Context, key string) error
 }
 
@@ -48,6 +50,7 @@ func checkType(ct string) error {
 // S3API is the part of the S3 client the store uses.
 type S3API interface {
 	HeadObject(ctx context.Context, in *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	CopyObject(ctx context.Context, in *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
 	DeleteObject(ctx context.Context, in *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
@@ -98,6 +101,16 @@ func (s *S3) Head(ctx context.Context, key string) (int64, string, error) {
 		return 0, "", fmt.Errorf("avatar: head: %w", err)
 	}
 	return aws.ToInt64(out.ContentLength), aws.ToString(out.ContentType), nil
+}
+
+// Copy is a server-side CopyObject within the bucket; the content type is copied with the object.
+func (s *S3) Copy(ctx context.Context, from, to string) error {
+	if _, err := s.API.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket: aws.String(s.Bucket), Key: aws.String(to), CopySource: aws.String(s.Bucket + "/" + from),
+	}); err != nil {
+		return fmt.Errorf("avatar: copy: %w", err)
+	}
+	return nil
 }
 
 func (s *S3) Delete(ctx context.Context, key string) error {
@@ -180,6 +193,26 @@ func (d *Dir) Head(_ context.Context, key string) (int64, string, error) {
 	buf := make([]byte, 512)
 	n, _ := io.ReadFull(f, buf)
 	return info.Size(), http.DetectContentType(buf[:n]), nil
+}
+
+// Copy copies the file at from to to. The type is sniffed again on Head, so nothing else travels.
+func (d *Dir) Copy(_ context.Context, from, to string) error {
+	src, err := d.path(from)
+	if err != nil {
+		return err
+	}
+	dst, err := d.path(to)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(src) //nolint:gosec // src is built by path() from a validated relative key
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0o600)
 }
 
 // Delete removes key; a missing key is not an error.

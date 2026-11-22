@@ -388,7 +388,7 @@ browser ──► CloudFront (Portal URL)
               ├─ /api/*      → Lambda Function URL (portal, Go, arm64; x-origin-verify)
               ├─ /avatars/*  → S3 avatar bucket (origin access control)
               └─ /*          → S3 (SPA; CloudFront Function rewrites routes to /index.html)
-browser ──► S3 (presigned POST, an avatar upload)
+browser ──► S3 (presigned POST to pending/, an avatar upload; confirmed into avatars/)
 portal  ──► DynamoDB auth-gate-portal-<stage>  (users, workspaces, sessions, tokens, limiter, audit)
 portal  ──► AuthGate /api/challenges, /factors…   (its own client key: the second factor of its users)
 portal  ──► AuthGate /api/portal/*                (the portal key and x-tenant-id: a workspace's clients)
@@ -512,8 +512,6 @@ verified addresses.
 
 ### Known limits
 
-- An avatar uploaded but never confirmed stays in the bucket. A lifecycle rule aborts only
-  incomplete multipart uploads, after 1 day.
 - A deleted avatar can stay in CloudFront's cache for up to 24 hours.
 - An email change does not void recovery links already sent to the old address; they die within
   their 1-hour life.
