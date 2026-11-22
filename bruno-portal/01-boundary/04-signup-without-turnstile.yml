@@ -1,0 +1,38 @@
+info:
+  name: "Sign-up without Turnstile (403)"
+  type: http
+  seq: 4
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/auth/signup"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "email": "boundary-check@example.com", "displayName": "Boundary", "password": "a long password for boundary 1", "lang": "en" }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("403", function() {
+          expect(res.getStatus()).to.equal(403);
+        });
+
+        test("turnstile_failed, nothing more", function() {
+          expect(res.getBody()).to.deep.equal({ error: "turnstile_failed" });
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 403 `turnstile_failed`.** The body is valid, the widget token is missing: no
+  account is created and no email is sent. It spends one token of the per-IP sign-up limiter
+  (burst 5, then one per 10 minutes).

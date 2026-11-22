@@ -1,0 +1,29 @@
+info:
+  name: The boundary
+  type: folder
+  seq: 1
+
+request: {}
+
+docs:
+  content: |-
+    ## Every request here is expected to FAIL
+
+    Nothing here needs a credential, and `scripts/portal/smoke.sh` runs this folder
+    on its own against a deployed stage. Each request fails on purpose; a request
+    that succeeds is the bug.
+
+    | request | expected | why it matters |
+    | --- | --- | --- |
+    | unknown API path | **404** `not_found` JSON | /api never falls through to the SPA page |
+    | `text/plain` POST | **415** | a cross-site form post cannot send `application/json` |
+    | unknown account | **401** `invalid_credentials` | no hint whether the address exists |
+    | sign-up without Turnstile | **403** `turnstile_failed` | no bot can create an account |
+    | `/api/me` without a cookie | **401** | no session, no data |
+    | `/api/t/<ulid>/clients` without a cookie | **401** | no session, no workspace data |
+
+    The unknown-account login spends one token of the per-IP login limiter (burst 10, then
+    one per 6 seconds) and counts as a failure: after two in 15 minutes the IP needs a
+    Turnstile token. The sign-up spends one token of the per-IP sign-up limiter (burst 5,
+    then one per 10 minutes). Do not run this folder more than once in 15 minutes.
+  type: text/markdown

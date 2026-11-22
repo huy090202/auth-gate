@@ -1,0 +1,8 @@
+# Copy to local.yml (gitignored). The Portal runs on :8789 under `make portal-dev`;
+# `make dev` serves AuthGate on :8080 behind it.
+bundled: false
+extensions: {}
+name: local
+variables:
+  - name: baseUrl
+    value: http://localhost:8789

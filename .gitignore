@@ -13,5 +13,7 @@ dist/
 *.tsbuildinfo
 bruno-console/environments/*.yml
 !bruno-console/environments/*.example.yml
+bruno-portal/environments/*.yml
+!bruno-portal/environments/*.example.yml
 .portal-mailbox/
 .portal-avatars/

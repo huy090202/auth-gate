@@ -1,0 +1,42 @@
+opencollection: 1.0.0
+
+info:
+  name: "[External] Auth Gate Portal"
+
+docs:
+  content: |-
+    ## AuthGate Portal
+
+    The Portal is the self-service web app and its API, behind one CloudFront
+    distribution. This collection holds the requests that need no credential: what the
+    API refuses to an anonymous caller.
+
+    | folder | needs | what it shows |
+    | --- | --- | --- |
+    | `01-boundary` | nothing | what the API refuses; `scripts/portal/smoke.sh` runs this one on stg |
+
+    ### Variables
+
+    `baseUrl` comes from the environment.
+
+    ### Running it
+
+    ```bash
+    pnpm install   # once, at the repo root
+    make dev && make portal-dev   # AuthGate on :8080, the Portal on :8789
+    cd bruno-portal/environments && cp local.example.yml local.yml
+    cd .. && ../node_modules/.bin/bru run 01-boundary --env local -r
+    ```
+
+    Use the pinned binary, not `npx`.
+
+    ### Rate limits
+
+    The sign-in refusal counts as a failure for the caller's IP and the sign-up refusal
+    spends a sign-up token: run the folder at most once in 15 minutes. The limiters are not
+    switched off.
+
+    Real environment files are gitignored. Never commit a password.
+  type: text/markdown
+bundled: false
+extensions: {}

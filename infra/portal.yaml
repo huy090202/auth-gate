@@ -1,0 +1,382 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  auth-gate portal: the Portal Lambda, its SPA bucket and its avatar bucket behind one CloudFront distribution.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: stg
+    AllowedPattern: "[a-z0-9-]+"
+  AuthGateBaseUrl:
+    Type: String
+    AllowedPattern: ^https://[^/]+$
+    Description: auth-gate's one URL, e.g. https://xxxx.cloudfront.net
+  AuthGateClientId:
+    Type: String
+    Default: ""
+    Description: Empty on the first deploy; set after scripts/portal/register-client.sh stg.
+  PublicBaseUrl:
+    Type: String
+    Default: ""
+    AllowedPattern: ^(https://[^/]+)?$
+    Description: >-
+      The Portal's own public origin (this stack's BaseUrl output). Empty on the first deploy,
+      when the CloudFront domain does not exist yet; set on the second pass. Links in emails and
+      the avatar bucket's CORS origin come from it.
+  EmailFrom:
+    Type: String
+    MinLength: 3
+    Description: The SES identity address every email is sent from.
+  TurnstileSiteKey:
+    Type: String
+    MinLength: 1
+    Description: The Cloudflare Turnstile site key (public).
+
+Conditions:
+  HasClientId: !Not [!Equals [!Ref AuthGateClientId, ""]]
+  HasPublicBaseUrl: !Not [!Equals [!Ref PublicBaseUrl, ""]]
+
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub auth-gate-portal-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      # Holds every account, workspace and the audit trail. scripts/portal/purge.sh turns
+      # this off after its typed confirmation; a stack delete fails until then.
+      DeletionProtectionEnabled: true
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # SAM adds lambda:InvokeFunctionUrl for the public URL; newer accounts also
+  # require lambda:InvokeFunction for an AuthType NONE Function URL.
+  PortalUrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Portal
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  Portal:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub auth-gate-portal-${Stage}
+      CodeUri: ../bin/portal/bootstrap.zip
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      # argon2id with 64 MiB is slow at the CPU share of 256 MB.
+      MemorySize: 512
+      # As the Console's (infra/console.yaml): room for a factor read and a write at 10 s
+      # each, which keeps the first-factor lease's write inside it.
+      Timeout: 24
+      # No reserved concurrency: the account quota is small and a fixed reservation is a
+      # cost of its own. The per-IP and per-account limiters are the guard.
+      FunctionUrlConfig:
+        AuthType: NONE
+      # The ceiling on this role: a right added below must also be in
+      # infra/role-boundary.json, or it is denied at run time.
+      PermissionsBoundary: !Sub arn:aws:iam::${AWS::AccountId}:policy/auth-gate-boundary
+      Environment:
+        Variables:
+          STAGE: !Ref Stage
+          TABLE_NAME: !Ref Table
+          AUTHGATE_BASE_URL: !Ref AuthGateBaseUrl
+          AUTHGATE_CLIENT_ID: !Ref AuthGateClientId
+          PUBLIC_BASE_URL: !Ref PublicBaseUrl
+          EMAIL_FROM: !Ref EmailFrom
+          AVATAR_BUCKET: !Ref AvatarBucket
+          TURNSTILE_SITE_KEY: !Ref TurnstileSiteKey
+          CLIENT_KEY_PARAM: !Sub /credo/auth-gate-portal/${Stage}/authgate-client-key
+          PORTAL_KEY_PARAM: !Sub /credo/auth-gate/${Stage}/portal-key
+          TURNSTILE_SECRET_PARAM: !Sub /credo/auth-gate-portal/${Stage}/turnstile-secret
+          ORIGIN_VERIFY_PARAM: !Sub /credo/auth-gate-portal/${Stage}/origin-verify
+      # No KMS statement, as in infra/template.yaml: SecureStrings use the account's
+      # default aws/ssm key. No access to the AuthGate table, its signing key or its admin key.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:Query
+                - dynamodb:ConditionCheckItem
+              Resource: !GetAtt Table.Arn
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate/${Stage}/portal-key"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-portal/${Stage}/origin-verify"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-portal/${Stage}/authgate-client-key"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-portal/${Stage}/turnstile-secret"
+            # Only from the one address; any identity in the account may be named in the ARN.
+            - Effect: Allow
+              Action: ses:SendEmail
+              Resource: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+              Condition:
+                StringEquals:
+                  ses:FromAddress: !Ref EmailFrom
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource: !Sub "${AvatarBucket.Arn}/avatars/*"
+
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub auth-gate-portal-${Stage}-site-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  # Profile pictures. The browser POSTs here with a presigned form (CORS below); CloudFront
+  # serves them at /avatars/* through OAC. An unconfirmed upload stays as an object: a known
+  # minor, as objects are never expired here.
+  AvatarBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # The regional domain of this name is the connect-src host of SiteHeaders below.
+      BucketName: !Sub auth-gate-portal-${Stage}-avatars-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      # The Portal's own origin only, and POST only: reads go through CloudFront. Absent on
+      # the first pass, when PublicBaseUrl is not known yet.
+      CorsConfiguration: !If
+        - HasPublicBaseUrl
+        - CorsRules:
+            - AllowedOrigins: [!Ref PublicBaseUrl]
+              AllowedMethods: [POST]
+              AllowedHeaders: [content-type, "x-amz-*"]
+              MaxAge: 3600
+        - !Ref AWS::NoValue
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-multipart-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  SiteOac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub auth-gate-portal-${Stage}-site
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFrontOnly
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+  AvatarBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AvatarBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFrontReadsAvatars
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${AvatarBucket.Arn}/avatars/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+  # SPA routes have no file in S3: any path whose last segment has no dot is served
+  # /index.html. Only on the site behaviour, never on /api/* or /avatars/*.
+  SpaRewrite:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub auth-gate-portal-${Stage}-spa-rewrite
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Serve index.html for SPA routes
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var req = event.request;
+          var last = req.uri.substring(req.uri.lastIndexOf('/') + 1);
+          if (last.indexOf('.') === -1) req.uri = '/index.html';
+          return req;
+        }
+
+  # Must equal cspFor('<the avatar bucket regional domain>') in portal-web/src/csp.ts
+  # (portal-web/test/csp-header.test.ts pins it): no inline script or style, Turnstile's
+  # script and frame, and the avatar bucket for the presigned upload.
+  SiteHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub auth-gate-portal-${Stage}-site-headers
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: !Sub "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://auth-gate-portal-${Stage}-avatars-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com; frame-src https://challenges.cloudflare.com; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+          StrictTransportSecurity:
+            Override: true
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: false
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            Override: true
+            FrameOption: DENY
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: no-referrer
+        CustomHeadersConfig:
+          Items:
+            - Header: Permissions-Policy
+              Override: true
+              Value: "publickey-credentials-get=(self), publickey-credentials-create=(self), camera=(), microphone=(), geolocation=()"
+            - Header: Cross-Origin-Opener-Policy
+              Override: true
+              Value: same-origin
+
+  # The /api and /avatars answers: no CSP or frame options, which a JSON API and an image
+  # do not need, and HSTS and nosniff as on the site.
+  ApiHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub auth-gate-portal-${Stage}-api-headers
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            Override: true
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: false
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: no-referrer
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      # The deployer may change only distributions with this tag (infra/deployer-policy-edge.json).
+      Tags:
+        - { Key: app, Value: auth-gate }
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub auth-gate portal ${Stage}
+        HttpVersion: http2and3
+        PriceClass: PriceClass_200
+        DefaultRootObject: index.html
+        # One viewer must not rotate through a /64 to dodge the per-IP limiters.
+        IPV6Enabled: false
+        Origins:
+          - Id: api
+            DomainName: !Select [2, !Split ["/", !GetAtt PortalUrl.FunctionUrl]]
+            CustomOriginConfig: { OriginProtocolPolicy: https-only, OriginSSLProtocols: [TLSv1.2] }
+            OriginCustomHeaders:
+              - HeaderName: x-origin-verify
+                HeaderValue: !Sub "{{resolve:ssm:/credo/auth-gate-portal/${Stage}/origin-verify}}"
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOac.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }
+          - Id: avatars
+            DomainName: !GetAtt AvatarBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOac.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          ResponseHeadersPolicyId: !Ref SiteHeaders
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SpaRewrite.FunctionMetadata.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
+            # AllViewerExceptHostHeader forwards CloudFront-Viewer-Address, which the limiters read.
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: !Ref ApiHeaders
+          # Object names are fresh ULIDs and never overwritten, so the long default cache is safe.
+          - PathPattern: /avatars/*
+            TargetOriginId: avatars
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+            ResponseHeadersPolicyId: !Ref ApiHeaders
+        # No CustomErrorResponses: they are distribution-wide and would turn the
+        # Portal's own 403/404 JSON on /api/* into index.html 200.
+
+Outputs:
+  BaseUrl:
+    Description: The one URL of the Portal (site, /api and /avatars).
+    Value: !Sub "https://${Distribution.DomainName}"
+  RawPortalUrl:
+    Description: Direct Function URL (must answer 401 without CloudFront).
+    Value: !GetAtt PortalUrl.FunctionUrl
+  SiteBucket:
+    Value: !Ref SiteBucket
+  AvatarBucket:
+    Value: !Ref AvatarBucket
+  DistributionId:
+    Value: !Ref Distribution
+  AuthGateClientId:
+    # Absent until the second pass: an empty output value is not safe, and the scripts
+    # treat a missing output as empty.
+    Condition: HasClientId
+    Value: !Ref AuthGateClientId

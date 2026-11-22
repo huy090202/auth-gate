@@ -44,12 +44,14 @@
       }
     },
     {
-      "Sid": "ManageTheConsoleSite",
+      "Sid": "ManageTheSiteBuckets",
       "Effect": "Allow",
       "Action": "s3:*",
       "Resource": [
         "arn:aws:s3:::auth-gate-console-*",
-        "arn:aws:s3:::auth-gate-console-*/*"
+        "arn:aws:s3:::auth-gate-console-*/*",
+        "arn:aws:s3:::auth-gate-portal-*",
+        "arn:aws:s3:::auth-gate-portal-*/*"
       ]
     },
     {
@@ -181,7 +183,8 @@
       ],
       "Resource": [
         "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate/*",
-        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate-console/*"
+        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate-console/*",
+        "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate-portal/*"
       ]
     },
     {

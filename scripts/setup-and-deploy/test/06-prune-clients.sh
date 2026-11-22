@@ -15,7 +15,8 @@ export CALLS="$tmp/calls" LEAKS="$tmp/leaks" ADMIN_KEY=sekrit-admin-key-01234567
 
 # The listing, over two pages: id-A smoke, id-B bruno demo, id-C auth-app-local | id-D auth-app-stg,
 # id-console smoke (the Console's own client), and in scenario "portal" also id-portal (named
-# bruno demo, the Portal's client). id-FAIL (named smoke, only in scenario "fail") answers 500.
+# bruno demo, the Portal's client), in scenario "owned" id-T (named smoke, with an owner: a tenant's
+# client). id-FAIL (named smoke, only in scenario "fail") answers 500.
 cat >"$tmp/bin/aws" <<'STUB'
 #!/usr/bin/env bash
 echo "aws $*" >>"$CALLS"
@@ -74,6 +75,7 @@ case "$method $url" in
     extra=""
     [[ "$SCENARIO" == portal ]] && extra=",$(c id-portal "bruno demo")"
     [[ "$SCENARIO" == bportal ]] && extra=",$(c id-E "bruno portal")"
+    [[ "$SCENARIO" == owned ]] && extra=",{\"clientId\":\"id-T\",\"name\":\"smoke\",\"rpId\":\"t.example.test\",\"owner\":\"01HZZZZZZZZZZZZZZZZZZZZZZZ\",\"createdAt\":\"2026-11-01T00:00:00Z\"}"
     [[ "$SCENARIO" == fail ]] && extra=",$(c id-FAIL smoke)"
     printf '{"clients":[%s,%s%s]}' "$(c id-D auth-app-stg)" "$(c id-console smoke)" "$extra" >"$out"
     printf 200 ;;
@@ -175,6 +177,18 @@ assert "empty answer: no delete" test "$(deletes)" -eq 0
 run bportal "delete 3"
 assert "bruno portal client: exits 0" test "$code" -eq 0
 assert "bruno portal client: deleted" deleted id-E
+
+# Why: a tenant's client is named by its owner, not by us; a name that is on the prune list (a user may
+# call a client "smoke") must never make it a candidate, while an operator client of that name still is.
+run owned "delete 2"
+assert "owned client: exits 0" test "$code" -eq 0
+refute "owned client: never proposed by name" deleted id-T
+assert "owned client: the operator clients are still deleted" deleted id-A
+assert "owned client: exactly two deletes" test "$(deletes)" -eq 2
+refute "owned client: not in the proposal" grep -q id-T <<<"$out"
+
+run owned "delete 3" --also id-T
+assert "--also on an owned client: the explicit id is honoured" deleted id-T
 
 run portal "delete 2"
 assert "portal stack present: exits 0" test "$code" -eq 0

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Delete the test clients that piled up on a stage (smoke, bruno and probe clients) after a
 # typed confirmation. Lists every client through the AuthGate admin API, proposes those
-# whose name is in the prune list, and deletes each with DELETE /api/clients/{id}.
+# whose name is in the prune list and that have no `owner`, and deletes each with
+# DELETE /api/clients/{id}. A client with an owner belongs to a Portal workspace: a tenant's
+# client is never proposed by its name, whatever it is called.
 #
 #   ADMIN_PROFILE=default ./06-prune-clients.sh [--keep <id>]... [--also <id>]...
 #
 # --keep <id>  never propose this client.
-# --also <id>  propose this client too, whatever its name. It must exist.
+# --also <id>  propose this client too, whatever its name or owner. It must exist.
 #
 # Never offered, whatever the flags: the Console's own client (output AuthGateClientId of
 # auth-gate-console-<stage>) and the Portal's (auth-gate-portal-<stage>, when that stack
@@ -111,10 +113,10 @@ names_json="$(json_array "${PRUNE_NAMES[@]}")"
 skip_json="$(json_array "${protected[@]}" ${keep[@]+"${keep[@]}"})"
 also_json="$(json_array ${also[@]+"${also[@]}"})"
 
-# A client is proposed when its name is in the prune list and its id is neither protected nor
-# kept, or when --also names it. Each id appears once. Tabs and newlines in fields are escaped.
+# A client is proposed when its name is in the prune list, it has no owner, and its id is neither
+# protected nor kept, or when --also names it. Each id appears once. Tabs and newlines in fields are escaped.
 proposal="$(jq -r --argjson names "$names_json" --argjson skip "$skip_json" --argjson also "$also_json" '
-  map(select(((.name as $n | $names | index($n)) and (.clientId as $i | $skip | index($i) | not))
+  map(select(((.name as $n | $names | index($n)) and ((.owner // "") == "") and (.clientId as $i | $skip | index($i) | not))
              or (.clientId as $i | $also | index($i))))
   | .[] | [.clientId, .name, .rpId, .createdAt] | @tsv' <<<"$all")"
 
