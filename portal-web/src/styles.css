@@ -1,0 +1,60 @@
+/* Global shell, background and glass, from auth-app without its docs and trace parts. Tokens live
+   here as CSS variables so the light/dark pairs sit next to each other; Mantine colors come from theme.ts. */
+
+:root {
+  --leaf-1: #9fdcb9;
+  --leaf-2: #8fd3cf;
+  --leaf-3: #c9e8a6;
+}
+
+[data-mantine-color-scheme='dark'] {
+  --leaf-1: #0f5a3a;
+  --leaf-2: #0c4c4f;
+  --leaf-3: #2c4a17;
+}
+
+html { scroll-padding-top: calc(var(--header-h) + 16px); }
+body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiased; }
+::selection { background: rgba(54, 200, 122, 0.32); }
+:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+* { scrollbar-color: color-mix(in srgb, var(--mantine-color-dimmed) 45%, transparent) transparent; scrollbar-width: thin; }
+
+/* Background: three blurred leaf shapes and a grain layer, fixed behind everything. */
+.backdrop { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; background: var(--mantine-color-body); }
+.backdrop svg.leaves { position: absolute; inset: -10%; width: 120%; height: 120%; filter: blur(60px); opacity: 0.85; }
+.backdrop .grain {
+  position: absolute; inset: 0; opacity: 0.07; mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+[data-mantine-color-scheme='dark'] .backdrop .grain { mix-blend-mode: screen; opacity: 0.05; }
+@media (prefers-reduced-motion: no-preference) {
+  .backdrop svg.leaves { animation: drift 60s ease-in-out infinite alternate; }
+}
+@keyframes drift { to { transform: translate3d(2%, -2%, 0) rotate(3deg); } }
+
+
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--mantine-color-text); text-decoration: none; }
+.brand .word { font-weight: 700; font-size: 1.125rem; letter-spacing: -0.01em; }
+.brand .word span { font-weight: 500; color: var(--mantine-color-dimmed); margin-left: 4px; }
+
+/* Auth screens: one centred glass card. */
+.auth-stage { min-height: calc(100vh - var(--header-h)); display: grid; place-items: center; padding: 32px 16px 15vh; }
+.auth-card { width: min(100%, 420px); padding: 32px; border-radius: 16px; }
+@media (max-width: 520px) { .auth-card { padding: 20px 18px; } }
+
+.auth-card h1 { font-size: 1.75rem; letter-spacing: -0.015em; }
+
+
+
+/* One PIN field at full width with its button below it. */
+.factor-pin { display: grid; gap: 12px; }
+.auth-card h2.sub { font-size: 1.0625rem; font-weight: 650; }
+.auth-card .code-input input { font-family: var(--mantine-font-family-monospace); letter-spacing: 0.08em; text-transform: uppercase; }
+.turnstile { min-height: 0; }
+
+/* The ten recovery codes: two columns, monospace, easy to read aloud. */
+.code-grid {
+  list-style: none; margin: 0; padding: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px;
+  border-radius: 10px; background: var(--field-bg); border: 1px solid var(--field-border);
+}
+.code-grid code { font-family: var(--mantine-font-family-monospace); font-size: 1rem; letter-spacing: 0.06em; }
