@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/huy090202/auth-gate/internal/console"
-	"github.com/huy090202/auth-gate/internal/console/authgate"
 	"github.com/huy090202/auth-gate/internal/console/consoletest"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
 )
 
 // Why: the last factor is the only way back in; deleting it would lock the admin out.

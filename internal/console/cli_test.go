@@ -13,8 +13,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
 	"github.com/huy090202/auth-gate/internal/console"
-	"github.com/huy090202/auth-gate/internal/console/authgate"
 	"github.com/huy090202/auth-gate/internal/console/consoletest"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/password"
 )
 
 type roundTrip func(*http.Request) (*http.Response, error)
@@ -64,7 +65,7 @@ func TestCLIReadsPasswordFromStdinOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := getAdmin(t, h, "zed")
-	if a.Role != console.RoleMaster || !a.MustChangePassword || !console.VerifyPassword(good, a.PasswordHash) || strings.Contains(out.String(), good) {
+	if a.Role != console.RoleMaster || !a.MustChangePassword || !password.Verify(good, a.PasswordHash) || strings.Contains(out.String(), good) {
 		t.Fatalf("created %+v out %q", a, out.String())
 	}
 
@@ -73,7 +74,7 @@ func TestCLIReadsPasswordFromStdinOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := getAdmin(t, h, "zed")
-	if !console.VerifyPassword(next, r.PasswordHash) || r.SessionEpoch != a.SessionEpoch+1 || !r.MustChangePassword || strings.Contains(out.String(), next) {
+	if !password.Verify(next, r.PasswordHash) || r.SessionEpoch != a.SessionEpoch+1 || !r.MustChangePassword || strings.Contains(out.String(), next) {
 		t.Fatalf("reset %+v", r)
 	}
 }

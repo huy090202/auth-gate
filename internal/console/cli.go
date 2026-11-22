@@ -12,8 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huy090202/auth-gate/internal/console/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/id"
+	"github.com/huy090202/auth-gate/internal/platform/password"
 )
 
 // CLIDeps is what the operator commands need. AuthGate is only called by
@@ -209,8 +210,8 @@ func hashFromStdin(stdin io.Reader) (string, error) {
 	if p == "" {
 		return "", coded("invalid_password", errors.New("the password goes on stdin"))
 	}
-	if err := ValidatePassword(p); err != nil {
+	if err := password.Validate(p); err != nil {
 		return "", coded("invalid_password", err)
 	}
-	return HashPassword(p)
+	return password.Hash(p)
 }

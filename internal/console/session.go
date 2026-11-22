@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/huy090202/auth-gate/internal/platform/webapi"
 )
 
 const (
@@ -128,7 +130,7 @@ func (a *App) reissue(ctx context.Context, w http.ResponseWriter, old Session, s
 	return x, nil
 }
 
-var errUnauthorized = &apiError{Status: http.StatusUnauthorized, Code: "unauthorized"}
+var errUnauthorized = &webapi.Error{Status: http.StatusUnauthorized, Code: "unauthorized"}
 
 // endSession deletes the session, clears its cookie and answers 401.
 func (a *App) endSession(w http.ResponseWriter, r *http.Request, x Session) error {
@@ -143,12 +145,12 @@ func (a *App) endSession(w http.ResponseWriter, r *http.Request, x Session) erro
 func (a *App) reject(w http.ResponseWriter, r *http.Request, hash string) {
 	if hash != "" {
 		if err := a.Store.DeleteSession(r.Context(), hash); err != nil {
-			writeErr(w, err)
+			webapi.WriteErr(w, err)
 			return
 		}
 	}
 	a.setCookie(w, "", -1)
-	writeErr(w, errUnauthorized)
+	webapi.WriteErr(w, errUnauthorized)
 }
 
 // session guards a route that accepts the given stages. The admin is read with
@@ -170,7 +172,7 @@ func (a *App) session(stages ...Stage) func(http.Handler) http.Handler {
 				return
 			}
 			if err != nil {
-				writeErr(w, err)
+				webapi.WriteErr(w, err)
 				return
 			}
 			now := a.now()
@@ -184,7 +186,7 @@ func (a *App) session(stages ...Stage) func(http.Handler) http.Handler {
 				return
 			}
 			if err != nil {
-				writeErr(w, err)
+				webapi.WriteErr(w, err)
 				return
 			}
 			if admin.ID != x.AdminID || admin.DisabledAt != nil || admin.SessionEpoch != x.Epoch {
@@ -193,13 +195,13 @@ func (a *App) session(stages ...Stage) func(http.Handler) http.Handler {
 			}
 			setAuditActor(r.Context(), admin.ID, admin.Username)
 			if !stageAllowed(x.Stage, stages) {
-				writeErr(w, stageError(x.Stage))
+				webapi.WriteErr(w, stageError(x.Stage))
 				return
 			}
 			if x.Stage == StageFull && now.Sub(x.LastSeenAt) > touchAfter {
 				x.LastSeenAt = now
 				if err := a.Store.touchSession(r.Context(), x); err != nil {
-					writeErr(w, err)
+					webapi.WriteErr(w, err)
 					return
 				}
 			}
@@ -217,13 +219,13 @@ func stageAllowed(have Stage, want []Stage) bool {
 	return false
 }
 
-func stageError(have Stage) *apiError {
+func stageError(have Stage) *webapi.Error {
 	switch have {
 	case StageHalf:
-		return &apiError{Status: http.StatusUnauthorized, Code: "second_factor_required"}
+		return &webapi.Error{Status: http.StatusUnauthorized, Code: "second_factor_required"}
 	case StageEnroll:
-		return &apiError{Status: http.StatusForbidden, Code: "enrollment_required"}
+		return &webapi.Error{Status: http.StatusForbidden, Code: "enrollment_required"}
 	default:
-		return &apiError{Status: http.StatusConflict, Code: "already_verified"}
+		return &webapi.Error{Status: http.StatusConflict, Code: "already_verified"}
 	}
 }

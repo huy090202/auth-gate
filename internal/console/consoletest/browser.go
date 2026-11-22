@@ -16,6 +16,7 @@ import (
 
 	"github.com/huy090202/auth-gate/internal/console"
 	"github.com/huy090202/auth-gate/internal/platform/id"
+	argon "github.com/huy090202/auth-gate/internal/platform/password"
 )
 
 // Pace is how far the clock moves before each /api/auth request, so the
@@ -131,7 +132,7 @@ func (b *Browser) Do(method, path string, body any, headers ...string) Response 
 // CreateAdmin stores an admin with the given password.
 func (h *Harness) CreateAdmin(username, password string, role console.Role, mustChange bool) console.Admin {
 	h.T.Helper()
-	hash, err := console.HashPassword(password)
+	hash, err := argon.Hash(password)
 	if err != nil {
 		h.T.Fatal(err)
 	}

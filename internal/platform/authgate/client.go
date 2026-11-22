@@ -1,6 +1,6 @@
-// Package authgate is the Console's HTTP client for AuthGate and the offline
-// check of the tokens AuthGate issues. It must not import internal/auth/service:
-// the Console reaches AuthGate only over HTTP.
+// Package authgate is the HTTP client the Console and the Portal use for
+// AuthGate, and the offline check of the tokens AuthGate issues. It must not
+// import internal/auth/service: both apps reach AuthGate only over HTTP.
 package authgate
 
 import (
@@ -53,10 +53,12 @@ type Challenge struct {
 }
 
 // Client calls AuthGate. ClientKey signs the verify-role calls, AdminKey the
-// admin-role calls. Neither key is ever logged or put in an error.
+// admin-role calls and PortalKey the tenant-scoped /api/portal calls (see
+// Tenant). A caller sets the keys it needs; none is ever logged or put in an
+// error, and no call falls back to another key.
 type Client struct {
-	BaseURL, ClientKey, AdminKey string
-	HTTP                         *http.Client
+	BaseURL, ClientKey, AdminKey, PortalKey string
+	HTTP                                    *http.Client
 }
 
 const maxBody = 1 << 20
@@ -115,6 +117,11 @@ func (c *Client) http() *http.Client { return noRedirect(c.HTTP) }
 // do sends one request and returns the 2xx body. See ErrUnavailable and Error
 // for how failures come back.
 func (c *Client) do(ctx context.Context, method, path, key string, body any) (json.RawMessage, error) {
+	return c.doTenant(ctx, method, path, key, "", body)
+}
+
+// doTenant is do plus the x-tenant-id header when tenant is not empty.
+func (c *Client) doTenant(ctx context.Context, method, path, key, tenant string, body any) (json.RawMessage, error) {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -128,6 +135,9 @@ func (c *Client) do(ctx context.Context, method, path, key string, body any) (js
 		return nil, fmt.Errorf("authgate: build request: %w", err)
 	}
 	req.Header.Set("x-internal-access-key", key)
+	if tenant != "" {
+		req.Header.Set("x-tenant-id", tenant)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

@@ -18,6 +18,8 @@ import (
 
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/id"
+	"github.com/huy090202/auth-gate/internal/platform/viewerip"
+	"github.com/huy090202/auth-gate/internal/platform/webapi"
 )
 
 // AuditEntry is one line of the audit log. It never holds a key, PIN, password
@@ -226,7 +228,7 @@ func truncate(v string, n int) string {
 
 // auditIP is the viewer address CloudFront sets; in Dev, the socket address.
 func (a *App) auditIP(r *http.Request) string {
-	if ip := ViewerIP(r.Header); ip != "" {
+	if ip := viewerip.FromHeader(r.Header); ip != "" {
 		return ip
 	}
 	if a.Config.Dev {
@@ -249,12 +251,12 @@ func (a *App) listAudit(w http.ResponseWriter, r *http.Request) error {
 		month = a.now().UTC().Format("2006-01")
 	}
 	if !monthRE.MatchString(month) {
-		return &apiError{Status: http.StatusBadRequest, Code: "invalid_month"}
+		return &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_month"}
 	}
 	cursor := q.Get("cursor")
 	if cursor != "" {
 		if m := cursorRE.FindStringSubmatch(cursor); m == nil || m[1] != month {
-			return &apiError{Status: http.StatusBadRequest, Code: "invalid_cursor"}
+			return &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_cursor"}
 		}
 	}
 	entries, next, err := a.Store.ListAudit(r.Context(), month, cursor)

@@ -18,6 +18,13 @@ check:
 	@# The Console reaches AuthGate over HTTP only. go list runs first on its own, so its failure fails the recipe.
 	@deps=$$(go list -deps ./cmd/console) || exit 1; \
 	if printf '%s\n' "$$deps" | grep -q internal/auth/service; then echo "cmd/console depends on internal/auth/service" >&2; exit 1; fi
+	@# The Portal reaches AuthGate over HTTP only and shares no code with the Console but internal/platform. Skipped until cmd/portal exists.
+	@if [ -d cmd/portal ]; then \
+		deps=$$(go list -deps ./cmd/portal) || exit 1; \
+		for p in internal/auth/service internal/console; do \
+			if printf '%s\n' "$$deps" | grep -q "auth-gate/$$p\$$\|auth-gate/$$p/"; then echo "cmd/portal depends on $$p" >&2; exit 1; fi; \
+		done; \
+	fi
 	golangci-lint run
 	go test ./...
 

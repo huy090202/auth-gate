@@ -17,7 +17,7 @@ import (
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/huy090202/auth-gate/internal/console"
-	"github.com/huy090202/auth-gate/internal/console/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/dynamo"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"

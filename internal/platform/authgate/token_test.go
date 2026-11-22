@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/huy090202/auth-gate/internal/auth/token"
-	"github.com/huy090202/auth-gate/internal/console/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
 )
 
 const (

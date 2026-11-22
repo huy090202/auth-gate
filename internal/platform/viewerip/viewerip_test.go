@@ -1,4 +1,4 @@
-package console
+package viewerip
 
 import (
 	"net/http"
@@ -6,7 +6,7 @@ import (
 )
 
 // Why: the viewer address is the rate-limit key; a wrong parse would merge or split buckets.
-func TestViewerIP(t *testing.T) {
+func TestFromHeader(t *testing.T) {
 	cases := map[string]string{
 		"198.51.100.10:46532":   "198.51.100.10",
 		"[2001:db8::1]:46532":   "2001:db8::1",
@@ -21,8 +21,8 @@ func TestViewerIP(t *testing.T) {
 		if in != "" {
 			h.Set("CloudFront-Viewer-Address", in)
 		}
-		if got := ViewerIP(h); got != want {
-			t.Errorf("ViewerIP(%q) = %q, want %q", in, got, want)
+		if got := FromHeader(h); got != want {
+			t.Errorf("FromHeader(%q) = %q, want %q", in, got, want)
 		}
 	}
 	// A viewer-supplied value passed along with CloudFront's own could come first
@@ -30,7 +30,7 @@ func TestViewerIP(t *testing.T) {
 	h := http.Header{}
 	h.Add("CloudFront-Viewer-Address", "203.0.113.7:1")
 	h.Add("CloudFront-Viewer-Address", "198.51.100.10:46532")
-	if got := ViewerIP(h); got != "" {
-		t.Errorf("ViewerIP(two values) = %q, want \"\"", got)
+	if got := FromHeader(h); got != "" {
+		t.Errorf("FromHeader(two values) = %q, want \"\"", got)
 	}
 }

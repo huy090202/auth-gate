@@ -8,8 +8,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
-	"github.com/huy090202/auth-gate/internal/console/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/password"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
+	"github.com/huy090202/auth-gate/internal/platform/viewerip"
+	"github.com/huy090202/auth-gate/internal/platform/webapi"
 )
 
 // Deps is what the handlers need from outside.
@@ -27,7 +30,7 @@ type App struct {
 	Deps
 	Store *Store
 
-	// verifyPassword is VerifyPassword; a field so a test can count the calls.
+	// verifyPassword is password.Verify; a field so a test can count the calls.
 	verifyPassword func(password, stored string) bool
 
 	// beforeAdminWrite, when set, runs after an /admins action spent its token and
@@ -42,7 +45,7 @@ var authLimit = ratelimit.Settings{Burst: 10, PerSecond: 1.0 / 6}
 func New(d Deps) http.Handler { return newApp(d).handler() }
 
 func newApp(d Deps) *App {
-	return &App{Deps: d, Store: &Store{DB: d.DB, Table: d.Config.Table}, verifyPassword: VerifyPassword}
+	return &App{Deps: d, Store: &Store{DB: d.DB, Table: d.Config.Table}, verifyPassword: password.Verify}
 }
 
 func (a *App) handler() http.Handler {
@@ -53,11 +56,11 @@ func (a *App) handler() http.Handler {
 	a.clientRoutes(mux)
 	a.adminRoutes(mux)
 	mux.HandleFunc("/api/", notFound)
-	return noStore(requireJSON(mux))
+	return webapi.NoStore(webapi.RequireJSON(mux))
 }
 
 func notFound(w http.ResponseWriter, _ *http.Request) {
-	writeErr(w, &apiError{Status: http.StatusNotFound, Code: "not_found"})
+	webapi.WriteErr(w, &webapi.Error{Status: http.StatusNotFound, Code: "not_found"})
 }
 
 // limitAuth spends one token per request from the caller's IP bucket. The key is
@@ -72,7 +75,7 @@ func (a *App) limitAuth(next http.Handler) http.Handler {
 		if !d.Allowed {
 			// A refusal is not stored (it is unbounded), so the log is the only trace.
 			slog.Warn("console: auth request rate limited", "ip", key, "route", truncate(r.Method+" "+r.URL.Path, maxAuditTarget))
-			writeErr(w, &apiError{Status: http.StatusTooManyRequests, Code: "rate_limited", RetryAfter: d.RetryAfterSec})
+			webapi.WriteErr(w, &webapi.Error{Status: http.StatusTooManyRequests, Code: "rate_limited", RetryAfter: d.RetryAfterSec})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -86,7 +89,7 @@ func (a *App) clientKey(r *http.Request) string {
 		}
 		return "unknown"
 	}
-	if ip := ViewerIP(r.Header); ip != "" {
+	if ip := viewerip.FromHeader(r.Header); ip != "" {
 		return ip
 	}
 	slog.Warn("console: no viewer address on an auth request; using the shared bucket")

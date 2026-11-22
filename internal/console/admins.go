@@ -7,16 +7,18 @@ import (
 
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/id"
+	"github.com/huy090202/auth-gate/internal/platform/password"
+	"github.com/huy090202/auth-gate/internal/platform/webapi"
 )
 
 var (
-	errForbidden  = &apiError{Status: http.StatusForbidden, Code: "forbidden"}
-	errSelf       = &apiError{Status: http.StatusConflict, Code: "cannot_modify_self"}
-	errAdminGone  = &apiError{Status: http.StatusNotFound, Code: "not_found"}
-	errLastMaster = &apiError{Status: http.StatusConflict, Code: "last_master"}
+	errForbidden  = &webapi.Error{Status: http.StatusForbidden, Code: "forbidden"}
+	errSelf       = &webapi.Error{Status: http.StatusConflict, Code: "cannot_modify_self"}
+	errAdminGone  = &webapi.Error{Status: http.StatusNotFound, Code: "not_found"}
+	errLastMaster = &webapi.Error{Status: http.StatusConflict, Code: "last_master"}
 	// errBusy is a transient clash between two writes. The step-up token was
 	// spent, so the retry needs a new one.
-	errBusy = &apiError{Status: http.StatusServiceUnavailable, Code: "busy", RetryAfter: 1}
+	errBusy = &webapi.Error{Status: http.StatusServiceUnavailable, Code: "busy", RetryAfter: 1}
 )
 
 // adminRoutes serves /api/admins* for a full session; the handlers then require
@@ -24,13 +26,13 @@ var (
 // to a wrong stage, and to a path that is not a route.
 func (a *App) adminRoutes(mux *http.ServeMux) {
 	full := a.session(StageFull)
-	mux.Handle("GET /api/admins", full(handlerFunc(a.listAdmins)))
-	mux.Handle("POST /api/admins", a.audited("admin-create", full(handlerFunc(a.createAdmin))))
-	mux.Handle("POST /api/admins/{username}/reset-password", a.audited("admin-reset-password", full(handlerFunc(a.resetPassword))))
-	mux.Handle("POST /api/admins/{username}/clear-factors", a.audited("admin-clear-factors", full(handlerFunc(a.clearFactors))))
-	mux.Handle("POST /api/admins/{username}/disable", a.audited("admin-disable", full(handlerFunc(a.disableAdmin))))
-	mux.Handle("POST /api/admins/{username}/enable", a.audited("admin-enable", full(handlerFunc(a.enableAdmin))))
-	mux.Handle("POST /api/admins/{username}/role", a.audited("admin-role", full(handlerFunc(a.setAdminRole))))
+	mux.Handle("GET /api/admins", full(webapi.HandlerFunc(a.listAdmins)))
+	mux.Handle("POST /api/admins", a.audited("admin-create", full(webapi.HandlerFunc(a.createAdmin))))
+	mux.Handle("POST /api/admins/{username}/reset-password", a.audited("admin-reset-password", full(webapi.HandlerFunc(a.resetPassword))))
+	mux.Handle("POST /api/admins/{username}/clear-factors", a.audited("admin-clear-factors", full(webapi.HandlerFunc(a.clearFactors))))
+	mux.Handle("POST /api/admins/{username}/disable", a.audited("admin-disable", full(webapi.HandlerFunc(a.disableAdmin))))
+	mux.Handle("POST /api/admins/{username}/enable", a.audited("admin-enable", full(webapi.HandlerFunc(a.enableAdmin))))
+	mux.Handle("POST /api/admins/{username}/role", a.audited("admin-role", full(webapi.HandlerFunc(a.setAdminRole))))
 	for _, p := range []string{"/api/admins", "/api/admins/"} {
 		mux.Handle(p, full(http.HandlerFunc(notFound)))
 	}
@@ -103,7 +105,7 @@ func (a *App) createAdmin(w http.ResponseWriter, r *http.Request) error {
 		Role     Role   `json:"role"`
 	}
 	// Decoded first so that a refusal below still records whose account was asked for.
-	decErr := decodeBody(r, &in)
+	decErr := webapi.DecodeBody(r, &in)
 	name, nameErr := NormalizeUsername(in.Username)
 	if decErr == nil && nameErr == nil {
 		setAuditTarget(r.Context(), name)
@@ -115,10 +117,10 @@ func (a *App) createAdmin(w http.ResponseWriter, r *http.Request) error {
 		return decErr
 	}
 	if nameErr != nil {
-		return &apiError{Status: http.StatusBadRequest, Code: "invalid_username"}
+		return &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_username"}
 	}
 	if !validRole(in.Role) {
-		return &apiError{Status: http.StatusBadRequest, Code: "invalid_role"}
+		return &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_role"}
 	}
 	setAuditDetail(r.Context(), "role", string(in.Role))
 	tok, err := a.checkStepUp(r, x, "admin-create", name+"/"+string(in.Role))
@@ -126,7 +128,7 @@ func (a *App) createAdmin(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	temp := NewTempPassword()
-	hash, err := HashPassword(temp)
+	hash, err := password.Hash(temp)
 	if err != nil {
 		return err
 	}
@@ -137,7 +139,7 @@ func (a *App) createAdmin(w http.ResponseWriter, r *http.Request) error {
 	err = a.Store.CreateAdmin(r.Context(), Admin{ID: id.New(), Username: name, Role: in.Role,
 		PasswordHash: hash, MustChangePassword: true, CreatedAt: a.now().UTC()})
 	if errors.Is(err, ErrUsernameTaken) {
-		return &apiError{Status: http.StatusConflict, Code: "username_taken"}
+		return &webapi.Error{Status: http.StatusConflict, Code: "username_taken"}
 	}
 	if err != nil {
 		return err
@@ -164,7 +166,7 @@ func (a *App) adminTarget(r *http.Request, action string, qualify func() (string
 		return nil, Admin{}, Admin{}, errForbidden
 	}
 	if err != nil {
-		return nil, Admin{}, Admin{}, &apiError{Status: http.StatusBadRequest, Code: "invalid_username"}
+		return nil, Admin{}, Admin{}, &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_username"}
 	}
 	if name == actor.Username {
 		return nil, Admin{}, Admin{}, errSelf
@@ -197,7 +199,7 @@ func (a *App) resetPassword(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	temp := NewTempPassword()
-	hash, err := HashPassword(temp)
+	hash, err := password.Hash(temp)
 	if err != nil {
 		return err
 	}
@@ -230,7 +232,7 @@ func (a *App) clearFactors(w http.ResponseWriter, r *http.Request) error {
 		return adminWriteError(err)
 	}
 	if err := a.AuthGate.PurgeSubject(r.Context(), a.Config.AuthGateClientID, target.ID); err != nil {
-		return agError(err)
+		return webapi.AuthGateError(err)
 	}
 	if err := a.Store.EndSessions(r.Context(), target.Username); err != nil {
 		return adminWriteError(err)
@@ -277,11 +279,11 @@ func (a *App) setAdminRole(w http.ResponseWriter, r *http.Request) error {
 		Role Role `json:"role"`
 	}
 	tok, actor, target, err := a.adminTarget(r, "admin-role", func() (string, error) {
-		if err := decodeBody(r, &in); err != nil {
+		if err := webapi.DecodeBody(r, &in); err != nil {
 			return "", err
 		}
 		if !validRole(in.Role) {
-			return "", &apiError{Status: http.StatusBadRequest, Code: "invalid_role"}
+			return "", &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_role"}
 		}
 		setAuditDetail(r.Context(), "role", string(in.Role))
 		return string(in.Role), nil

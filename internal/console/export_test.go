@@ -3,6 +3,8 @@ package console
 import (
 	"net/http"
 	"time"
+
+	"github.com/huy090202/auth-gate/internal/platform/webapi"
 )
 
 // NewWithPasswordCheck is New with the password comparison replaced, so a test
@@ -24,7 +26,7 @@ func NewWithBeforeAdminWrite(d Deps, hook func()) http.Handler {
 
 // AdminWriteError exposes how a failed /admins write is answered.
 func AdminWriteError(err error) (status int, code string, retryAfter int) {
-	ae := adminWriteError(err).(*apiError)
+	ae := adminWriteError(err).(*webapi.Error)
 	return ae.Status, ae.Code, ae.RetryAfter
 }
 
