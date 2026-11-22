@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
 	"github.com/huy090202/auth-gate/internal/platform/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/password"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 	"github.com/huy090202/auth-gate/internal/platform/viewerip"
 	"github.com/huy090202/auth-gate/internal/platform/webapi"
@@ -41,13 +42,15 @@ type App struct {
 	Store *Store
 	// newToken makes an email token and its hash; tests replace it.
 	newToken func() (token, hash string, err error)
+	// verifyPassword is password.Verify; a field so a test can count the calls.
+	verifyPassword func(password, stored string) bool
 }
 
 // New returns the Portal's HTTP handler.
 func New(d Deps) http.Handler { return newApp(d).handler() }
 
 func newApp(d Deps) *App {
-	return &App{Deps: d, Store: &Store{DB: d.DB, Table: d.Config.Table, Now: d.Now}, newToken: websession.NewToken}
+	return &App{Deps: d, Store: &Store{DB: d.DB, Table: d.Config.Table, Now: d.Now}, newToken: websession.NewToken, verifyPassword: password.Verify}
 }
 
 // handler is the mux every route of the Portal registers on. Later tasks add
@@ -55,6 +58,9 @@ func newApp(d Deps) *App {
 func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
 	a.mountSignup(mux)
+	a.mountAuth(mux)
+	a.mountMe(mux)
+	a.mountStepUp(mux)
 	mux.HandleFunc("/api/", notFound)
 	return webapi.NoStore(webapi.RequireJSON(mux))
 }
