@@ -11,6 +11,8 @@
     "./i18n": "./src/lib/i18n.ts",
     "./mantine-vars": "./src/lib/mantine-vars.ts",
     "./styles.css": "./src/kit.css",
+    "./shell.css": "./src/shell.css",
+    "./clients": "./src/lib/clients.ts",
     "./shown-once": "./src/ShownOnce.tsx",
     "./theme": "./src/theme.ts",
     "./toast": "./src/toast.tsx",

@@ -46,8 +46,6 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 
 
 
-/* One PIN field at full width with its button below it. */
-.factor-pin { display: grid; gap: 12px; }
 .auth-card h2.sub { font-size: 1.0625rem; font-weight: 650; }
 .auth-card .code-input input { font-family: var(--mantine-font-family-monospace); letter-spacing: 0.08em; text-transform: uppercase; }
 .turnstile { min-height: 0; }
@@ -58,3 +56,11 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
   border-radius: 10px; background: var(--field-bg); border: 1px solid var(--field-border);
 }
 .code-grid code { font-family: var(--mantine-font-family-monospace); font-size: 1rem; letter-spacing: 0.06em; }
+
+/* The workspace switcher under the brand, and the avatar picture in the header. */
+.tenant-switch { padding: 0 2px; }
+@media (min-width: 769px) { .sidebar[data-collapsed='true'] .tenant-switch { display: none; } }
+img.avatar { object-fit: cover; background: var(--accent-soft); }
+.avatar-lg { width: 64px; height: 64px; font-size: 1.5rem; }
+.avatar-row { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 14px; }
+.avatar-row .avatar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

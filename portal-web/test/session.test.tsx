@@ -68,6 +68,6 @@ test('the session guard sends half to the second factor, enroll to enrolment, fu
 test('homeFor names the screen of each stage', () => {
   expect(homeFor('half')).toBe('/sign-in/second-factor');
   expect(homeFor('enroll')).toBe('/enroll');
-  expect(homeFor('full')).toBe('/account');
+  expect(homeFor('full')).toBe('/');
   expect(homeFor('anon')).toBe('/sign-in');
 });

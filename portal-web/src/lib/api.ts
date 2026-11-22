@@ -8,6 +8,9 @@ export const errorCodes = [
   'unsupported_media_type', 'not_found', 'invalid_json', 'wrong_password', 'last_factor', 'factor_not_enrolled',
   'authgate_unavailable', 'internal', 'verification_failed', 'locked', 'challenge_gone', 'wrong_factor', 'pin_rejected',
   'registration_failed', 'invalid_factor', 'enrollment_in_progress', 'invalid_target', 'busy', 'conflict',
+  // Account, workspace and client calls.
+  'invalid_display_name', 'invalid_avatar', 'email_taken', 'forbidden', 'invalid_id', 'invalid_cursor',
+  'tenant_deleting', 'tenant_suspended', 'quota_exceeded', 'client_not_found', 'invalid_client', 'disabled_by_operator',
 ] as const;
 export type ErrorCode = (typeof errorCodes)[number];
 

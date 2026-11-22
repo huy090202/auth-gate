@@ -118,12 +118,14 @@ export function FactorForm<T>({ factors, start, verify, onDone }: {
 /**
  * One passkey registration: start, the browser prompt, finish. A /finish that is retried after a 502
  * gets 410 challenge_gone (the first attempt dropped the registration), so it starts over once.
+ * A full session sends a step-up token at /start; the token is spent there, so a restart is refused
+ * with step_up_required and the caller asks for a new one (useStepUp does).
  */
-export async function registerPasskey(): Promise<EnrolResult> {
+export async function registerPasskey(stepUpToken?: string): Promise<EnrolResult> {
   if (!passkeysSupported()) throw new DOMException('Passkeys unavailable', 'NotSupportedError');
   for (let attempt = 0; ; attempt++) {
     try {
-      const reg = await api<{ registrationId: string; publicKey: unknown }>('/api/me/passkeys/start', { method: 'POST' });
+      const reg = await api<{ registrationId: string; publicKey: unknown }>('/api/me/passkeys/start', { method: 'POST', stepUpToken });
       const cred = (await navigator.credentials.create({ publicKey: toCreationOptions(reg.publicKey) })) as PublicKeyCredential | null;
       if (!cred) throw new DOMException('No credential', 'NotAllowedError');
       return await api<EnrolResult>('/api/me/passkeys/finish', { body: { registrationId: reg.registrationId, credential: serializeCredential(cred) } });

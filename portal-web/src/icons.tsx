@@ -1,0 +1,11 @@
+import type { ReactNode } from 'react';
+
+// Small line icons in the style of brand.tsx: presentation attributes, no library, decorative.
+const base = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true, focusable: false } as const;
+const icon = (d: ReactNode) => <svg {...base}>{d}</svg>;
+
+export const ClientsIcon = () => icon(<><rect x="3" y="4" width="18" height="6" rx="2" /><rect x="3" y="14" width="18" height="6" rx="2" /><path d="M7 7h.01M7 17h.01" /></>);
+export const AuditIcon = () => icon(<><path d="M8 6h12M8 12h12M8 18h12" /><path d="M4 6h.01M4 12h.01M4 18h.01" /></>);
+export const AccountIcon = () => icon(<><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>);
+export const PanelLeftIcon = () => icon(<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" /></>);
+export const SignOutIcon = () => icon(<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></>);

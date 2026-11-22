@@ -34,7 +34,7 @@ export function Enroll() {
       setError(explain(e, t));
       return;
     }
-    nav('/account', { replace: true });
+    nav('/', { replace: true });
   };
 
   if (codes) return <RecoveryCodes codes={codes} onContinue={() => void toAccount()} />;

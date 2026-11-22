@@ -40,7 +40,7 @@ export function SecondFactor() {
           setReloadError('');
           // The factor was accepted; if the refresh fails the user is told, not left on a silent form.
           void reload().then(
-            () => nav(r.stage === 'enroll' ? '/enroll' : '/account', { replace: true }),
+            () => nav(r.stage === 'enroll' ? '/enroll' : '/', { replace: true }),
             (e: unknown) => setReloadError(explain(e, t)),
           );
         }}

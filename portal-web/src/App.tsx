@@ -8,8 +8,8 @@ import { ToastProvider } from './toast';
 
 export { SchemeToggle };
 
-/** Signed-in screens bring their own frame (Task 11); every screen before that keeps the top header. */
-const framed = ['/account'];
+/** Signed-in screens bring their own frame (the sidebar shell); every other screen keeps the top header. */
+const framed = ['/account', '/t'];
 
 export function App() {
   const [lang] = useLang();

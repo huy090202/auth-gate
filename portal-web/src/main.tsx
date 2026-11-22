@@ -5,6 +5,7 @@ import '@mantine/core/styles.css';
 // Generated rules that Mantine would otherwise inject as <style> elements; see lib/mantine-vars.ts.
 import './mantine-vars.css';
 import '@authgate/web-kit/styles.css';
+import '@authgate/web-kit/shell.css';
 import './styles.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';

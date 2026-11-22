@@ -129,7 +129,7 @@ export function Loading({ header }: { header?: boolean }) {
   );
 }
 
-/** Where a session of this status belongs. */
+/** Where a session of this status belongs. `/` sends a full session to its personal workspace. */
 export function homeFor(status: Status): string {
   switch (status) {
     case 'half':
@@ -137,7 +137,7 @@ export function homeFor(status: Status): string {
     case 'enroll':
       return '/enroll';
     case 'full':
-      return '/account';
+      return '/';
     default:
       return '/sign-in';
   }
@@ -165,6 +165,13 @@ export function SessionGuard({ children }: { children: (s: { me: Me; reload: () 
   if (status === 'error') return <LoadFailed error={error} onRetry={retry} header />;
   if (status !== 'full' || !me) return <Navigate to={homeFor(status)} replace />;
   return <>{children({ me, reload })}</>;
+}
+
+/** The full session of a screen inside the frame, which only renders behind SessionGuard. */
+export function useFullMe(): { me: Me; reload: () => Promise<void> } {
+  const { me, reload } = useMe();
+  if (!me) throw new Error('useFullMe outside SessionGuard');
+  return { me, reload };
 }
 
 /**
