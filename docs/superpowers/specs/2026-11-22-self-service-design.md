@@ -98,7 +98,7 @@ Rules:
 A second set of routes on the admin Lambda, guarded by `portal-key` (SSM SecureString). The admin
 key does not open them and the portal key does not open `/api/clients*`. Every request carries
 `x-tenant-id`; a client whose `owner` is not `T#<x-tenant-id>`, or is empty, answers
-`404 not_found`, the same as an unknown client.
+`404 client_not_found`, the same as an unknown client.
 
 | Route | Notes |
 |---|---|

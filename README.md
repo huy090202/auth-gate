@@ -24,7 +24,8 @@ name or an optional custom domain (parameters `DomainName`, `CertificateArn`,
 
 | Path | Role | Credential |
 | --- | --- | --- |
-| `/api/clients*` | `admin` | `x-internal-access-key: <admin key>` |
+| `/api/clients*`, `/api/owners*` | `admin` | `x-internal-access-key: <admin key>` |
+| `/api/portal*` | `admin` | `x-internal-access-key: <portal key>` and `x-tenant-id` |
 | `/.well-known/*` | `jwks` | none |
 | everything else | `verify` | `x-internal-access-key: <client key>` |
 
@@ -37,6 +38,11 @@ The Function URLs behind the door refuse direct calls: CloudFront adds a secret
 
 - The **admin key** (SSM SecureString, read at cold start) creates clients and rotates
   their keys.
+- The **portal key** (SSM SecureString, `portal-key`) is the Portal's credential. It opens only
+  `/api/portal/*`, where every call names a tenant in `x-tenant-id` and reaches only that
+  tenant's clients. The admin key does not open those routes and the portal key does not open
+  the admin routes: each answers `401 unauthorized` on the other's
+  ([memo](docs/memo/client-ownership.md)).
 - A **client key** (`ag_` plus 32 random bytes) identifies one calling backend. It is
   returned once; only its SHA-256 is stored, and `clientId` is derived from it, never
   taken from the body ([memo](docs/memo/client-key-is-a-hash-lookup.md)).
@@ -67,9 +73,67 @@ All under `/api/clients`, with `x-internal-access-key: <admin key>`.
 | `POST /api/clients/{id}/keys` | Rotate the key; the old one lives 24 hours. A rotate that loses a race with another answers `409 rotate_conflict` and issues nothing. |
 | `DELETE /api/clients/{id}/keys/previous` | End every previous key's grace now: `{"revoked": n}`. |
 | `DELETE /api/clients/{id}/subjects/{subjectId}` | Purge one subject's factors. |
+| `DELETE /api/clients/{id}` | Soft delete, for any client: its keys answer 401 at once, it leaves every list and frees its owner's quota slot. `404` for an unknown or already deleted client. |
 
 The client list reads an index item written with each client. Clients created before it
-existed need `05-backfill-clients.sh` once per stage.
+existed need `05-backfill-clients.sh` once per stage. Each summary carries `owner` (the tenant
+id) when a tenant owns the client, and omits it for an operator's.
+
+Tenants are managed under `/api/owners/{tenantId}`, with the admin key. A tenant has no item
+until it first creates a client or an operator changes it; then it has the defaults.
+
+| Route | What it does |
+| --- | --- |
+| `GET /api/owners/{tenantId}` | `clientCount`, `clientQuota` (default 5) and `suspendedAt` when set. |
+| `PATCH /api/owners/{tenantId}` | Set `clientQuota`, 0 to 1000. Below the current count, existing clients stay and creates are refused; 0 freezes creation. |
+| `POST /api/owners/{tenantId}/suspend` | Refuse the tenant's creates and portal writes, and stop its keys. |
+| `POST /api/owners/{tenantId}/unsuspend` | Lift it. |
+
+### Portal API
+
+What the Portal's backend calls, with `x-internal-access-key: <portal key>` and
+`x-tenant-id: <ULID>` (a missing or malformed one answers `400 invalid_tenant`). The routes
+mirror the admin ones on the tenant's own clients:
+
+| Route | What it does |
+| --- | --- |
+| `POST /api/portal/clients` | Create a client owned by the tenant; the key is returned once. The rate limit is forced to burst 20, 10 per second, whatever the body says. `409 quota_exceeded` at the quota. |
+| `GET /api/portal/clients` | List the tenant's clients, paged with `?cursor=`. |
+| `GET /api/portal/clients/{id}` | One client. |
+| `PATCH /api/portal/clients/{id}` | Change `name`, `origins`, `pinPolicy` or `tokenTtlSec`. `rateLimit` answers `400 invalid_client`. |
+| `POST /api/portal/clients/{id}/disable`, `.../enable` | Disable or enable. Enable answers `409 disabled_by_operator` for a client an operator disabled. |
+| `POST /api/portal/clients/{id}/keys` | Rotate the key. |
+| `DELETE /api/portal/clients/{id}/keys/previous` | End every previous key's grace now. |
+| `DELETE /api/portal/clients/{id}/subjects/{subjectId}` | Purge one subject's factors. |
+| `DELETE /api/portal/clients/{id}` | Soft delete; frees a quota slot. |
+
+A client of another tenant, of an operator, a deleted one and an unknown id all answer
+`404 client_not_found`. While the tenant is suspended every write answers
+`409 tenant_suspended` at once, and its clients' keys stop working within 30 seconds (each
+instance caches the tenant's state that long); an operator's clients never read it.
+
+### Deleting clients
+
+A delete is soft, so the factors (PINs and passkeys) of a deleted client stay in the table until
+`07-prune-factors.sh` removes them. Both pruning scripts run by hand under the admin profile
+(`ADMIN_PROFILE=default`), and neither runs in CI.
+
+- `06-prune-clients.sh` lists every client through the admin API and proposes the test clients
+  that piled up, by name: `smoke`, `bruno boundary A`, `B` and `C`, `bruno demo`,
+  `bruno demo renamed`, `bruno rate limit` and `rate-limit-probe`. It matches by name across
+  every owner (no tenant creates clients yet), so check the listing before answering. `--keep <id>`
+  drops one from the proposal and `--also <id>` adds one. It never offers the Console's own
+  client (output `AuthGateClientId` of `auth-gate-console-<stage>`) nor the Portal's
+  (`auth-gate-portal-<stage>`, once that stack exists), and it refuses to run if those ids do not
+  read cleanly. It deletes only after you type `delete <n>`. The admin key goes to curl on stdin and
+  is never printed.
+- `07-prune-factors.sh` counts the factor items of soft-deleted clients; with `--apply` it
+  deletes them. It needs `Scan`, which no Lambda role or the deployer has. Safe to rerun.
+
+The smokes now delete the clients they create, so CI no longer adds to the pile.
+
+A rotate that loses a race to a delete can leave an orphan `K#` key item that points at a deleted
+client. `Authenticate` refuses it, so it does no harm.
 
 ## Rate limit
 
@@ -337,12 +401,18 @@ other stages, with AWS access. They live in `scripts/setup-and-deploy/` and read
 0. `00-deployer.sh` (once per account and after changing either JSON, with an admin profile:
    `ADMIN_PROFILE=default`): create or update the permissions boundary `auth-gate-boundary` from
    `infra/role-boundary.json`, then the IAM user `auth-gate-deployer` with
-   `infra/deployer-policy.json`, scoped to `auth-gate-*` resources, and a local AWS profile of
-   the same name. The deployer cannot create the stacks: a stage's first deploy runs under the
+   the two managed policies, scoped to `auth-gate-*` resources, and a local AWS profile of
+   the same name. The deployer's rights are split over two files because one managed policy
+   holds at most 6144 characters: `auth-gate-deployer-policy` from `infra/deployer-policy.json`
+   (CloudFormation, S3, Lambda, the IAM roles under the boundary, DynamoDB, KMS, SSM and logs)
+   and `auth-gate-deployer-edge-policy` from `infra/deployer-policy-edge.json` (CloudFront
+   distributions and policies, edge functions, the optional ACM and Route 53 rights). Both are
+   attached to the user and to the CI role, and together they are the deployer's rights. The deployer cannot create the stacks: a stage's first deploy runs under the
    admin profile ([First deploy of a stage](#first-deploy-of-a-stage)).
 1. `00-cert.sh DOMAIN` (optional): request an ACM certificate in `us-east-1`.
-2. `01-ssm.sh`: write the random `admin-key` (SecureString) and `origin-verify` (plain
-   String; CloudFront cannot resolve a SecureString).
+2. `01-ssm.sh`: write the random `admin-key` and `portal-key` (SecureStrings) and
+   `origin-verify` (plain String; CloudFront cannot resolve a SecureString). A parameter that
+   exists is kept, and no value ever goes on an argv.
 3. `02-build.sh`: cross-compile `bin/bootstrap.zip` for linux/arm64.
 4. `03-deploy.sh`: deploy the SAM stack `auth-gate-<stage>` and print the one `BaseUrl`. The
    first deploy of a stage runs under the admin profile; it will fail under the deployer
@@ -366,7 +436,9 @@ can lift that (open an Account and billing case), so do it before the first depl
 If a deploy fails, CloudFormation rolls back and leaves the stack in `ROLLBACK_COMPLETE`
 (or `ROLLBACK_FAILED`), which cannot be updated: delete it with
 `aws cloudformation delete-stack --stack-name auth-gate-<stage>` before deploying again. A
-missing deployer permission goes into `infra/deployer-policy.json`; rerun `00-deployer.sh`.
+missing deployer permission goes into the file whose statements it belongs with:
+`infra/deployer-policy-edge.json` for CloudFront, edge functions and the custom domain,
+`infra/deployer-policy.json` for everything else; rerun `00-deployer.sh`.
 Both tables have deletion protection, which blocks a plain `delete-stack`: to clear a failed
 stack, run `99-purge.sh` (AuthGate) or `scripts/console/purge.sh` (the Console), which turn it
 off after their typed confirmation.
@@ -507,7 +579,7 @@ ADMIN_PROFILE=default scripts/ci/00-sam-lifecycle.sh
 
 `00-ci-role.sh` creates the GitHub OIDC provider if the account has none and the role, trusted
 only for `repo:huy090202@100850219/auth-gate@1423990644:ref:refs/heads/main` (`infra/ci-trust.json`), with the managed
-policy `auth-gate-deployer-policy`. `00-sam-lifecycle.sh` adds two lifecycle rules,
+policies `auth-gate-deployer-policy` and `auth-gate-deployer-edge-policy`. `00-sam-lifecycle.sh` adds two lifecycle rules,
 `auth-gate-artifacts-*`, to the shared SAM bucket and keeps every rule already there. Both are
 rerunnable. The proofs, read-only, under the admin profile in a subshell:
 
@@ -524,8 +596,8 @@ aws s3api get-bucket-lifecycle-configuration --bucket "$bucket" --query 'Rules[]
 )
 ```
 
-Expect the trust policy with `aud` `sts.amazonaws.com` and the `sub` above, the policy
-`auth-gate-deployer-policy`, and both `auth-gate-artifacts-*` rule IDs next to every rule that
+Expect the trust policy with `aud` `sts.amazonaws.com` and the `sub` above, the policies
+`auth-gate-deployer-policy` and `auth-gate-deployer-edge-policy`, and both `auth-gate-artifacts-*` rule IDs next to every rule that
 was there before. A green first run of the `deploy` job proves the rest.
 
 A shell that exports `AWS_ACCESS_KEY_ID` makes the scripts use those credentials instead of the
@@ -553,7 +625,63 @@ running a fresh deploy.
 ### What stays manual
 
 `00-deployer.sh`, a stage's first deploy (and the Console's second pass), purges,
-`register-client.sh` and `05-backfill-clients.sh`.
+`register-client.sh`, `05-backfill-clients.sh`, `06-prune-clients.sh` and `07-prune-factors.sh`.
+
+### Rollout of P1 (tenant-aware AuthGate)
+
+This branch adds the `portal-key` parameter, the portal and owner routes, soft delete, and splits
+the deployer policy in two. It needs a person at an admin profile, in this order. Steps 1 and 2
+run back to back from the `feat-self-service` worktree, with no merge to `main` in between:
+`00-deployer.sh` rewrites `auth-gate-deployer-policy` without the CloudFront rights, which
+the CI role already holds through it, and until `00-ci-role.sh` has attached
+`auth-gate-deployer-edge-policy` to that role, a CI deploy would fail on CloudFront.
+
+Before the merge:
+
+```bash
+# 1. portal-key; the other two are kept
+scripts/setup-and-deploy/01-ssm.sh
+# 2. the policy split, then the CI role (no right is added or removed)
+ADMIN_PROFILE=default scripts/setup-and-deploy/00-deployer.sh
+ADMIN_PROFILE=default scripts/ci/00-ci-role.sh
+```
+
+Then merge. CI deploys and runs the smokes, which now delete the clients they create (step 3).
+After the deploy is green, with the admin profile:
+
+```bash
+# 4. prune the test clients, then the factors of every deleted client
+ADMIN_PROFILE=default scripts/setup-and-deploy/06-prune-clients.sh
+ADMIN_PROFILE=default scripts/setup-and-deploy/07-prune-factors.sh
+ADMIN_PROFILE=default scripts/setup-and-deploy/07-prune-factors.sh --apply
+```
+
+On stg `06-prune-clients.sh` should propose 52 of 55 clients and keep `auth-app-local`,
+`auth-app-stg` and `auth-gate-console-stg`. If the count differs, answer anything but
+`delete 52` first (it then deletes nothing) and send the listing. `07-prune-factors.sh` without
+`--apply` only prints counts; read them before `--apply`.
+
+5. The proofs, read-only, under the admin profile in a subshell, so it does not leak into later
+   deploys. Expect both policies on the user and on the role, the three parameters, the client
+   list `auth-app-local`, `auth-app-stg` and `auth-gate-console-stg`, and `401` for the admin
+   key on a portal route:
+
+```bash
+(
+export AWS_PROFILE=default AWS_REGION=ap-southeast-1 STAGE=stg
+aws iam list-attached-user-policies --user-name auth-gate-deployer --query 'AttachedPolicies[].PolicyName'
+aws iam list-attached-role-policies --role-name ci-auth-gate-deploy --query 'AttachedPolicies[].PolicyName'
+aws ssm describe-parameters --parameter-filters "Key=Name,Option=BeginsWith,Values=/credo/auth-gate/$STAGE/" \
+  --query 'Parameters[].[Name,Type]' --output text
+base="$(aws cloudformation describe-stacks --stack-name "auth-gate-$STAGE" \
+  --query 'Stacks[0].Outputs[?OutputKey==`BaseUrl`].OutputValue | [0]' --output text)"
+k="$(aws ssm get-parameter --name "/credo/auth-gate/$STAGE/admin-key" --with-decryption \
+  --query Parameter.Value --output text)"
+printf 'x-internal-access-key: %s\n' "$k" | curl -sS -H @- "${base%/}/api/clients" | jq -r '.clients[].name'
+printf 'x-internal-access-key: %s\n' "$k" | curl -sS -o /dev/null -w '%{http_code}\n' -H @- \
+  -H 'x-tenant-id: 01JD0000000000000000000000' "${base%/}/api/portal/clients"
+)
+```
 
 ### When a PR changes rights
 
