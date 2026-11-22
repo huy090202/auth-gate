@@ -33,7 +33,7 @@ var (
 	ErrQuotaExceeded = errors.New("client: quota exceeded")
 	// ErrOwnerSuspended is returned when the owner is suspended and may not create clients.
 	ErrOwnerSuspended = errors.New("client: owner suspended")
-	// ErrDisabledByOperator is returned when a tenant tries to enable a client an operator disabled.
+	// ErrDisabledByOperator is returned when a tenant tries to enable or delete a client an operator disabled.
 	ErrDisabledByOperator = errors.New("client: disabled by operator")
 )
 

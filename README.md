@@ -8,7 +8,8 @@ check was for: a step-up before a sensitive action, the second step of a login, 
 passkey-only login. Browsers never call auth-gate; only backends do.
 
 Operators register and manage clients from the [Console](#the-console), a separate web app
-with its own stack. It reaches auth-gate over HTTP like any other client.
+with its own stack. Anyone else signs up at the [Portal](#the-portal), a third app that manages
+their own clients. Both reach auth-gate over HTTP like any other client.
 
 The design is in [`docs/superpowers/specs/`](docs/superpowers/specs/2026-10-18-auth-gate-module-design.md),
 and the reasons behind each choice are one-page memos in [`docs/memo/`](docs/memo/).
@@ -121,10 +122,10 @@ A delete is soft, so the factors (PINs and passkeys) of a deleted client stay in
 - `06-prune-clients.sh` lists every client through the admin API and proposes the test clients
   that piled up, by name: `smoke`, `bruno boundary A`, `B` and `C`, `bruno demo`,
   `bruno demo renamed`, `bruno rate limit`, `bruno portal` and `rate-limit-probe`. It matches by name across
-  every owner (no tenant creates clients yet), so check the listing before answering. `--keep <id>`
+  every owner, including a Portal tenant's, so check the listing before answering. `--keep <id>`
   drops one from the proposal and `--also <id>` adds one. It never offers the Console's own
   client (output `AuthGateClientId` of `auth-gate-console-<stage>`) nor the Portal's
-  (`auth-gate-portal-<stage>`, once that stack exists), and it refuses to run if those ids do not
+  (`auth-gate-portal-<stage>`), and it refuses to run if those ids do not
   read cleanly. It deletes only after you type `delete <n>`. The admin key goes to curl on stdin and
   is never printed.
 - `07-prune-factors.sh` counts the factor items of soft-deleted clients; with `--apply` it
@@ -372,6 +373,285 @@ Route 53 and ACM until the custom domain work settles them. CI does not use the 
 role `ci-auth-gate-deploy` ([Continuous deploy](#continuous-deploy)). Keep the key out of shells
 you do not control.
 
+## The Portal
+
+The Portal is the self-service screen: anyone signs up, enrols a second factor, and manages
+their own AuthGate clients in a workspace. It is a third app with its own stack,
+`auth-gate-portal-<stage>`, its own CloudFront URL and its own table, built like the Console and
+reaching AuthGate only over HTTP. Design:
+[`docs/superpowers/specs/2026-11-22-self-service-design.md`](docs/superpowers/specs/2026-11-22-self-service-design.md);
+the reasons for the account rules are in [portal-accounts](docs/memo/portal-accounts.md) and
+[client-ownership](docs/memo/client-ownership.md).
+
+```text
+browser ──► CloudFront (Portal URL)
+              ├─ /api/*      → Lambda Function URL (portal, Go, arm64; x-origin-verify)
+              ├─ /avatars/*  → S3 avatar bucket (origin access control)
+              └─ /*          → S3 (SPA; CloudFront Function rewrites routes to /index.html)
+browser ──► S3 (presigned POST, an avatar upload)
+portal  ──► DynamoDB auth-gate-portal-<stage>  (users, workspaces, sessions, tokens, limiter, audit)
+portal  ──► AuthGate /api/challenges, /factors…   (its own client key: the second factor of its users)
+portal  ──► AuthGate /api/portal/*                (the portal key and x-tenant-id: a workspace's clients)
+portal  ──► SES (mail), Cloudflare Turnstile, Have I Been Pwned (range API)
+```
+
+`cmd/portal` imports neither `internal/auth/service` nor `internal/console`, and it never holds the
+admin key; `make check` fails if either import appears. It shares `internal/platform`
+(`websession`, `lockout`, `lease`, `firstfactor`, `auditlog`, `password`, `webapi`) and
+`packages/web-kit` with the Console.
+
+### Accounts
+
+- Sign-up takes an email, a display name, a password (12 to 128 bytes, checked against HIBP's range
+  API, which fails open) and a Turnstile token. Sign-up, resend, forgotten password and
+  factor-reset request always answer `202 {"status":"check_email"}`, whether or not the address has
+  an account, and take at least 1500 ms. A sign-in failure is always `401 invalid_credentials`.
+- The email link verifies the address (24 hours), creates the personal workspace and starts a
+  session in stage `enroll`. An unverified account expires after 7 days.
+- A second factor, a PIN or a passkey checked by AuthGate, is mandatory. Ten recovery codes
+  (`XXXXX-XXXXX`) are shown once with the first factor. A recovery code signs in to `enroll`, so the
+  person adds a new factor; it does not open `full`.
+- A lost factor without a code: an emailed link (1 hour), then a 24-hour wait that the next sign-in
+  with the old factor cancels. It is applied at the first sign-in after the wait.
+- Reset and factor-reset links are bound to the account's session epoch: a password reset, a
+  password change or an applied factor reset voids every link already sent.
+- Sessions are the Console's model: cookie `__Host-portal_session`, server-side, stages `half` (10
+  minutes), `enroll` (30 minutes) and `full` (30 minutes idle, 8 hours absolute). Five failed
+  sign-ins lock the account for 15 minutes; the count resets only on a completed sign-in.
+- Turnstile is always on for the four email routes, and on sign-in after 2 failures in 15 minutes
+  for the IP or the account (`403 turnstile_required`).
+- Limits (`429 rate_limited` with `Retry-After`): sign-up 5 per IP then one per 10 minutes, 3 emails
+  per address per hour; sign-in 10 per IP then one per 6 seconds; forgotten password and resend 10
+  per IP per hour; a signed-in user 60 requests then one per second. Fixed cost: none, and no WAF.
+- Step-up (a PIN or passkey, single use, bound to the action and its target) guards `rotate-key`,
+  `revoke-previous-keys`, `disable-client`, `purge-subject`, `delete-client`, `change-password`,
+  `change-email`, `add-factor`, `remove-factor`, `regenerate-recovery-codes` and `delete-account`.
+- A workspace is a tenant at AuthGate. The personal workspace is its owner's only, and a user who is
+  not a member of a workspace gets `404` on its routes, the same as an unknown one, before AuthGate
+  is called. Roles: everyone reads; owner, admin and member create, edit, rotate and revoke; owner
+  and admin disable, enable, purge and delete.
+
+### Portal API
+
+All under `/api`, JSON, errors `{"error": "<snake_case>"}`.
+
+| Route | Session | Notes |
+| --- | --- | --- |
+| `GET /config` | none | The Turnstile site key. |
+| `POST /auth/signup`, `/auth/resend-verification`, `/auth/forgot`, `/auth/factor-reset/request` | none | Turnstile; always `202 check_email`. |
+| `POST /auth/verify-email`, `/auth/reset-password`, `/auth/factor-reset/confirm`, `/auth/confirm-email` | none | A single-use token from an email link. |
+| `POST /auth/login`, `/auth/second-factor/start`, `/auth/second-factor/verify`, `/auth/recovery`, `/auth/logout` | by stage | |
+| `GET /me`, `POST /me/pin`, `/me/passkeys/start`, `/me/passkeys/finish`, `/me/recovery-codes`, `DELETE /me/pin`, `/me/passkeys/{id}` | any stage for `GET /me`; enroll or full for the rest | Writes need step-up in `full`, never in `enroll`. The last factor cannot be removed. |
+| `POST /me/display-name`, `/me/password`, `/me/email`, `/me/avatar`, `/me/avatar/confirm`, `DELETE /me/avatar`, `DELETE /me` | full | Password, email and account deletion need step-up. |
+| `POST /stepup/start`, `/stepup/verify` | full | `start` takes the action and its `target`. |
+| `GET /tenants` | full | The caller's workspaces, personal first. |
+| `GET /t/{tenantId}/clients`, `/t/{tenantId}/clients/{id}`, `POST /t/{tenantId}/clients`, `PATCH /t/{tenantId}/clients/{id}` | full | The key is returned once. `rateLimit` is not accepted. |
+| `POST .../clients/{id}/keys`, `DELETE .../clients/{id}/keys/previous`, `POST .../clients/{id}/disable`, `DELETE .../clients/{id}/subjects/{subjectId}`, `DELETE .../clients/{id}` | full | Step-up. `409 disabled_by_operator` for a client an operator disabled. |
+| `POST .../clients/{id}/enable` | full | |
+| `GET /t/{tenantId}/audit` | full | Owner and admin; newest first. |
+
+### Run it locally
+
+Needs Docker, Go, Node.js and pnpm as in [Local development](#local-development).
+
+```bash
+pnpm install
+make dev                                        # AuthGate on :8080
+scripts/portal/register-client.sh local         # writes .env.portal (gitignored)
+make portal-dev                                 # the Portal API on :8789
+pnpm --filter portal-web dev                    # the web app on :5174
+```
+
+Locally, mail is written as files in `.portal-mailbox/` (open the newest to find the link),
+avatars go to `.portal-avatars/`, and Turnstile uses Cloudflare's public test keys, which only work
+against the real siteverify endpoint (so a sign-up makes one outbound call to Cloudflare and one
+to HIBP). The Portal client's origin is `http://localhost:5174`, so passkeys need that port. The
+Bruno collection for the API is in `bruno-portal/`; `01-boundary` needs no credential:
+
+```bash
+cd bruno-portal/environments && cp local.example.yml local.yml
+cd .. && ../node_modules/.bin/bru run 01-boundary --env local -r
+```
+
+### Deploy
+
+Scripts are in `scripts/portal/` and read `STAGE` (default `stg`), `AWS_PROFILE` (default
+`auth-gate-deployer`) and `AWS_REGION`. AuthGate must already be deployed in that stage with the
+`portal-key` parameter, and the [permissions boundary](#permissions-boundary) and the deployer
+policies must carry the Portal's rights first ([Rollout of P2](#rollout-of-p2-the-portal)).
+
+1. `deploy.sh`, first pass, under the admin profile ([First deploy of a stage](#first-deploy-of-a-stage)).
+   It needs `EMAIL_FROM` (the SES identity address) and `TURNSTILE_SITE_KEY` (public) in the
+   environment. It writes `origin-verify` if absent, and `turnstile-secret` once, from the
+   environment variable `TURNSTILE_SECRET` through a 0600 file, never argv; later runs keep it.
+   It builds the Lambda and the web app, deploys the stack and uploads the site. With no AuthGate
+   client id yet `/api` answers `502` and it says so.
+2. `register-client.sh stg`: register the Portal as an AuthGate client with the stack's URL as its
+   `rpId` and origin; it writes the client key to SSM and prints the client id, and refuses to
+   overwrite a key that is already stored.
+3. `AUTHGATE_CLIENT_ID=<printed id> deploy.sh`, second pass. It also sets `PublicBaseUrl` (the
+   links in emails and the avatar upload origin) from the stack's own URL.
+4. `smoke.sh`: a deep link serves HTML with a CSP that has no `unsafe-inline` and names Turnstile,
+   `/api/nope` is a JSON 404, the raw Function URL answers 401, `/api/config` carries a site key,
+   then Bruno `01-boundary`. It needs no credential and can run any number of times.
+5. `purge.sh`: remove the stack after a typed confirmation. The table holds every account and the
+   audit trail and has deletion protection, so `purge.sh` turns it off just before the delete. It
+   never touches `/credo/auth-gate/<stage>/portal-key`, which belongs to AuthGate.
+
+CI runs `deploy.sh` and `smoke.sh` after the Console's ([Continuous deploy](#continuous-deploy)),
+with `EMAIL_FROM` and `TURNSTILE_SITE_KEY` from the repository variables `PORTAL_EMAIL_FROM` and
+`PORTAL_TURNSTILE_SITE_KEY`. They are variables, not secrets: the sender address and the site key
+are both public. The Lambda has no reserved concurrency (the account quota is small), so the
+per-IP and per-account limiters are the guard. While SES is in its sandbox it sends only to
+verified addresses.
+
+### Known limits
+
+- An avatar uploaded but never confirmed stays in the bucket. A lifecycle rule aborts only
+  incomplete multipart uploads, after 1 day.
+- A deleted avatar can stay in CloudFront's cache for up to 24 hours.
+- An email change does not void recovery links already sent to the old address; they die within
+  their 1-hour life.
+- A tenant can register any `rpId` and origins for its own client: there is no domain-ownership
+  check. The browser still binds a passkey to the origin it was made on.
+- Anyone can force a Turnstile challenge on a given address by failing a sign-in for it twice; that
+  is friction, not access.
+- The four email routes always take about 1.5 seconds.
+
+### Rollout of P2 (the Portal)
+
+This branch adds the Portal and widens the permissions boundary and the deployer policy. It needs a
+person at an admin profile, in this order, from the `feat-self-service` worktree, before the merge.
+Order matters: until step 3 is done the first deploy cannot succeed, and until step 4 is done CI's
+preflight refuses to deploy (the Portal stack and its client id must exist), so the hand deploy
+comes first and the merge second. Nothing in the blocks needs editing: each one asks for what it
+needs, and no secret goes on a command line.
+
+**1. SES.** The Lambda may send only from `EMAIL_FROM`, so the address typed here must be the one
+given to the deploy. In the sandbox SES sends only to verified addresses, so use the address you
+will sign up with in step 7. The second command makes SES stop mailing addresses that bounced or
+complained.
+
+```bash
+(
+export AWS_PROFILE=default AWS_REGION=ap-southeast-1
+read -r -p 'Sender address: ' addr
+aws sesv2 create-email-identity --email-address "$addr"
+aws sesv2 put-account-suppression-attributes --suppressed-reasons BOUNCE COMPLAINT
+)
+```
+
+SES mails a verification link to that address. Open it before going on; the proofs below show
+`true` for `VerifiedForSendingStatus` once it has been clicked.
+
+**2. Turnstile.** In the Cloudflare dashboard, Turnstile, add a widget named `auth-gate-portal-stg`,
+mode Managed, with the hostname `localhost` only: the CloudFront host does not exist yet. Copy the
+site key (public) and the secret. Step 4 reads the secret from the terminal without echo.
+
+**3. The boundary and the deployer policy**, back to back, in this order. `00-deployer.sh` rewrites
+the policies the CI role also holds, and `00-ci-role.sh` re-asserts the role, so run them without
+a merge or a deploy in between. Then wait a minute: IAM changes take a moment to apply.
+
+```bash
+ADMIN_PROFILE=default scripts/setup-and-deploy/00-deployer.sh
+ADMIN_PROFILE=default scripts/ci/00-ci-role.sh
+sleep 60
+```
+
+**4. The first Portal deploy**, under the admin profile, two passes with the registration between.
+The block stops at the first failing command. On a rerun press Enter at the secret prompt (the
+secret is already in SSM and is kept), and skip `register-client.sh` once the client key exists: it
+refuses to overwrite it, so run the second pass alone with `AUTHGATE_CLIENT_ID` set.
+
+```bash
+cd /home/work/auth-gate/feat-self-service && pnpm install --frozen-lockfile && (
+set -euo pipefail
+export AWS_PROFILE=default AWS_REGION=ap-southeast-1 STAGE=stg
+read -r -p 'Sender address (the SES identity): ' EMAIL_FROM
+read -r -p 'Turnstile site key: ' TURNSTILE_SITE_KEY
+read -rs -p 'Turnstile secret (not echoed): ' TURNSTILE_SECRET && export TURNSTILE_SECRET && echo
+export EMAIL_FROM TURNSTILE_SITE_KEY
+scripts/portal/deploy.sh                      # pass 1: /api answers 502 until pass 2
+unset TURNSTILE_SECRET
+scripts/portal/register-client.sh stg         # prints AUTHGATE_CLIENT_ID=<id>
+read -r -p 'AUTHGATE_CLIENT_ID printed above: ' AUTHGATE_CLIENT_ID
+export AUTHGATE_CLIENT_ID
+scripts/portal/deploy.sh                      # pass 2: sets the client id and PublicBaseUrl
+)
+```
+
+Now the CloudFront host exists. Print it, add that hostname (without `https://`) to the Turnstile
+widget in the dashboard, next to `localhost`, then smoke it:
+
+```bash
+AWS_PROFILE=default aws cloudformation describe-stacks --region ap-southeast-1 \
+  --stack-name auth-gate-portal-stg \
+  --query 'Stacks[0].Outputs[?OutputKey==`BaseUrl`].OutputValue | [0]' --output text
+AWS_PROFILE=default scripts/portal/smoke.sh
+```
+
+**5. The two repository variables.** In GitHub, the repository, Settings, Secrets and variables,
+Actions, the Variables tab, New repository variable: `PORTAL_EMAIL_FROM` is the sender address of
+step 1 and `PORTAL_TURNSTILE_SITE_KEY` is the site key of step 2. Without them the merge's Portal
+deploy stops at "EMAIL_FROM is required", after AuthGate and the Console have deployed.
+
+**6. Push the branch, open the pull request and merge it.** CI runs `check`, then deploys AuthGate,
+the Console and the Portal and runs the three smokes. The preflight passes only because steps 3 and
+4 are done. If a smoke fails after a successful deploy, the new code is live: fix forward.
+
+**7. The browser run**, on the Portal's CloudFront URL (step 4 printed it):
+
+1. Sign up with the SES-verified address. With any other address SES refuses to send in the
+   sandbox, the Portal logs it and still answers `check_email`, and no mail arrives.
+2. Open the verification link; you land in `enroll`.
+3. Add a PIN or a passkey; save the ten recovery codes (copy or download) and tick the box.
+4. Create a client in the personal workspace; copy its key, then rotate the key and read the new one.
+5. Sign out, then sign in with the password and a recovery code instead of the factor: you land in
+   `enroll`; add a factor again.
+6. Sign out, choose "forgot password", open the link, set a new password and sign in with it.
+7. Optional: delete the client and the account from My account.
+
+**The proofs**, read-only, under the admin profile in a subshell, so it does not leak into later
+deploys. Expect: the SES identity `true` and the sandbox still on (`ProductionAccessEnabled`
+`false`) with suppression `BOUNCE` and `COMPLAINT`; the boundary statements `SendPortalEmail` and
+`PortalAvatars`; both managed policies on the user and on the role; the Portal's three parameters
+(names and types only: `authgate-client-key` SecureString, `origin-verify` String,
+`turnstile-secret` SecureString); the stack complete, with a client id and the sender address;
+deletion protection `true`; only a site key in `/api/config`; `401` for the raw URL and `401` for a
+tenant route without a cookie. `gh variable list` shows the two variables.
+
+```bash
+(
+export AWS_PROFILE=default AWS_REGION=ap-southeast-1 STAGE=stg
+read -r -p 'Sender address: ' addr
+acct="$(aws sts get-caller-identity --query Account --output text)"
+aws sesv2 get-email-identity --email-address "$addr" --query VerifiedForSendingStatus
+aws sesv2 get-account --query '[ProductionAccessEnabled,SuppressionAttributes.SuppressedReasons]'
+b="arn:aws:iam::$acct:policy/auth-gate-boundary"
+v="$(aws iam get-policy --policy-arn "$b" --query Policy.DefaultVersionId --output text)"
+aws iam get-policy-version --policy-arn "$b" --version-id "$v" --query 'PolicyVersion.Document.Statement[].Sid'
+aws iam list-attached-user-policies --user-name auth-gate-deployer --query 'AttachedPolicies[].PolicyName'
+aws iam list-attached-role-policies --role-name ci-auth-gate-deploy --query 'AttachedPolicies[].PolicyName'
+aws ssm describe-parameters \
+  --parameter-filters "Key=Name,Option=BeginsWith,Values=/credo/auth-gate-portal/$STAGE/" \
+  --query 'Parameters[].[Name,Type]' --output text
+out() { aws cloudformation describe-stacks --stack-name "auth-gate-portal-$STAGE" \
+  --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue | [0]" --output text; }
+aws cloudformation describe-stacks --stack-name "auth-gate-portal-$STAGE" --query 'Stacks[0].StackStatus' --output text
+echo "AuthGateClientId: $(out AuthGateClientId)"
+fn="$(aws cloudformation describe-stack-resource --stack-name "auth-gate-portal-$STAGE" \
+  --logical-resource-id Portal --query StackResourceDetail.PhysicalResourceId --output text)"
+aws lambda get-function-configuration --function-name "$fn" --query 'Environment.Variables.EMAIL_FROM' --output text
+aws dynamodb describe-table --table-name "auth-gate-portal-$STAGE" --query Table.DeletionProtectionEnabled
+base="$(out BaseUrl)"
+raw="$(out RawPortalUrl)"
+curl -sS "${base%/}/api/config" | jq 'keys'
+curl -sS -o /dev/null -w '%{http_code}\n' "${raw%/}/api/nope"
+curl -sS -o /dev/null -w '%{http_code}\n' "${base%/}/api/t/01JD0000000000000000000000/clients"
+)
+gh variable list
+```
+
 ## Local development
 
 You need Go (`go 1.26.0` per `go.mod`), Docker, Node.js 22 or newer and pnpm. Put
@@ -563,9 +843,13 @@ Every later deploy, including the Console's second pass, runs as the deployer.
 Every push to `main` runs the `deploy` job in `.github/workflows/ci.yml` after `check` passes,
 for stg only. It assumes the role `ci-auth-gate-deploy` through GitHub OIDC (no stored key),
 runs `scripts/ci/preflight.sh`, then `02-build.sh`, `03-deploy.sh`, `04-smoke.sh`,
-`scripts/console/deploy.sh` and `scripts/console/smoke.sh`. The preflight stops the job unless
-both stacks exist in `CREATE_COMPLETE`, `UPDATE_COMPLETE` or `UPDATE_ROLLBACK_COMPLETE` and the
-Console's `AuthGateClientId` output is set: CI never creates a stack. Deploys queue (group
+`scripts/console/deploy.sh`, `scripts/console/smoke.sh`, `scripts/portal/deploy.sh` and
+`scripts/portal/smoke.sh`. The preflight stops the job unless all three stacks exist in
+`CREATE_COMPLETE`, `UPDATE_COMPLETE` or `UPDATE_ROLLBACK_COMPLETE` and the Console's and the
+Portal's `AuthGateClientId` output is set: CI never creates a stack, so the Portal's first deploy
+is by hand ([Rollout of P2](#rollout-of-p2-the-portal)). The Portal deploy reads the repository
+variables `PORTAL_EMAIL_FROM` and `PORTAL_TURNSTILE_SITE_KEY` (Settings, Secrets and variables,
+Actions, Variables). Deploys queue (group
 `deploy-stg`, never cancelled), so a second merge waits for a running deploy. GitHub keeps one pending run, so a third merge
 replaces the queued second and the newest merge wins. If a smoke fails
 after a successful deploy, the new code is live: fix forward or revert the PR, whose merge
@@ -627,8 +911,8 @@ running a fresh deploy.
 
 ### What stays manual
 
-`00-deployer.sh`, a stage's first deploy (and the Console's second pass), purges,
-`register-client.sh`, `05-backfill-clients.sh`, `06-prune-clients.sh` and `07-prune-factors.sh`.
+`00-deployer.sh`, a stage's first deploy (and the Console's and the Portal's second pass), purges,
+`register-client.sh` (the Console's and the Portal's), `05-backfill-clients.sh`, `06-prune-clients.sh` and `07-prune-factors.sh`.
 
 ### Rollout of P1 (tenant-aware AuthGate)
 
@@ -698,18 +982,24 @@ rollout.
 cmd/auth-gate/        ROLE selects the mux; Lambda adapter and local dev server
 cmd/backfill-clients/ one-off: write the list-index item for existing clients
 cmd/console/          Console Lambda; `console admin ...` operator commands
+cmd/portal/           Portal Lambda and its local dev server
 cmd/smoke/            WebAuthn round trip against a deployed stage
-internal/platform/   foundation: dynamo, kms, ssm, httpx, config, log, ratelimit
+internal/platform/   foundation: dynamo, kms, ssm, httpx, config, log, ratelimit, and the parts the
+                     Console and Portal share (websession, lockout, lease, firstfactor, auditlog,
+                     password, webapi, viewerip)
 internal/auth/       domain: client, pin, webauthn, challenge, token, handlers
 internal/console/    Console: accounts, sessions, step-up, audit, handlers, authgate client
-console-web/         Console web app: React, Vite, Mantine, EN/VI strings
+internal/portal/     Portal: accounts, sessions, workspaces, clients, mail, avatars, turnstile, hibp
+console-web/  portal-web/   the web apps: React, Vite, Mantine, EN/VI strings
 packages/web-kit/   shared web code (theme, UI parts, API client, i18n, WebAuthn) for the Console and the Portal
 infra/template.yaml  SAM: three functions, table, KMS key, CloudFront door
 infra/console.yaml   SAM: the Console stack
+infra/portal.yaml    SAM: the Portal stack
 infra/*.json         deployer policy and the permissions boundary
 scripts/setup-and-deploy/  the manual deploy and smoke steps
 scripts/console/     the Console's deploy, register, admin, smoke and purge steps
-bruno/  bruno-console/  integration collections (AuthGate; the Console API)
+scripts/portal/      the Portal's deploy, register, smoke and purge steps
+bruno/  bruno-console/  bruno-portal/  integration collections (AuthGate; the Console API; the Portal API)
 docs/memo/           one decision per file
 docs/infra/          the worktree tooling (below)
 docs/adr/  docs/superpowers/   ADRs for the tooling; specs and plans
