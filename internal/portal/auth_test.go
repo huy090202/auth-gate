@@ -846,3 +846,88 @@ func TestFirstFactorCodesStoredOnlyAfterTheWrite(t *testing.T) {
 		t.Fatalf("codes after the write = %d", n)
 	}
 }
+
+// Why: anyone can type an owner's address; wrong passwords must not write into the owner's audit log, or a stranger
+// could pad it until the real entries scroll away. The right password (even while locked) is the owner, and is logged.
+func TestLoginFailuresDoNotPadTheOwnersAudit(t *testing.T) {
+	e := newAuthEnv(t)
+	u := e.user(t, "a@x.com", goodPW)
+	for i := 0; i < 5; i++ {
+		want(t, e.browser(t, "203.0.113.1").login("a@x.com", "wrong-password-here"), 401, "invalid_credentials")
+	}
+	if acts := e.auditActions(t, u); len(acts) != 0 {
+		t.Fatalf("a stranger's failures are in the owner's log: %v", acts)
+	}
+	want(t, e.browser(t, "203.0.113.2").login("a@x.com", goodPW), 401, "invalid_credentials") // locked
+	if acts := e.auditActions(t, u); len(acts) != 1 || acts[0] != "login:failed:invalid_credentials" {
+		t.Fatalf("audit = %v", acts)
+	}
+}
+
+// Why: a session that proved a factor (a second factor or a recovery code) and adds one is the person, not someone
+// who lost them; a reset left waiting would purge the factor just added at the next sign-in after the wait.
+func TestFactorAddedByProvedSessionCancelsPendingReset(t *testing.T) {
+	e := newAuthEnv(t)
+	u, b := e.recoverable(t, "203.0.113.1")
+	e.putFactorReset(t, u, e.a.now().Add(time.Hour))
+	want(t, b.do("POST", "/api/auth/recovery", map[string]string{"code": "ABCDE-FGHIJ"}), 200, "")
+	if fr, _ := e.a.Store.GetFactorReset(context.Background(), u.ID); fr == nil {
+		t.Fatal("a recovery code alone cancelled the reset") // only the new factor does
+	}
+	want(t, b.do("POST", "/api/me/pin", map[string]string{"pin": pin2}), 200, "")
+	if fr, _ := e.a.Store.GetFactorReset(context.Background(), u.ID); fr != nil {
+		t.Fatalf("reset still pending after a factor was added by a recovery session: %+v", fr)
+	}
+
+	// The same from a full session, which proved its factor at sign-in.
+	b.pin = pin2
+	e.putFactorReset(t, u, e.a.now().Add(time.Hour))
+	want(t, b.do("POST", "/api/me/pin", map[string]string{"pin": pin1}, stepHeader, b.stepUp("add-factor", "")), 200, "")
+	if fr, _ := e.a.Store.GetFactorReset(context.Background(), u.ID); fr != nil {
+		t.Fatalf("reset still pending after a factor was added by a full session: %+v", fr)
+	}
+}
+
+// Why: the sign-in steps after the password are separate buckets per IP, so a burst of logins from a shared
+// address does not stop the second factor of the people behind it, and code guessing has its own brake.
+func TestSecondFactorAndRecoveryHaveTheirOwnIPBuckets(t *testing.T) {
+	e := newAuthEnv(t)
+	const ip = "203.0.113.1"
+	_, b := e.recoverable(t, ip)
+	raw := func(path string, body any) int {
+		raw, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("CloudFront-Viewer-Address", ip+":4000")
+		req.AddCookie(&http.Cookie{Name: cookieName, Value: b.cookie(), Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req) // no clock advance: the buckets do not refill between calls
+		return rec.Code
+	}
+	drain := func(scope string) {
+		for range 10 {
+			e.a.Limiter.Allow(context.Background(), scope+"#"+ip, loginIPLimit)
+		}
+	}
+	drain("login-ip")
+	if c := raw("/api/auth/second-factor/start", map[string]string{"factor": "pin"}); c != 200 {
+		t.Fatalf("second factor after the login bucket ran dry = %d", c)
+	}
+	if c := raw("/api/auth/recovery", map[string]string{"code": "00000-00000"}); c == 429 {
+		t.Fatal("recovery shares the login bucket")
+	}
+	drain("factor-ip")
+	if c := raw("/api/auth/second-factor/start", map[string]string{"factor": "pin"}); c != 429 {
+		t.Fatalf("second factor with its bucket dry = %d", c)
+	}
+	if c := raw("/api/auth/second-factor/verify", map[string]string{"challengeId": "x", "pin": pin1}); c != 429 {
+		t.Fatalf("second-factor verify with the factor bucket dry = %d", c)
+	}
+	if c := raw("/api/auth/recovery", map[string]string{"code": "00000-00000"}); c == 429 {
+		t.Fatal("recovery shares the factor bucket")
+	}
+	drain("recovery-ip")
+	if c := raw("/api/auth/recovery", map[string]string{"code": "00000-00000"}); c != 429 {
+		t.Fatalf("recovery with its bucket dry = %d", c)
+	}
+}

@@ -480,6 +480,19 @@ func (st *Store) RecordLoginFailure(ctx context.Context, userID string, now time
 	return err
 }
 
+// NoLoginFailure is the write RecordLoginFailure makes first, aimed at a key
+// that never exists, so it fails its condition and changes nothing. A sign-in
+// that fails for an unknown, suspended or locked account makes it, so it costs
+// one write like a wrong password on a live account.
+func (st *Store) NoLoginFailure(ctx context.Context) error {
+	err := st.update(ctx, "-", "ADD failedCount :one", exists+" AND (attribute_not_exists(failedCount) OR failedCount < :last)",
+		nil, item{":one": n(1), ":last": n(maxFailures - 1)})
+	if err != nil && !dynamo.IsConditionFailed(err) {
+		return fmt.Errorf("record login failure: %w", err)
+	}
+	return nil
+}
+
 // ResetLoginFailures zeroes the count and clears any lock.
 func (st *Store) ResetLoginFailures(ctx context.Context, userID string) error {
 	if err := st.lockout().Reset(ctx, userKey(userID)); errors.Is(err, lockout.ErrNotFound) {

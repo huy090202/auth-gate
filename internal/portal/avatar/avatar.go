@@ -212,7 +212,7 @@ func (d *Dir) Copy(_ context.Context, from, to string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0o600)
+	return os.WriteFile(dst, data, 0o600) //nolint:gosec // dst is built by path() from a validated relative key
 }
 
 // Delete removes key; a missing key is not an error.

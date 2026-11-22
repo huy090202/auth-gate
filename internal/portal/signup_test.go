@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -460,5 +461,30 @@ func TestSignupAnswersSameForNewPendingAndVerified(t *testing.T) {
 	}
 	if got["n@x.com"] != "verify;" || got["p@x.com"] != "verify;verify;" || got["v@x.com"] != "signup-exists;" {
 		t.Fatalf("mails = %v", got)
+	}
+}
+
+type failingMail struct{}
+
+func (failingMail) Send(_ context.Context, m mail.Message) error {
+	return errors.New("MessageRejected: Email address is not verified: " + m.To + ", <" + m.To + ">")
+}
+
+// Why: a failed send is logged so an operator can see it, but the process log must never hold an address: not as
+// the recipient, and not inside the provider's error text.
+func TestMailFailureLogRedactsAddresses(t *testing.T) {
+	e := newSignupEnv(t)
+	e.a.Mail = failingMail{}
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	e.a.mailBestEffort(context.Background(), mail.Message{To: "Victim.Name+tag@Example.com", Lang: "en", Kind: "verify"})
+	out := buf.String()
+	if strings.Contains(strings.ToLower(out), "victim") || strings.Contains(out, "@") {
+		t.Fatalf("an address reached the log: %s", out)
+	}
+	if !strings.Contains(out, "kind=verify") || !strings.Contains(out, "MessageRejected") {
+		t.Fatalf("the failure is not described: %s", out)
 	}
 }

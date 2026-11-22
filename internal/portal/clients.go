@@ -160,7 +160,7 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 	}
 	var in struct {
 		Name        *string         `json:"name,omitempty"`
-		Origins     []string        `json:"origins,omitempty"`
+		Origins     *[]string       `json:"origins,omitempty"` // a pointer, so [] is sent as [] and absent stays absent
 		PinPolicy   *pinPolicyBody  `json:"pinPolicy,omitempty"`
 		TokenTTLSec *int            `json:"tokenTtlSec,omitempty"`
 		RateLimit   json.RawMessage `json:"rateLimit,omitempty"`

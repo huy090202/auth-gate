@@ -86,10 +86,15 @@ func (a *App) factorsForWrite(w http.ResponseWriter, r *http.Request, x Session)
 
 func noFactor(f authgate.Factors) bool { return !f.PIN && len(f.WebAuthn) == 0 }
 
-// factorAdded runs after a factor was added. An enrolling session that added the
-// account's first factor has thereby proved it, and is recorded as such.
+// factorAdded runs after a factor was added. A session that had proved a factor
+// (at sign-in, or with a recovery code) cancels a pending factor reset, which
+// would otherwise purge the factor just added. An enrolling session that added
+// the account's first factor has thereby proved it, and is recorded as such.
 func (a *App) factorAdded(r *http.Request, x *Session, had authgate.Factors) error {
-	if x.Stage != StageEnroll || x.FactorProved || !noFactor(had) {
+	if x.FactorProved {
+		return a.Store.DeleteFactorReset(r.Context(), x.UserID)
+	}
+	if x.Stage != StageEnroll || !noFactor(had) {
 		return nil
 	}
 	if err := a.Store.SetFactorProved(r.Context(), x.Hash); err != nil {

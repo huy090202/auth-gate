@@ -468,3 +468,30 @@ func TestTenantsListPersonalFirst(t *testing.T) {
 func memberPutItem(st *Store, tenantID, userID, role string, at time.Time) item {
 	return memberPut(st, tenantID, userID, role, at).Item
 }
+
+// Why: clearing a client's origins is a real edit; `{"origins": []}` must reach AuthGate as an empty list (not be
+// dropped as if absent), and the audit must say the origins were changed.
+func TestPatchWithEmptyOriginsIsForwardedAndAudited(t *testing.T) {
+	e := newAuthEnv(t)
+	rt := withPortalAPI(e)
+	u, b := e.owner(t, "a@x.com", "203.0.113.1")
+	cid := id.New()
+	want(t, b.do("PATCH", "/api/t/"+u.PersonalTenantID+"/clients/"+cid, map[string]any{"origins": []string{}}), 200, "")
+	calls := rt.seen()
+	if len(calls) != 1 || !strings.Contains(calls[0].Body, `"origins":[]`) {
+		t.Fatalf("calls = %+v", calls)
+	}
+	got, _, err := e.a.Store.ListAudit(context.Background(), u.PersonalTenantID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range got {
+		if x.Action == "client-update" {
+			if x.Detail["fields"] != "origins" {
+				t.Fatalf("audited fields = %q", x.Detail["fields"])
+			}
+			return
+		}
+	}
+	t.Fatal("no client-update entry")
+}

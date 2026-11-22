@@ -427,7 +427,8 @@ admin key; `make check` fails if either import appears. It shares `internal/plat
 - Turnstile is always on for the four email routes, and on sign-in after 2 failures in 15 minutes
   for the IP or the account (`403 turnstile_required`).
 - Limits (`429 rate_limited` with `Retry-After`): sign-up 5 per IP then one per 10 minutes, 3 emails
-  per address per hour; sign-in 10 per IP then one per 6 seconds; forgotten password and resend 10
+  per address per hour; sign-in 10 per IP then one per 6 seconds, in separate buckets for the
+  password, the second factor and recovery codes; forgotten password and resend 10
   per IP per hour; a signed-in user, at any stage (`half`, `enroll` or `full`), 60 requests then one
   per second. Fixed cost: none, and no WAF.
 - Step-up (a PIN or passkey, single use, bound to the action and its target) guards `rotate-key`,
@@ -490,7 +491,8 @@ policies must carry the Portal's rights first ([Rollout of P2](#rollout-of-p2-th
 1. `deploy.sh`, first pass, under the admin profile ([First deploy of a stage](#first-deploy-of-a-stage)).
    It needs `EMAIL_FROM` (the SES identity address) and `TURNSTILE_SITE_KEY` (public) in the
    environment. It writes `origin-verify` if absent, and `turnstile-secret` once, from the
-   environment variable `TURNSTILE_SECRET` through a 0600 file, never argv; later runs keep it.
+   environment variable `TURNSTILE_SECRET` through a 0600 file, never argv, and unsets it before
+   anything is built; later runs keep it.
    It builds the Lambda and the web app, deploys the stack and uploads the site. With no AuthGate
    client id yet `/api` answers `502` and it says so.
 2. `register-client.sh stg`: register the Portal as an AuthGate client with the stack's URL as its
@@ -572,9 +574,11 @@ set -euo pipefail
 export AWS_PROFILE=default AWS_REGION=ap-southeast-1 STAGE=stg
 read -r -p 'Sender address (the SES identity): ' EMAIL_FROM
 read -r -p 'Turnstile site key: ' TURNSTILE_SITE_KEY
-read -rs -p 'Turnstile secret (not echoed): ' TURNSTILE_SECRET && export TURNSTILE_SECRET && echo
+read -rs -p 'Turnstile secret (not echoed): ' TURNSTILE_SECRET && echo
 export EMAIL_FROM TURNSTILE_SITE_KEY
-scripts/portal/deploy.sh                      # pass 1: /api answers 502 until pass 2
+# The secret goes to pass 1 alone, in its environment, never exported; deploy.sh drops it once
+# it is in SSM, before anything is built.
+TURNSTILE_SECRET="$TURNSTILE_SECRET" scripts/portal/deploy.sh   # pass 1: /api answers 502 until pass 2
 unset TURNSTILE_SECRET
 scripts/portal/register-client.sh stg         # prints AUTHGATE_CLIENT_ID=<id>
 read -r -p 'AUTHGATE_CLIENT_ID printed above: ' AUTHGATE_CLIENT_ID

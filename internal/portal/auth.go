@@ -30,7 +30,10 @@ const (
 	turnstileAfter = 2
 )
 
-// loginIPLimit is the per-IP bucket of the sign-in routes: 10 at once, then one per 6 seconds.
+// loginIPLimit is the setting of the per-IP buckets of the sign-in routes: 10
+// at once, then one per 6 seconds. The password (login-ip), the second factor
+// (factor-ip, start and verify) and recovery codes (recovery-ip) each have
+// their own bucket.
 var loginIPLimit = ratelimit.Settings{Burst: 10, PerSecond: 1.0 / 6}
 
 var (
@@ -179,19 +182,23 @@ func (a *App) account(next http.Handler) http.Handler {
 }
 
 func (a *App) mountAuth(mux *http.ServeMux) {
-	lim := a.limitIP("login-ip", loginIPLimit)
+	login, factor, recovery := a.limitIP("login-ip", loginIPLimit), a.limitIP("factor-ip", loginIPLimit), a.limitIP("recovery-ip", loginIPLimit)
 	half := a.session(StageHalf)
-	mux.Handle("POST /api/auth/login", lim(a.audited("login", webapi.HandlerFunc(a.login))))
-	mux.Handle("POST /api/auth/second-factor/start", lim(a.audited("second-factor-start", half(a.account(webapi.HandlerFunc(a.secondFactorStart))))))
-	mux.Handle("POST /api/auth/second-factor/verify", lim(a.audited("second-factor-verify", half(a.account(webapi.HandlerFunc(a.secondFactorVerify))))))
-	mux.Handle("POST /api/auth/recovery", lim(a.audited("recovery", half(a.account(webapi.HandlerFunc(a.recovery))))))
+	mux.Handle("POST /api/auth/login", login(a.audited("login", webapi.HandlerFunc(a.login))))
+	mux.Handle("POST /api/auth/second-factor/start", factor(a.audited("second-factor-start", half(a.account(webapi.HandlerFunc(a.secondFactorStart))))))
+	mux.Handle("POST /api/auth/second-factor/verify", factor(a.audited("second-factor-verify", half(a.account(webapi.HandlerFunc(a.secondFactorVerify))))))
+	mux.Handle("POST /api/auth/recovery", recovery(a.audited("recovery", half(a.account(webapi.HandlerFunc(a.recovery))))))
 	mux.Handle("POST /api/auth/logout", a.audited("logout", a.session(StageHalf, StageEnroll, StageFull)(a.account(webapi.HandlerFunc(a.logout)))))
 }
 
 // login checks the password and opens a session at the stage the user's
 // factors call for. An unknown address, a wrong password, a locked and a
 // suspended account all run one password comparison and answer the same bytes;
-// an unverified address is revealed only after the right password.
+// an unverified address is revealed only after the right password. The attempt
+// is logged in the account's workspace only once the password is right: anyone
+// can type an address, and a stranger's guesses must not fill its owner's log
+// (they go to the process log). A failure on a live account records the
+// lockout; any other failure makes one equal write that changes nothing.
 func (a *App) login(w http.ResponseWriter, r *http.Request) error {
 	var in struct{ Email, Password, TurnstileToken string }
 	if err := webapi.DecodeBody(r, &in); err != nil {
@@ -220,14 +227,14 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) error {
 		case err == nil:
 			found, hash = true, u.PasswordHash
 			setAuditActor(ctx, u.ID)
-			if u.PersonalTenantID != "" {
-				setAuditTenant(ctx, u.PersonalTenantID)
-			}
 		case !errors.Is(err, ErrUserNotFound):
 			return err
 		}
 	}
 	good := a.verifyPassword(in.Password, hash)
+	if good && found && u.PersonalTenantID != "" {
+		setAuditTenant(ctx, u.PersonalTenantID)
+	}
 
 	now := a.now()
 	locked := found && u.LockedUntil != nil && now.Before(*u.LockedUntil)
@@ -247,8 +254,13 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) error {
 			if err := a.failSignIn(ctx, u, ip, acct); err != nil {
 				return err
 			}
-		} else if err := a.countFailure(ctx, ip, acct); err != nil {
-			return err
+		} else {
+			if err := a.Store.NoLoginFailure(ctx); err != nil {
+				return err
+			}
+			if err := a.countFailure(ctx, ip, acct); err != nil {
+				return err
+			}
 		}
 		return errInvalidCredentials
 	}

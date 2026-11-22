@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/mail"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -127,14 +128,23 @@ func (a *App) sendVerify(ctx context.Context, u User) error {
 }
 
 // mailBestEffort sends, and logs a failure instead of answering it: a failed
-// send for one kind of address and not the other would tell them apart.
+// send for one kind of address and not the other would tell them apart. The log
+// line has the kind and the error text with every address in it redacted (SES
+// names the recipient in some errors), never the recipient.
 func (a *App) mailBestEffort(ctx context.Context, m pmail.Message) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sideEffectLimit)
 	defer cancel()
 	if err := a.Mail.Send(ctx, m); err != nil {
-		slog.Error("portal: email send failed", "kind", m.Kind, "err", err)
+		slog.Error("portal: email send failed", "kind", m.Kind, "err", redactEmails(err.Error()))
 	}
 }
+
+// emailLike is anything shaped like an address: a run of non-space characters
+// around an @. It is wider than a valid address on purpose.
+var emailLike = regexp.MustCompile(`[^\s<>"'(),;:\[\]]*@[^\s<>"'(),;:\[\]]*`)
+
+// redactEmails replaces every address-like run in s.
+func redactEmails(s string) string { return emailLike.ReplaceAllString(s, "<redacted>") }
 
 type signupReq struct {
 	Email, DisplayName, Password, Lang, TurnstileToken string

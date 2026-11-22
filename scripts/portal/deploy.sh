@@ -60,6 +60,9 @@ elif grep -q ParameterNotFound "$tmp/err"; then
 else
   die "cannot read $secret_name: $(<"$tmp/err")"
 fi
+# The secret is in SSM now (or was already): nothing after this needs it, so make, pnpm and
+# sam, and whatever they run, never see it in their environment.
+unset TURNSTILE_SECRET
 
 authgate_url="$(output "$AUTHGATE_STACK" BaseUrl)"
 [[ -n "$authgate_url" ]] || die "stack $AUTHGATE_STACK has no BaseUrl output; deploy auth-gate first"

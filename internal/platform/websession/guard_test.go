@@ -72,7 +72,7 @@ func (e *guardEnv) call(cookie string, stages ...Stage) (int, string) {
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	if cookie != "" {
-		req.AddCookie(&http.Cookie{Name: "s", Value: cookie})
+		req.AddCookie(&http.Cookie{Name: "s", Value: cookie, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
