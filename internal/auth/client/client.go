@@ -476,7 +476,7 @@ func (s *Service) Enable(ctx context.Context, clientID string, by DisabledBy) (C
 	if err != nil {
 		return Client{}, err
 	}
-	if by == ByTenant && c.DisabledAt != nil && c.DisabledBy == string(ByOperator) {
+	if by != ByOperator && c.DisabledAt != nil && c.DisabledBy == string(ByOperator) {
 		return Client{}, ErrDisabledByOperator
 	}
 	if err := s.Store.SetDisabled(ctx, c, nil, by); err != nil {

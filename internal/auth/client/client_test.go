@@ -1001,3 +1001,47 @@ func TestSuspendedOwnerCannotCreate(t *testing.T) {
 		t.Fatalf("bad tenant: %v", err)
 	}
 }
+
+func TestTenantEnableRacingOperatorDisableKeepsIt(t *testing.T) {
+	c, table := dynamotest.NewTable(t)
+	ctx := context.Background()
+	plain := &client.Service{Store: client.NewDynamoStore(c, table)}
+	seam := &seamStore{Store: plain.Store}
+	svc := &client.Service{Store: seam}
+	cl, _ := mustOwned(t, plain, newTenant())
+	if _, err := plain.Disable(ctx, cl.ID, client.ByTenant); err != nil {
+		t.Fatal(err)
+	}
+	// The operator disables between the tenant's read and its write.
+	seam.afterGet = func() { _, _ = plain.Disable(ctx, cl.ID, client.ByOperator) }
+	if _, err := svc.Enable(ctx, cl.ID, client.ByTenant); !errors.Is(err, client.ErrDisabledByOperator) {
+		t.Fatalf("Enable: want ErrDisabledByOperator, got %v", err)
+	}
+	item := rawItemSK(t, c, table, "C#"+cl.ID, "META")
+	if item["disabledAt"] == nil || attrS(item, "disabledBy") != "operator" {
+		t.Fatalf("operator's disable was erased: %v", item)
+	}
+	if idx := rawItemSK(t, c, table, "CLIENTS", "C#"+cl.ID); idx["disabledAt"] == nil {
+		t.Fatal("index item lost disabledAt")
+	}
+}
+
+func TestUnknownDisabledByFailsClosed(t *testing.T) {
+	svc, _, _ := newSvc(t)
+	ctx := context.Background()
+	cl, _ := mustCreate(t, svc)
+	if _, err := svc.Disable(ctx, cl.ID, client.ByOperator); err != nil {
+		t.Fatal(err)
+	}
+	for _, by := range []client.DisabledBy{"", "root"} {
+		if _, err := svc.Enable(ctx, cl.ID, by); err == nil {
+			t.Fatalf("Enable by %q cleared an operator's disable", by)
+		}
+		if _, err := svc.Disable(ctx, cl.ID, by); !errors.Is(err, client.ErrInvalid) {
+			t.Fatalf("Disable by %q: want ErrInvalid, got %v", by, err)
+		}
+	}
+	if got, err := svc.Get(ctx, cl.ID); err != nil || got.DisabledAt == nil {
+		t.Fatalf("client %+v %v", got, err)
+	}
+}

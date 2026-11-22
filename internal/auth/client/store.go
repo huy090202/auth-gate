@@ -467,8 +467,14 @@ func (s *dynamoStore) txError(err error, what string) error {
 }
 
 func (s *dynamoStore) SetDisabled(ctx context.Context, c Client, at *time.Time, by DisabledBy) error {
+	if by != ByOperator && by != ByTenant {
+		return fmt.Errorf("%w: disabledBy %q", ErrInvalid, by)
+	}
 	clientExpr, idxExpr := "REMOVE disabledAt, disabledBy", "SET #name = if_not_exists(#name, :n), rpId = if_not_exists(rpId, :r), createdAt = if_not_exists(createdAt, :c) REMOVE disabledAt"
 	vals := map[string]types.AttributeValue{}
+	cond := liveCond
+	// Values only the client item uses: DynamoDB rejects unused values on the index items.
+	clientVals := map[string]types.AttributeValue{}
 	if at != nil {
 		byExpr := ":by"
 		if by != ByOperator {
@@ -477,21 +483,34 @@ func (s *dynamoStore) SetDisabled(ctx context.Context, c Client, at *time.Time, 
 		clientExpr = "SET disabledAt = if_not_exists(disabledAt, :now), disabledBy = " + byExpr
 		idxExpr = "SET #name = if_not_exists(#name, :n), rpId = if_not_exists(rpId, :r), createdAt = if_not_exists(createdAt, :c), disabledAt = if_not_exists(disabledAt, :now)"
 		vals[":now"] = ts(*at)
+		clientVals[":by"] = str(string(by))
+	} else if by != ByOperator {
+		// A tenant's enable must not erase an operator's disable that landed after the caller's read.
+		cond += " AND (attribute_not_exists(disabledBy) OR disabledBy <> :op)"
+		clientVals[":op"] = str(string(ByOperator))
 	}
 	upd := &types.Update{
 		TableName: aws.String(s.table), Key: clientKey(c.ID), UpdateExpression: aws.String(clientExpr),
-		ConditionExpression: aws.String(liveCond),
+		ConditionExpression: aws.String(cond),
 	}
-	if len(vals) > 0 {
-		// :by is for the client item only; DynamoDB rejects unused values on the index items.
-		cv := map[string]types.AttributeValue{":by": str(string(by))}
+	if len(vals)+len(clientVals) > 0 {
+		cv := map[string]types.AttributeValue{}
 		for k, v := range vals {
+			cv[k] = v
+		}
+		for k, v := range clientVals {
 			cv[k] = v
 		}
 		upd.ExpressionAttributeValues = cv
 	}
 	items := append([]types.TransactWriteItem{{Update: upd}}, s.indexUpdates(c, idxExpr, vals)...)
 	err := dynamo.TransactWrite(ctx, s.c, items...)
+	if at == nil && by != ByOperator && dynamo.IsConditionFailed(err) {
+		// Gone, or an operator's mark is there: look to tell which.
+		if cur, gerr := s.GetClient(ctx, c.ID); gerr == nil && cur.DeletedAt == nil && cur.DisabledBy == string(ByOperator) {
+			return ErrDisabledByOperator
+		}
+	}
 	return s.txError(err, "set disabled")
 }
 
