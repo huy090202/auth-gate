@@ -27,6 +27,7 @@ runtime:
         if (res.getStatus() === 201) {
           bru.setVar("disableClientKey", res.getBody().accessKey);
           bru.setVar("disableClientId", res.getBody().clientId);
+          bru.setVar("tdBoundaryC", res.getBody().clientId);
         }
     - type: tests
       code: |-
@@ -51,4 +52,5 @@ docs: |-
   and id are captured as `disableClientKey` and `disableClientId`, so the
   `clientKey` that later folders use is left alone.
 
-  > **On prd this creates a real client.** Deleting a client is out of v1.
+  > **On prd this creates a real client.** `99-teardown` deletes it at the end
+  > of the run; a run that stops early leaves it until `99-purge.sh`.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke-test a deployed stage: run the Bruno collection, then the real WebAuthn
 # round trip (cmd/smoke). Reads BaseUrl and RawVerifyUrl from the stack outputs
-# and admin-key from SSM. Never prints a key.
+# plus admin-key and portal-key from SSM. Never prints a key.
 #
 # The collection needs Bruno's developer sandbox: 05-tokens/02 verifies the JWT
 # with node's crypto, which the default (safe) sandbox does not provide. The
@@ -32,7 +32,11 @@ admin_key="$(aws ssm get-parameter --region "$REGION" --name "$PARAM_PREFIX/admi
   --with-decryption --query Parameter.Value --output text)"
 [ -n "$admin_key" ] || die "$PARAM_PREFIX/admin-key is empty"
 
-# A throwaway, gitignored environment file holding the admin key for this run only.
+portal_key="$(aws ssm get-parameter --region "$REGION" --name "$PARAM_PREFIX/portal-key" \
+  --with-decryption --query Parameter.Value --output text)"
+[ -n "$portal_key" ] || die "$PARAM_PREFIX/portal-key is empty"
+
+# A throwaway, gitignored environment file holding the admin and portal keys for this run only.
 env_file="$ROOT/bruno/environments/$STAGE.yml"
 [ ! -e "$env_file" ] || die "$env_file exists; move it away so this run cannot clobber it"
 trap 'rm -f "$env_file"' EXIT
@@ -47,6 +51,8 @@ variables:
     value: "$raw_verify_url"
   - name: adminKey
     value: "$admin_key"
+  - name: portalKey
+    value: "$portal_key"
   - name: subjectId
     value: smoke-bruno-$(date +%s)
 YAML

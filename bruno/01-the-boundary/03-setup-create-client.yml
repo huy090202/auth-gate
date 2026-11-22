@@ -27,6 +27,7 @@ runtime:
         if (res.getStatus() === 201) {
           bru.setVar("clientKey", res.getBody().accessKey);
           bru.setVar("clientId", res.getBody().clientId);
+          bru.setVar("tdBoundaryA", res.getBody().clientId);
         }
     - type: tests
       code: |-
@@ -51,5 +52,5 @@ docs: |-
   a real key to fail with. Captures `clientKey` and `clientId`
   (`02-clients/01-create` overwrites both later).
 
-  > **On prd this creates a real client.** Deleting a client is out of v1; it
-  > stays until `99-purge.sh`. Do not run this folder against prd casually.
+  > **On prd this creates a real client.** `99-teardown` deletes it at the end
+  > of the run; a run that stops early leaves it until `99-purge.sh`.

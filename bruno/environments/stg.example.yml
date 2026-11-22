@@ -8,5 +8,7 @@ variables:
     value: https://REPLACE-with-stack-output-RawVerifyUrl
   - name: adminKey
     value: REPLACE-from-ssm-/credo/auth-gate/stg/admin-key
+  - name: portalKey
+    value: REPLACE-from-ssm-/credo/auth-gate/stg/portal-key
   - name: subjectId
     value: bruno-user-1

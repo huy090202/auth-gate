@@ -6,5 +6,7 @@ variables:
     value: ""
   - name: adminKey
     value: dev-admin
+  - name: portalKey
+    value: dev-portal
   - name: subjectId
     value: bruno-user-1

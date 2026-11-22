@@ -1,0 +1,18 @@
+info:
+  name: Teardown
+  type: folder
+  seq: 99
+
+request: {}
+
+docs:
+  content: |-
+    ## Delete every client this run created
+
+    One `DELETE /api/clients/{id}` per saved id (`tdBoundaryA`, `tdBoundaryB`,
+    `tdBoundaryC`, `tdDemo`, `tdRateLimit`, `tdPortal`), under the admin key.
+    A request whose variable is unset is skipped. **204** (deleted) and **404**
+    (already gone, e.g. deleted by an earlier request) both pass. Run it last;
+    with `bru run`, folders run in name order, so a failure in an earlier folder
+    does not stop this one unless you pass `--bail`.
+  type: text/markdown

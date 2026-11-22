@@ -1,0 +1,54 @@
+info:
+  name: "Create client as tenant A (201)"
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/portal/clients"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+    - name: X-Internal-Access-Key
+      value: "{{portalKey}}"
+    - name: X-Tenant-Id
+      value: "01KAZ5XQ3V8M2N7R4T6W9Y0B1C"
+  body:
+    type: json
+    data: |-
+      {
+        "name": "bruno portal",
+        "rpId": "localhost",
+        "origins": ["http://localhost:3000"],
+        "rateLimit": { "burst": 5000, "perSecond": 5000 }
+      }
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        if (!bru.getEnvVar("portalKey")) bru.runner.skipRequest();
+    - type: after-response
+      code: |-
+        if (res.getStatus() === 201) {
+          bru.setVar("portalClientId", res.getBody().clientId);
+          bru.setVar("tdPortal", res.getBody().clientId);
+        }
+    - type: tests
+      code: |-
+        test("201 — client created", function() {
+          expect(res.getStatus()).to.equal(201);
+        });
+        
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  **Expected: 201.** The portal key plus `x-tenant-id` creates a client owned by
+  that tenant. The request asks for a huge bucket; a tenant cannot choose its own
+  limit; the next request shows burst 20, perSecond 10. Captures `portalClientId`
+  (and `tdPortal`, for `99-teardown`).
