@@ -30,10 +30,17 @@ case "$1 $2" in
     done
     case "$stack" in
       auth-gate-t) echo "https://stg.example.test/" ;;
-      auth-gate-console-t) echo "id-console" ;;
+      auth-gate-console-t)
+        case "$SCENARIO" in
+          warn) echo "warning: something odd, but fine" >&2; echo "id-console" ;;
+          console-none) echo None ;;
+          console-empty) echo "" ;;
+          *) echo "id-console" ;;
+        esac ;;
       auth-gate-portal-t)
         case "$SCENARIO" in
           portal) echo "id-portal" ;;
+          portal-none) echo None ;;
           portal-denied) echo "An error occurred (AccessDenied) when calling the DescribeStacks operation" >&2; exit 254 ;;
           *) echo "An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id $stack does not exist" >&2; exit 254 ;;
         esac ;;
@@ -184,5 +191,21 @@ refute "a failed delete: exits non-zero" test "$code" -eq 0
 assert "a failed delete: reports it" grep -q 'failed id-FAIL (HTTP 500)' <<<"$out"
 assert "a failed delete: the others still deleted" deleted id-A
 assert "a failed delete: says how many" grep -q '1 of 3 deletes failed' <<<"$out"
+
+run warn "delete 2"
+assert "aws warning on stderr: exits 0" test "$code" -eq 0
+refute "aws warning on stderr: the Console's client is still protected" deleted id-console
+assert "aws warning on stderr: still two deletes" test "$(deletes)" -eq 2
+
+run console-none "delete 2"
+refute "Console id None: exits non-zero" test "$code" -eq 0
+assert "Console id None: no delete" test "$(deletes)" -eq 0
+run console-empty "delete 2"
+refute "Console id empty: exits non-zero" test "$code" -eq 0
+assert "Console id empty: no delete" test "$(deletes)" -eq 0
+
+run portal-none "delete 2"
+refute "Portal stack without AuthGateClientId: exits non-zero" test "$code" -eq 0
+assert "Portal stack without AuthGateClientId: no delete" test "$(deletes)" -eq 0
 
 exit "$fail"

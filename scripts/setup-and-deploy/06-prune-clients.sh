@@ -35,27 +35,38 @@ done
 
 export AWS_PROFILE="${ADMIN_PROFILE:-default}" AWS_REGION="$REGION"
 
-# stack_output <stack> <key>: prints the output value. On failure prints aws's message and returns 1.
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# stack_output <stack> <key>: stdout is the value in $so_out, stderr (warnings, errors) is kept apart in
+# $so_err, so a warning on a successful call can never leak into the value. Returns aws's status.
 stack_output() {
-  aws cloudformation describe-stacks --region "$REGION" --stack-name "$1" \
-    --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text 2>&1
+  local rc=0
+  so_out="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$1" \
+    --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text 2>"$tmp/aws.err")" || rc=$?
+  so_err="$(<"$tmp/aws.err")"
+  return "$rc"
 }
 
-base_url="$(stack_output "$STACK" BaseUrl)" || die "cannot read BaseUrl of $STACK: $base_url"
-[[ -n "$base_url" && "$base_url" != None ]] || die "stack $STACK has no BaseUrl output"
-base_url="${base_url%/}"
+# A protected id must be a single plain token: anything else cannot be trusted to match a client id.
+valid_id() { [[ "$1" != None && "$1" =~ ^[A-Za-z0-9_-]+$ ]]; }
 
-console_id="$(stack_output "auth-gate-console-$STAGE" AuthGateClientId)" \
-  || die "cannot read AuthGateClientId of auth-gate-console-$STAGE: $console_id"
-[[ -n "$console_id" && "$console_id" != None ]] || die "auth-gate-console-$STAGE has no AuthGateClientId output, so the Console's client cannot be protected"
-protected=("$console_id")
+stack_output "$STACK" BaseUrl || die "cannot read BaseUrl of $STACK: $so_err"
+base_url="${so_out%/}"
+[[ "$base_url" == https://* && "$base_url" != *[[:space:]]* ]] || die "stack $STACK has no usable BaseUrl output (got '$so_out')"
 
-if portal_id="$(stack_output "auth-gate-portal-$STAGE" AuthGateClientId)"; then
-  [ -z "$portal_id" ] || [ "$portal_id" = None ] || protected+=("$portal_id")
-elif [[ "$portal_id" == *"does not exist"* ]]; then
+stack_output "auth-gate-console-$STAGE" AuthGateClientId \
+  || die "cannot read AuthGateClientId of auth-gate-console-$STAGE: $so_err"
+valid_id "$so_out" || die "auth-gate-console-$STAGE has no usable AuthGateClientId output (got '$so_out'), so the Console's client cannot be protected"
+protected=("$so_out")
+
+if stack_output "auth-gate-portal-$STAGE" AuthGateClientId; then
+  valid_id "$so_out" || die "auth-gate-portal-$STAGE exists but has no usable AuthGateClientId output (got '$so_out'), so the Portal's client cannot be protected"
+  protected+=("$so_out")
+elif [[ "$so_err" == *"does not exist"* ]]; then
   echo "skip auth-gate-portal-$STAGE (stack absent)" >&2
 else
-  die "cannot read AuthGateClientId of auth-gate-portal-$STAGE: $portal_id"
+  die "cannot read AuthGateClientId of auth-gate-portal-$STAGE: $so_err"
 fi
 
 in_list() { # in_list <needle> <items...>
@@ -72,9 +83,6 @@ done
 admin_key="$(aws ssm get-parameter --region "$REGION" --name "$PARAM_PREFIX/admin-key" \
   --with-decryption --query Parameter.Value --output text)"
 [ -n "$admin_key" ] || die "$PARAM_PREFIX/admin-key is empty"
-
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
 
 # api <METHOD> <path>: the status code in $status, the body in $tmp/body. The key goes in on stdin.
 api() {
