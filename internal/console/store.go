@@ -12,15 +12,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/huy090202/auth-gate/internal/platform/dynamo"
+	"github.com/huy090202/auth-gate/internal/platform/lease"
+	"github.com/huy090202/auth-gate/internal/platform/lockout"
+	"github.com/huy090202/auth-gate/internal/platform/websession"
 )
 
 // Stage is how far a session has come in the sign-in flow.
-type Stage string
+type Stage = websession.Stage
 
 const (
-	StageHalf   Stage = "half"
-	StageEnroll Stage = "enroll"
-	StageFull   Stage = "full"
+	StageHalf   = websession.StageHalf
+	StageEnroll = websession.StageEnroll
+	StageFull   = websession.StageFull
 )
 
 // Role is what an admin may do.
@@ -62,8 +65,8 @@ type Session struct {
 var (
 	ErrUsernameTaken   = errors.New("console: username taken")
 	ErrAdminNotFound   = errors.New("console: admin not found")
-	ErrSessionNotFound = errors.New("console: session not found")
-	ErrReplayed        = errors.New("console: token already used")
+	ErrSessionNotFound = websession.ErrNotFound
+	ErrReplayed        = websession.ErrReplayed
 	// ErrConflict means a guarded write was refused: the acting master is no
 	// longer an active master, targeted itself, would remove the last active
 	// master, or lost a race with another transaction.
@@ -91,11 +94,7 @@ type Store struct {
 	afterSurvivor func()
 }
 
-// tsLayout is RFC 3339 with a fixed nine fractional digits, so timestamps sort
-// as strings (RFC3339Nano drops trailing zeros and would not).
-const tsLayout = "2006-01-02T15:04:05.000000000Z"
-
-func ts(t time.Time) string { return t.UTC().Format(tsLayout) }
+func ts(t time.Time) string { return dynamo.TS(t) }
 
 func s(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }
 func n(v int64) types.AttributeValue {
@@ -249,39 +248,32 @@ func (st *Store) update(ctx context.Context, username, expr, cond string, names 
 
 const exists = "attribute_exists(pk)"
 
+func (st *Store) lockout() lockout.Counter {
+	return lockout.Counter{DB: st.DB, Table: st.Table, Max: maxFailures, For: lockFor}
+}
+
 // RecordLoginFailure counts one failed password. The fifth failure sets
 // lockedUntil to now+15m and zeroes the count. Both steps are conditional, so
 // concurrent failures cannot skip the lock or lock twice.
 func (st *Store) RecordLoginFailure(ctx context.Context, username string, now time.Time) error {
-	for range 4 {
-		err := st.update(ctx, username, "ADD failedCount :one", exists+" AND (attribute_not_exists(failedCount) OR failedCount < :last)",
-			nil, item{":one": n(1), ":last": n(maxFailures - 1)})
-		if err == nil {
-			return nil
-		}
-		if !dynamo.IsConditionFailed(err) {
-			return fmt.Errorf("record login failure: %w", err)
-		}
-		err = st.update(ctx, username, "SET lockedUntil = :l, failedCount = :zero", exists+" AND failedCount >= :last",
-			nil, item{":l": s(ts(now.Add(lockFor))), ":zero": n(0), ":last": n(maxFailures - 1)})
-		if err == nil {
-			return nil
-		}
-		if !dynamo.IsConditionFailed(err) {
-			return fmt.Errorf("record login failure: %w", err)
-		}
-		// Either the admin is gone or another request changed the count between
-		// the two steps; tell them apart, then go round again.
-		if _, gerr := st.GetAdmin(ctx, username); gerr != nil {
-			return gerr
-		}
+	err := st.lockout().Record(ctx, adminKey(username), now)
+	switch {
+	case errors.Is(err, lockout.ErrNotFound):
+		return ErrAdminNotFound
+	case errors.Is(err, lockout.ErrConflict):
+		return fmt.Errorf("record login failure: %w", ErrConflict)
 	}
-	return fmt.Errorf("record login failure: %w", ErrConflict)
+	return err
 }
 
 // ResetLoginFailures zeroes the count and clears any lock.
 func (st *Store) ResetLoginFailures(ctx context.Context, username string) error {
-	return st.mapNotFound(st.update(ctx, username, "SET failedCount = :zero REMOVE lockedUntil", exists, nil, item{":zero": n(0)}), "reset login failures")
+	if err := st.lockout().Reset(ctx, adminKey(username)); errors.Is(err, lockout.ErrNotFound) {
+		return ErrAdminNotFound
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 // SetPassword stores a new hash and clears the lock. With endSessions it also
@@ -338,44 +330,24 @@ func (st *Store) BumpEpoch(ctx context.Context, username string, epoch int) erro
 }
 
 // ErrLeaseHeld means another session holds the first-factor lease.
-var ErrLeaseHeld = errors.New("console: first-factor lease held")
+var ErrLeaseHeld = lease.ErrHeld
 
 // ClaimFirstFactorLease takes the admin's first-factor lease for holder until
 // until, if no lease is set or the one set has run out at now. The lease lives
 // on the Admin item as store-only attributes: no view or log reads them. A lost
 // claim returns ErrLeaseHeld and when the holder's lease ends.
 func (st *Store) ClaimFirstFactorLease(ctx context.Context, username, holder string, now, until time.Time) (time.Time, error) {
-	err := st.update(ctx, username, "SET firstFactorLeaseUntil = :until, firstFactorLeaseBy = :by",
-		exists+" AND (attribute_not_exists(firstFactorLeaseUntil) OR firstFactorLeaseUntil <= :now)", nil,
-		item{":until": n(until.UnixMilli()), ":by": s(holder), ":now": n(now.UnixMilli())})
-	if err == nil {
-		return time.Time{}, nil
-	}
-	if !dynamo.IsConditionFailed(err) {
-		return time.Time{}, fmt.Errorf("claim first-factor lease: %w", err)
-	}
-	// Lost: the admin is gone, or the lease is held. Read to tell which.
-	out, gerr := st.DB.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(st.Table), Key: adminKey(username), ConsistentRead: aws.Bool(true),
-	})
-	if gerr != nil {
-		return time.Time{}, fmt.Errorf("claim first-factor lease: %w", gerr)
-	}
-	if out.Item == nil {
+	held, err := lease.Store{DB: st.DB, Table: st.Table}.Claim(ctx, adminKey(username), holder, now, until)
+	if errors.Is(err, lease.ErrNotFound) {
 		return time.Time{}, ErrAdminNotFound
 	}
-	return time.UnixMilli(int64(getN(out.Item, "firstFactorLeaseUntil"))), ErrLeaseHeld
+	return held, err
 }
 
 // ReleaseFirstFactorLease drops the lease if holder still holds it, so a holder
 // whose lease ran out cannot remove a newer one. Nothing to release is not an error.
 func (st *Store) ReleaseFirstFactorLease(ctx context.Context, username, holder string) error {
-	err := st.update(ctx, username, "REMOVE firstFactorLeaseUntil, firstFactorLeaseBy",
-		exists+" AND firstFactorLeaseBy = :by", nil, item{":by": s(holder)})
-	if err != nil && !dynamo.IsConditionFailed(err) {
-		return fmt.Errorf("release first-factor lease: %w", err)
-	}
-	return nil
+	return lease.Store{DB: st.DB, Table: st.Table}.Release(ctx, adminKey(username), holder)
 }
 
 // EndSessions ends every open session of the admin: each carries the old epoch.
@@ -520,207 +492,78 @@ func (st *Store) survivor(ctx context.Context, username string) (*Admin, error) 
 
 // ---- sessions ----
 
-func sesKey(hash string) item { return item{"pk": s("SES#" + hash), "sk": s("META")} }
+func (st *Store) sessions() websession.Store {
+	return websession.Store{DB: st.DB, Table: st.Table, Prefix: "SES#"}
+}
 
-const (
-	halfTTL    = 10 * time.Minute
-	enrollTTL  = 30 * time.Minute
-	fullIdle   = 30 * time.Minute
-	fullAbsMax = 8 * time.Hour
-	touchAfter = 60 * time.Second
-)
+var sessionExtra = []string{"adminId", "username"}
 
-// expiresAt is when the session ends. The middleware checks it in code, because
-// DynamoDB's TTL deletion is lazy.
-func (x Session) expiresAt() time.Time {
-	switch x.Stage {
-	case StageHalf:
-		return x.CreatedAt.Add(halfTTL)
-	case StageEnroll:
-		return x.CreatedAt.Add(enrollTTL)
-	default:
-		idle, abs := x.LastSeenAt.Add(fullIdle), x.CreatedAt.Add(fullAbsMax)
-		if abs.Before(idle) {
-			return abs
-		}
-		return idle
+func (x Session) web() websession.Session {
+	return websession.Session{
+		Hash: x.Hash, Stage: x.Stage, Epoch: x.Epoch, ChallengeID: x.ChallengeID,
+		ChallengeAction: x.ChallengeAction, ChallengeFactor: x.ChallengeFactor, ChallengeTarget: x.ChallengeTarget,
+		RegistrationID: x.RegistrationID, FactorProved: x.FactorProved, CreatedAt: x.CreatedAt, LastSeenAt: x.LastSeenAt,
+		Extra: map[string]string{"adminId": x.AdminID, "username": x.Username},
 	}
 }
 
-// sessionItem is the stored form of a session. Zero times default to now.
-func sessionItem(x Session, now time.Time) item {
-	if x.CreatedAt.IsZero() {
-		x.CreatedAt = now
+func fromWeb(x websession.Session) Session {
+	return Session{
+		Hash: x.Hash, AdminID: x.Extra["adminId"], Username: x.Extra["username"], Stage: x.Stage, Epoch: x.Epoch,
+		ChallengeID: x.ChallengeID, ChallengeAction: x.ChallengeAction, ChallengeFactor: x.ChallengeFactor, ChallengeTarget: x.ChallengeTarget,
+		RegistrationID: x.RegistrationID, FactorProved: x.FactorProved, CreatedAt: x.CreatedAt, LastSeenAt: x.LastSeenAt,
 	}
-	if x.LastSeenAt.IsZero() {
-		x.LastSeenAt = now
-	}
-	it := sesKey(x.Hash)
-	it["adminId"], it["username"], it["stage"] = s(x.AdminID), s(x.Username), s(string(x.Stage))
-	it["epoch"] = n(int64(x.Epoch))
-	it["createdAt"], it["lastSeenAt"] = s(ts(x.CreatedAt)), s(ts(x.LastSeenAt))
-	it["ttl"] = n(x.expiresAt().Unix())
-	if x.ChallengeID != "" {
-		it["challengeId"] = s(x.ChallengeID)
-	}
-	if x.RegistrationID != "" {
-		it["registrationId"] = s(x.RegistrationID)
-	}
-	if x.FactorProved {
-		it["factorProved"] = &types.AttributeValueMemberBOOL{Value: true}
-	}
-	return it
 }
 
 // PutSession stores a session with its ttl. Zero times default to now. It
 // overwrites; use ReplaceSession to swap one session for another.
 func (st *Store) PutSession(ctx context.Context, x Session, now time.Time) error {
-	if _, err := st.DB.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(st.Table), Item: sessionItem(x, now)}); err != nil {
-		return fmt.Errorf("put session: %w", err)
-	}
-	return nil
+	return st.sessions().Put(ctx, x.web(), now)
 }
 
 // ReplaceSession stores x and deletes the session oldHash in one transaction,
 // conditional on the old one still existing. A session signed out in the
 // meantime gives ErrSessionNotFound and nothing is stored.
 func (st *Store) ReplaceSession(ctx context.Context, oldHash string, x Session, now time.Time) error {
-	err := dynamo.TransactWrite(ctx, st.DB,
-		types.TransactWriteItem{Delete: &types.Delete{
-			TableName: aws.String(st.Table), Key: sesKey(oldHash), ConditionExpression: aws.String(exists),
-		}},
-		types.TransactWriteItem{Put: &types.Put{TableName: aws.String(st.Table), Item: sessionItem(x, now)}})
-	if dynamo.IsConditionFailed(err) {
-		return ErrSessionNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("replace session: %w", err)
-	}
-	return nil
+	return st.sessions().Replace(ctx, oldHash, x.web(), now)
 }
 
 // GetSession reads a session with a consistent read.
 func (st *Store) GetSession(ctx context.Context, hash string) (Session, error) {
-	out, err := st.DB.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(st.Table), Key: sesKey(hash), ConsistentRead: aws.Bool(true),
-	})
+	x, err := st.sessions().Get(ctx, hash, sessionExtra...)
 	if err != nil {
-		return Session{}, fmt.Errorf("get session: %w", err)
+		return Session{}, err
 	}
-	if out.Item == nil {
-		return Session{}, ErrSessionNotFound
-	}
-	it := out.Item
-	x := Session{
-		Hash: hash, AdminID: getS(it, "adminId"), Username: getS(it, "username"),
-		Stage: Stage(getS(it, "stage")), Epoch: getN(it, "epoch"),
-		ChallengeID: getS(it, "challengeId"), RegistrationID: getS(it, "registrationId"),
-		ChallengeAction: getS(it, "challengeAction"), ChallengeFactor: getS(it, "challengeFactor"), ChallengeTarget: getS(it, "challengeTarget"),
-	}
-	if v, ok := it["factorProved"].(*types.AttributeValueMemberBOOL); ok {
-		x.FactorProved = v.Value
-	}
-	c, err := getT(it, "createdAt")
-	if err != nil || c == nil {
-		return Session{}, fmt.Errorf("session createdAt: %v", err)
-	}
-	l, err := getT(it, "lastSeenAt")
-	if err != nil || l == nil {
-		return Session{}, fmt.Errorf("session lastSeenAt: %v", err)
-	}
-	x.CreatedAt, x.LastSeenAt = *c, *l
-	return x, nil
-}
-
-// touchSession moves lastSeenAt and the ttl forward. It will not bring back a
-// session that was deleted in the meantime.
-func (st *Store) touchSession(ctx context.Context, x Session) error {
-	_, err := st.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(st.Table), Key: sesKey(x.Hash),
-		UpdateExpression:          aws.String("SET lastSeenAt = :l, #ttl = :t"),
-		ConditionExpression:       aws.String(exists),
-		ExpressionAttributeNames:  map[string]string{"#ttl": "ttl"},
-		ExpressionAttributeValues: item{":l": s(ts(x.LastSeenAt)), ":t": n(x.expiresAt().Unix())},
-	})
-	if err != nil && !dynamo.IsConditionFailed(err) {
-		return fmt.Errorf("touch session: %w", err)
-	}
-	return nil
+	return fromWeb(x), nil
 }
 
 // DeleteSession removes a session; a missing one is not an error.
 func (st *Store) DeleteSession(ctx context.Context, hash string) error {
-	if _, err := st.DB.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(st.Table), Key: sesKey(hash)}); err != nil {
-		return fmt.Errorf("delete session: %w", err)
-	}
-	return nil
+	return st.sessions().Delete(ctx, hash)
 }
 
 // UseJTI records a token id until the token's exp. A second use gives ErrReplayed.
 func (st *Store) UseJTI(ctx context.Context, jti string, exp time.Time) error {
-	_, err := st.DB.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName:           aws.String(st.Table),
-		Item:                item{"pk": s("JTI#" + jti), "sk": s("META"), "ttl": n(exp.Unix())},
-		ConditionExpression: aws.String("attribute_not_exists(pk)"),
-	})
-	if dynamo.IsConditionFailed(err) {
-		return ErrReplayed
-	}
-	if err != nil {
-		return fmt.Errorf("use jti: %w", err)
-	}
-	return nil
+	return st.sessions().UseJTI(ctx, jti, exp)
 }
 
 // SetChallenge records the session's open login or step-up challenge.
 func (st *Store) SetChallenge(ctx context.Context, hash, challengeID string) error {
-	return st.setSessionRef(ctx, hash, "challengeId", s(challengeID))
+	return st.sessions().SetChallenge(ctx, hash, challengeID)
 }
 
 // SetStepUpChallenge records a step-up challenge with what it was started for
 // (action, factor and target, none of them secret), for the audit of its verify.
 func (st *Store) SetStepUpChallenge(ctx context.Context, hash, challengeID, action, factor, target string) error {
-	_, err := st.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(st.Table), Key: sesKey(hash),
-		UpdateExpression:          aws.String("SET challengeId = :c, challengeAction = :a, challengeFactor = :f, challengeTarget = :t"),
-		ConditionExpression:       aws.String(exists),
-		ExpressionAttributeValues: item{":c": s(challengeID), ":a": s(action), ":f": s(factor), ":t": s(target)},
-	})
-	if dynamo.IsConditionFailed(err) {
-		return ErrSessionNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("set step-up challenge: %w", err)
-	}
-	return nil
+	return st.sessions().SetStepUpChallenge(ctx, hash, challengeID, action, factor, target)
 }
 
 // SetRegistration records the session's open passkey registration.
 func (st *Store) SetRegistration(ctx context.Context, hash, registrationID string) error {
-	return st.setSessionRef(ctx, hash, "registrationId", s(registrationID))
+	return st.sessions().SetRegistration(ctx, hash, registrationID)
 }
 
 // SetFactorProved records that the session itself enrolled the account's first factor.
 func (st *Store) SetFactorProved(ctx context.Context, hash string) error {
-	return st.setSessionRef(ctx, hash, "factorProved", &types.AttributeValueMemberBOOL{Value: true})
-}
-
-// setSessionRef sets one attribute of an existing session. Like touchSession it
-// will not bring back a session that was signed out in the meantime: that
-// gives ErrSessionNotFound.
-func (st *Store) setSessionRef(ctx context.Context, hash, attr string, value types.AttributeValue) error {
-	_, err := st.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(st.Table), Key: sesKey(hash),
-		UpdateExpression:          aws.String("SET #a = :v"),
-		ConditionExpression:       aws.String(exists),
-		ExpressionAttributeNames:  map[string]string{"#a": attr},
-		ExpressionAttributeValues: item{":v": value},
-	})
-	if dynamo.IsConditionFailed(err) {
-		return ErrSessionNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("set session %s: %w", attr, err)
-	}
-	return nil
+	return st.sessions().SetFactorProved(ctx, hash)
 }

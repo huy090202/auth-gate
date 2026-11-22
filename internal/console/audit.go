@@ -1,9 +1,7 @@
 package console
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
+	"github.com/huy090202/auth-gate/internal/platform/auditlog"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/id"
 	"github.com/huy090202/auth-gate/internal/platform/viewerip"
@@ -101,70 +100,20 @@ func (st *Store) ListAudit(ctx context.Context, month, cursor string) ([]AuditEn
 	return entries, next, nil
 }
 
-// auditNote is what a request tells the audit log about itself while it runs:
-// who the session is (filled by the session middleware, or by sign-in for the
-// account it was tried against), what the action touched and a few facts about
-// it. It never holds a secret; the request body and the response are not read
-// for it, and each detail is set by the handler from a field it decoded.
-type auditNote struct {
-	AdminID, Username, Target string
-	Detail                    map[string]string
-}
-
-type noteKey struct{}
-
-func noteFrom(ctx context.Context) *auditNote {
-	n, _ := ctx.Value(noteKey{}).(*auditNote)
-	return n
-}
+const (
+	auditWriteTimeout = 5 * time.Second
+	maxAuditTarget    = auditlog.MaxTarget
+)
 
 func setAuditActor(ctx context.Context, adminID, username string) {
-	if n := noteFrom(ctx); n != nil {
-		n.AdminID, n.Username = adminID, username
-	}
+	auditlog.SetActor(ctx, adminID, username)
 }
-
-func setAuditTarget(ctx context.Context, target string) {
-	if n := noteFrom(ctx); n != nil {
-		n.Target = target
-	}
-}
+func setAuditTarget(ctx context.Context, target string) { auditlog.SetTarget(ctx, target) }
 
 // setAuditDetail records one fact about the action. Keys are fixed names in the
 // handler; the value comes from a decoded field, never from a raw body, an
 // upstream error or a credential.
-func setAuditDetail(ctx context.Context, k, v string) {
-	if n := noteFrom(ctx); n != nil {
-		if n.Detail == nil {
-			n.Detail = map[string]string{}
-		}
-		n.Detail[k] = v
-	}
-}
-
-// bufWriter holds a response back until the audit item is written, so a client
-// that has its answer can read the log.
-type bufWriter struct {
-	h      http.Header
-	status int
-	body   bytes.Buffer
-}
-
-func (b *bufWriter) Header() http.Header { return b.h }
-func (b *bufWriter) WriteHeader(code int) {
-	if b.status == 0 {
-		b.status = code
-	}
-}
-func (b *bufWriter) Write(p []byte) (int, error) {
-	b.WriteHeader(http.StatusOK)
-	return b.body.Write(p)
-}
-
-const (
-	auditWriteTimeout = 5 * time.Second
-	maxAuditTarget    = 200
-)
+func setAuditDetail(ctx context.Context, k, v string) { auditlog.SetDetail(ctx, k, v) }
 
 // audited records the outcome of a write: "success", or "failed:<code>" with the
 // error code the handler answered. The entry carries the session's admin and the
@@ -177,36 +126,17 @@ const (
 // setAuditTarget, and only once that value has passed its check or been accepted
 // upstream, so a refused request leaves the target empty.
 func (a *App) audited(action string, h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		note := &auditNote{}
-		bw := &bufWriter{h: w.Header()}
-		h.ServeHTTP(bw, r.WithContext(context.WithValue(r.Context(), noteKey{}, note)))
-		if bw.status == 0 {
-			bw.status = http.StatusOK
-		}
-		result := "success"
-		if bw.status >= 400 {
-			var e struct {
-				Error string `json:"error"`
-			}
-			_ = json.Unmarshal(bw.body.Bytes(), &e)
-			if e.Error == "" {
-				e.Error = fmt.Sprintf("http_%d", bw.status)
-			}
-			result = truncate("failed:"+e.Error, maxAuditTarget)
-		}
+	return auditlog.Wrap(action, h, func(r *http.Request, e auditlog.Entry) {
 		switch {
-		case note.AdminID != "" || strings.HasPrefix(r.URL.Path, "/api/auth/"):
+		case e.Note.ActorID != "" || strings.HasPrefix(r.URL.Path, "/api/auth/"):
 			a.writeAudit(r, AuditEntry{
-				AdminID: note.AdminID, Username: note.Username, Action: action,
-				Target: truncate(note.Target, maxAuditTarget), Result: result, IP: a.auditIP(r), Source: "web",
-				Detail: note.Detail, At: a.now(),
+				AdminID: e.Note.ActorID, Username: e.Note.ActorName, Action: action,
+				Target: e.Note.Target, Result: e.Result, IP: a.auditIP(r), Source: "web",
+				Detail: e.Note.Detail, At: a.now(),
 			})
 		default:
-			slog.Warn("console: write without a session", "route", truncate(r.Method+" "+r.URL.Path, maxAuditTarget), "ip", a.auditIP(r), "result", result)
+			slog.Warn("console: write without a session", "route", truncate(r.Method+" "+r.URL.Path, maxAuditTarget), "ip", a.auditIP(r), "result", e.Result)
 		}
-		w.WriteHeader(bw.status)
-		_, _ = w.Write(bw.body.Bytes())
 	})
 }
 
@@ -219,12 +149,7 @@ func (a *App) writeAudit(r *http.Request, e AuditEntry) {
 	}
 }
 
-func truncate(v string, n int) string {
-	if len(v) <= n {
-		return v
-	}
-	return strings.ToValidUTF8(v[:n], "")
-}
+func truncate(v string, n int) string { return auditlog.Truncate(v, n) }
 
 // auditIP is the viewer address CloudFront sets; in Dev, the socket address.
 func (a *App) auditIP(r *http.Request) string {

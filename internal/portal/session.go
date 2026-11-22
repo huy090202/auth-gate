@@ -2,17 +2,11 @@ package portal
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/huy090202/auth-gate/internal/platform/webapi"
+	"github.com/huy090202/auth-gate/internal/platform/websession"
 )
 
 const (
@@ -48,58 +42,49 @@ func (a *App) cookieName() string {
 	return cookieName
 }
 
-// setCookie sets the session cookie, replacing one this response already set: a
-// request that reissues and then promotes must send one cookie, not two of one
-// name whose order every hop would have to keep.
-func (a *App) setCookie(w http.ResponseWriter, value string, maxAge int) {
-	h := w.Header()
-	var kept []string
-	for _, v := range h.Values("Set-Cookie") {
-		if !strings.HasPrefix(v, a.cookieName()+"=") {
-			kept = append(kept, v)
-		}
+func hashToken(token string) string { return websession.HashToken(token) }
+
+// guard is the shared session machinery configured for the Portal: the user is
+// read with a consistent read on every request, so a password reset, suspension
+// or deletion shows on the next call; the session is refused when the user is
+// gone, unverified or suspended, or its epoch no longer matches. A session in
+// stage full spends the user's bucket (burst 60, then one per second) before
+// anything else runs.
+func (a *App) guard() websession.Guard {
+	return websession.Guard{
+		Store: a.Store.sessions(), CookieName: a.cookieName(), Secure: !a.Config.Dev, Now: a.now,
+		Load: func(ctx context.Context, x websession.Session) (any, int, bool, error) {
+			u, err := a.Store.GetUser(ctx, x.Extra["userId"])
+			if errors.Is(err, ErrUserNotFound) {
+				return nil, 0, false, nil
+			}
+			if err != nil {
+				return nil, 0, false, err
+			}
+			if u.EmailVerifiedAt == nil || u.SuspendedAt != nil {
+				return nil, 0, false, nil
+			}
+			return u, u.SessionEpoch, true, nil
+		},
+		Known: func(ctx context.Context, acct any) { setAuditActor(ctx, acct.(User).ID) },
+		Limit: func(ctx context.Context, _ websession.Session, acct any) error {
+			return a.spendUser(ctx, acct.(User).ID)
+		},
+		Attach: func(ctx context.Context, x websession.Session, acct any) context.Context {
+			return context.WithValue(ctx, ctxKey{}, sessionCtx{s: fromWeb(x), u: acct.(User)})
+		},
 	}
-	h.Del("Set-Cookie")
-	for _, v := range kept {
-		h.Add("Set-Cookie", v)
-	}
-	//nolint:gosec // Secure is only off in Dev, where __Host- cannot work over plain HTTP.
-	http.SetCookie(w, &http.Cookie{
-		Name: a.cookieName(), Value: value, Path: "/", MaxAge: maxAge,
-		HttpOnly: true, Secure: !a.Config.Dev, SameSite: http.SameSiteStrictMode,
-	})
 }
 
-func hashToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
-// newToken returns a 32-byte random token and its hash. Only the hash is stored.
-func newToken() (token, hash string, err error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", "", fmt.Errorf("session token: %w", err)
-	}
-	token = base64.RawURLEncoding.EncodeToString(b)
-	return token, hashToken(token), nil
+// session guards a route that accepts the given stages.
+func (a *App) session(stages ...Stage) func(http.Handler) http.Handler {
+	return a.guard().Middleware(sessionExtra, stages...)
 }
 
 // startSession opens a session for the user and sets the cookie. The active
 // workspace starts as the user's personal one.
 func (a *App) startSession(ctx context.Context, w http.ResponseWriter, u User, st Stage) error {
-	token, hash, err := newToken()
-	if err != nil {
-		return err
-	}
-	now := a.now()
-	x := Session{Hash: hash, UserID: u.ID, Stage: st, Epoch: u.SessionEpoch,
-		ActiveTenantID: u.PersonalTenantID, CreatedAt: now, LastSeenAt: now}
-	if err := a.Store.PutSession(ctx, x, now); err != nil {
-		return err
-	}
-	a.setCookie(w, token, 0)
-	return nil
+	return a.guard().Start(ctx, w, Session{UserID: u.ID, Stage: st, Epoch: u.SessionEpoch, ActiveTenantID: u.PersonalTenantID}.web())
 }
 
 // promote moves a session to another stage under a new token, so a token seen
@@ -114,126 +99,15 @@ func (a *App) promote(ctx context.Context, w http.ResponseWriter, old Session, s
 // time limit is not extended. The swap is one transaction, so a session signed
 // out meanwhile is not brought back (it gives 401).
 func (a *App) reissue(ctx context.Context, w http.ResponseWriter, old Session, st Stage, epoch int) (Session, error) {
-	token, hash, err := newToken()
+	x := Session{UserID: old.UserID, Stage: st, Epoch: epoch, FactorProved: old.FactorProved, ActiveTenantID: old.ActiveTenantID}
+	nx, err := a.guard().Reissue(ctx, w, old.web(), x.web())
 	if err != nil {
 		return Session{}, err
 	}
-	now := a.now()
-	x := Session{Hash: hash, UserID: old.UserID, Stage: st, Epoch: epoch, FactorProved: old.FactorProved,
-		ActiveTenantID: old.ActiveTenantID, CreatedAt: now, LastSeenAt: now}
-	if st == old.Stage {
-		x.CreatedAt = old.CreatedAt
-	}
-	if err := a.Store.ReplaceSession(ctx, old.Hash, x, now); err != nil {
-		return Session{}, sessionGone(err)
-	}
-	a.setCookie(w, token, 0)
-	return x, nil
-}
-
-var errUnauthorized = &webapi.Error{Status: http.StatusUnauthorized, Code: "unauthorized"}
-
-func sessionGone(err error) error {
-	if errors.Is(err, ErrSessionNotFound) {
-		return errUnauthorized
-	}
-	return err
+	return fromWeb(nx), nil
 }
 
 // endSession deletes the session, clears its cookie and answers 401.
 func (a *App) endSession(w http.ResponseWriter, r *http.Request, x Session) error {
-	if err := a.Store.DeleteSession(r.Context(), x.Hash); err != nil {
-		return err
-	}
-	a.setCookie(w, "", -1)
-	return errUnauthorized
-}
-
-// reject ends whatever session the request carried and answers 401.
-func (a *App) reject(w http.ResponseWriter, r *http.Request, hash string) {
-	if hash != "" {
-		if err := a.Store.DeleteSession(r.Context(), hash); err != nil {
-			webapi.WriteErr(w, err)
-			return
-		}
-	}
-	a.setCookie(w, "", -1)
-	webapi.WriteErr(w, errUnauthorized)
-}
-
-// session guards a route that accepts the given stages. The user is read with a
-// consistent read on every request, so a password reset, suspension or deletion
-// shows on the next call: the session is refused when the user is gone,
-// unverified or suspended, or its epoch no longer matches.
-func (a *App) session(stages ...Stage) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c, err := r.Cookie(a.cookieName())
-			if err != nil || c.Value == "" {
-				a.reject(w, r, "")
-				return
-			}
-			hash := hashToken(c.Value)
-			x, err := a.Store.GetSession(r.Context(), hash)
-			if errors.Is(err, ErrSessionNotFound) {
-				a.reject(w, r, "")
-				return
-			}
-			if err != nil {
-				webapi.WriteErr(w, err)
-				return
-			}
-			now := a.now()
-			if !now.Before(x.expiresAt()) {
-				a.reject(w, r, hash)
-				return
-			}
-			u, err := a.Store.GetUser(r.Context(), x.UserID)
-			if errors.Is(err, ErrUserNotFound) {
-				a.reject(w, r, hash)
-				return
-			}
-			if err != nil {
-				webapi.WriteErr(w, err)
-				return
-			}
-			if u.EmailVerifiedAt == nil || u.SuspendedAt != nil || u.SessionEpoch != x.Epoch {
-				a.reject(w, r, hash)
-				return
-			}
-			setAuditActor(r.Context(), u.ID)
-			if !stageAllowed(x.Stage, stages) {
-				webapi.WriteErr(w, stageError(x.Stage))
-				return
-			}
-			if x.Stage == StageFull && now.Sub(x.LastSeenAt) > touchAfter {
-				x.LastSeenAt = now
-				if err := a.Store.touchSession(r.Context(), x); err != nil {
-					webapi.WriteErr(w, err)
-					return
-				}
-			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, sessionCtx{s: x, u: u})))
-		})
-	}
-}
-
-func stageAllowed(have Stage, want []Stage) bool {
-	for _, w := range want {
-		if w == have {
-			return true
-		}
-	}
-	return false
-}
-
-func stageError(have Stage) *webapi.Error {
-	switch have {
-	case StageHalf:
-		return &webapi.Error{Status: http.StatusUnauthorized, Code: "second_factor_required"}
-	case StageEnroll:
-		return &webapi.Error{Status: http.StatusForbidden, Code: "enrollment_required"}
-	default:
-		return &webapi.Error{Status: http.StatusConflict, Code: "already_verified"}
-	}
+	return a.guard().End(w, r, x.web())
 }

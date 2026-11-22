@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -34,19 +35,14 @@ func (a *App) limitIP(scope string, set ratelimit.Settings) func(http.Handler) h
 	}
 }
 
-// limitUser spends one token from the user's bucket on every request of a
-// session in stage full. It runs inside a.session, which supplies the user; a
-// half or enroll session is not metered here (its routes sit behind limitIP).
-func (a *App) limitUser(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		x, u := sessionFrom(r.Context())
-		if x.Stage == StageFull {
-			if d := a.Limiter.Allow(r.Context(), "user#"+u.ID, userLimit); !d.Allowed {
-				slog.Warn("portal: user rate limited", "user", u.ID)
-				webapi.WriteErr(w, rateLimited(d.RetryAfterSec))
-				return
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
+// spendUser spends one token from the user's bucket. The session guard calls
+// it for every request of a session in stage full, so no route can leave it
+// out; a half or enroll session is not metered here (its routes sit behind
+// limitIP).
+func (a *App) spendUser(ctx context.Context, userID string) error {
+	if d := a.Limiter.Allow(ctx, "user#"+userID, userLimit); !d.Allowed {
+		slog.Warn("portal: user rate limited", "user", userID)
+		return rateLimited(d.RetryAfterSec)
+	}
+	return nil
 }

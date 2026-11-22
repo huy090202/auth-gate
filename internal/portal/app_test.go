@@ -89,7 +89,7 @@ func newEnv(t *testing.T) *env {
 	})
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/me", e.a.session(StageFull, StageEnroll)(ok))
-	mux.Handle("GET /api/full", e.a.session(StageFull)(e.a.limitUser(ok)))
+	mux.Handle("GET /api/full", e.a.session(StageFull)(ok))
 	mux.Handle("GET /api/t/{tenantId}/any", e.a.audited("probe", e.a.session(StageFull)(e.a.member()(ok))))
 	mux.Handle("GET /api/t/{tenantId}/owner", e.a.audited("probe-owner", e.a.session(StageFull)(e.a.member(RoleOwner, RoleAdmin)(ok))))
 	mux.Handle("GET /api/ip", e.a.limitIP("probe", ratelimit.Settings{Burst: 2, PerSecond: 0})(ok))
@@ -198,6 +198,14 @@ func TestSessionRefusedForSuspendedOrMissingUser(t *testing.T) {
 	if rec := e.get("/api/me", ghost); rec.Code != 401 {
 		t.Fatalf("missing user: %d", rec.Code)
 	}
+	// A user who never verified has no business holding a session, even a valid one.
+	unverified := User{ID: id.New(), Email: "u@x.com", PasswordHash: "h", CreatedAt: e.a.now()}
+	if err := e.a.Store.CreateUser(ctx, unverified); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.get("/api/me", e.login(t, unverified, StageFull)); rec.Code != 401 {
+		t.Fatalf("unverified user: %d", rec.Code)
+	}
 }
 
 // Why: a session without a cookie, with an unknown one, or past its time limit is a plain 401, and stages gate routes.
@@ -207,10 +215,9 @@ func TestSessionStagesAndExpiry(t *testing.T) {
 	if rec := e.get("/api/me", nil); rec.Code != 401 {
 		t.Fatalf("no cookie: %d", rec.Code)
 	}
-	if rec := e.get("/api/me", &http.Cookie{Name: devCookieName, Value: "x", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode}); rec.Code != 401 {
+	if rec := e.get("/api/me", &http.Cookie{Name: e.a.cookieName(), Value: "token-without-a-session", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode}); rec.Code != 401 {
 		t.Fatalf("unknown cookie: %d", rec.Code)
 	}
-	e.a.Config.Dev = true
 	half := e.login(t, u, StageHalf)
 	if rec := e.get("/api/me", half); rec.Code != 401 || code(t, rec) != "second_factor_required" {
 		t.Fatalf("half: %d %s", rec.Code, rec.Body)
@@ -275,8 +282,8 @@ func TestMemberGuard(t *testing.T) {
 	}
 }
 
-// Why: the per-user bucket must cap a signed-in caller at 60 calls in a burst, and only meter full sessions.
-func TestLimitUserSpendsOnFullSessions(t *testing.T) {
+// Why: the per-user bucket must cap a signed-in caller at 60 calls in a burst on every full-session route, without a route opting in.
+func TestSessionGuardSpendsTheUserBucketOnFullSessions(t *testing.T) {
 	e := newEnv(t)
 	u, _ := e.verified(t, "a@x.com")
 	c := e.login(t, u, StageFull)
@@ -291,7 +298,7 @@ func TestLimitUserSpendsOnFullSessions(t *testing.T) {
 	}
 	enroll := e.login(t, u, StageEnroll)
 	if rec := e.get("/api/me", enroll); rec.Code != 200 {
-		t.Fatalf("enroll session is not metered by limitUser: %d", rec.Code)
+		t.Fatalf("enroll session is not metered by the user bucket: %d", rec.Code)
 	}
 }
 
