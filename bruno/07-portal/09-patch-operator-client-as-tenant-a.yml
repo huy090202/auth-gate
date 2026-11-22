@@ -1,0 +1,46 @@
+info:
+  name: "Tenant A patches an operator's client (404)"
+  type: http
+  seq: 9
+
+http:
+  method: PATCH
+  url: "{{baseUrl}}/api/portal/clients/{{clientId}}"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+    - name: X-Internal-Access-Key
+      value: "{{portalKey}}"
+    - name: X-Tenant-Id
+      value: "01KAZ5XQ3V8M2N7R4T6W9Y0B1C"
+  body:
+    type: json
+    data: |-
+      {
+        "name": "bruno demo renamed"
+      }
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        if (!bru.getEnvVar("portalKey") || !bru.getVar("clientId")) bru.runner.skipRequest();
+    - type: tests
+      code: |-
+        test("404 — not found, not forbidden", function() {
+          expect(res.getStatus()).to.equal(404);
+        });
+
+        test('body is exactly {"error":"client_not_found"}', function() {
+          expect(res.getBody()).to.deep.equal({ error: "client_not_found" });
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  **Expected: 404 `client_not_found`.** The write path is closed too: a tenant cannot rename an operator's client.

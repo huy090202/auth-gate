@@ -18,7 +18,7 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-PRUNE_NAMES=(smoke "bruno boundary A" "bruno boundary B" "bruno boundary C" "bruno demo" "bruno demo renamed" "bruno rate limit" rate-limit-probe)
+PRUNE_NAMES=(smoke "bruno boundary A" "bruno boundary B" "bruno boundary C" "bruno demo" "bruno demo renamed" "bruno rate limit" "bruno portal" rate-limit-probe)
 MAX_PAGES=100
 
 keep=()

@@ -77,8 +77,9 @@ ensure_policy() {
   fi
   aws iam attach-user-policy "${admin[@]}" --user-name "$USER_NAME" --policy-arn "$arn"
 }
-ensure_policy "$USER_NAME-policy" deployer-policy.json
+# The edge policy first: a rerun that stops after the first call must not leave the deployer without CloudFront rights.
 ensure_policy "$USER_NAME-edge-policy" deployer-policy-edge.json
+ensure_policy "$USER_NAME-policy" deployer-policy.json
 
 if aws configure get aws_access_key_id --profile "$USER_NAME" >/dev/null 2>&1; then
   echo "profile $USER_NAME already configured; not creating another access key"

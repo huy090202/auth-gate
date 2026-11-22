@@ -76,7 +76,7 @@ function ClientsBody({ me }: { me: Me }) {
                       </Table.Td>
                       <Table.Td><code className="cell-mono cell-clip">{c.rpId}</code></Table.Td>
                       <Table.Td>
-                        {c.owner ? <code className="cell-mono" title={c.owner}>{c.owner.slice(0, 8)}</code> : <Text fz="sm" c="dimmed">{t.clients.ownerOperator}</Text>}
+                        {c.owner ? <code className="cell-mono" title={c.owner}>{c.owner.slice(-8)}</code> : <Text fz="sm" c="dimmed">{t.clients.ownerOperator}</Text>}
                       </Table.Td>
                       <Table.Td>
                         <StatusBadge active={!c.disabledAt} on={t.clients.active} off={t.clients.disabled} />

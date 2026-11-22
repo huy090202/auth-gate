@@ -105,11 +105,11 @@ mirror the admin ones on the tenant's own clients:
 | `POST /api/portal/clients/{id}/keys` | Rotate the key. |
 | `DELETE /api/portal/clients/{id}/keys/previous` | End every previous key's grace now. |
 | `DELETE /api/portal/clients/{id}/subjects/{subjectId}` | Purge one subject's factors. |
-| `DELETE /api/portal/clients/{id}` | Soft delete; frees a quota slot. |
+| `DELETE /api/portal/clients/{id}` | Soft delete; frees a quota slot. `409 disabled_by_operator` for a client an operator disabled. |
 
 A client of another tenant, of an operator, a deleted one and an unknown id all answer
 `404 client_not_found`. While the tenant is suspended every write answers
-`409 tenant_suspended` at once, and its clients' keys stop working within 30 seconds (each
+`409 tenant_suspended` at once (except a write already in flight when the suspension lands: a portal write reads the counters, then writes; only a create is atomic with them), and its clients' keys stop working within 30 seconds (each
 instance caches the tenant's state that long); an operator's clients never read it.
 
 ### Deleting clients
@@ -120,7 +120,7 @@ A delete is soft, so the factors (PINs and passkeys) of a deleted client stay in
 
 - `06-prune-clients.sh` lists every client through the admin API and proposes the test clients
   that piled up, by name: `smoke`, `bruno boundary A`, `B` and `C`, `bruno demo`,
-  `bruno demo renamed`, `bruno rate limit` and `rate-limit-probe`. It matches by name across
+  `bruno demo renamed`, `bruno rate limit`, `bruno portal` and `rate-limit-probe`. It matches by name across
   every owner (no tenant creates clients yet), so check the listing before answering. `--keep <id>`
   drops one from the proposal and `--also <id>` adds one. It never offers the Console's own
   client (output `AuthGateClientId` of `auth-gate-console-<stage>`) nor the Portal's
@@ -249,6 +249,9 @@ keeps the KMS and AuthGate table permissions out of a browser-facing Lambda.
   update of a client can still change any field of that client, once.
 - The Console's own client is read-only through the Console (`409 own_client_protected` on
   patch, rotate, revoke previous keys, disable and purge). Emergency changes to it use the scripts.
+  Only the Console UI and `06-prune-clients.sh` protect it: an admin-key `DELETE /api/clients/{id}`
+  sent directly (curl, Bruno) soft-deletes it, and there is no undelete. Recover with
+  `scripts/console/register-client.sh` and a Console redeploy with the new client id.
 - `/api/auth/*` is limited per IP, read from `CloudFront-Viewer-Address`: a burst of 10, then
   one request per 6 seconds.
 
@@ -363,7 +366,7 @@ The permissions boundary caps every `auth-gate-*` IAM role the deployer creates,
 deployer key cannot mint a role more powerful than the boundary. Its KMS, CloudFront, S3 and log
 rights reach only auth-gate's own resources ([Deployer scope](#deployer-scope)). It can still
 change Lambda code and the Console's site (so it can swap the JavaScript the admin loads), read
-`admin-key` from SSM, edit any CloudFront cache, origin request, response headers or origin
+`admin-key` and `portal-key` from SSM, edit any CloudFront cache, origin request, response headers or origin
 access control policy in the account (CloudFront cannot scope those), and it holds wide rights on
 Route 53 and ACM until the custom domain work settles them. CI does not use the key: it assumes the
 role `ci-auth-gate-deploy` ([Continuous deploy](#continuous-deploy)). Keep the key out of shells

@@ -53,4 +53,4 @@ docs: |-
   (`02-clients/01-create` overwrites both later).
 
   > **On prd this creates a real client.** `99-teardown` deletes it at the end
-  > of the run; a run that stops early leaves it until `99-purge.sh`.
+  > of the run; a run that stops early leaves it until `06-prune-clients.sh`.

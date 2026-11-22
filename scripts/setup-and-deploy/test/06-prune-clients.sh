@@ -73,6 +73,7 @@ case "$method $url" in
   "GET https://stg.example.test/api/clients?cursor=p2%2B%2F%3D")
     extra=""
     [[ "$SCENARIO" == portal ]] && extra=",$(c id-portal "bruno demo")"
+    [[ "$SCENARIO" == bportal ]] && extra=",$(c id-E "bruno portal")"
     [[ "$SCENARIO" == fail ]] && extra=",$(c id-FAIL smoke)"
     printf '{"clients":[%s,%s%s]}' "$(c id-D auth-app-stg)" "$(c id-console smoke)" "$extra" >"$out"
     printf 200 ;;
@@ -170,6 +171,10 @@ assert "wrong count: no delete" test "$(deletes)" -eq 0
 run none ""
 refute "empty answer: exits non-zero" test "$code" -eq 0
 assert "empty answer: no delete" test "$(deletes)" -eq 0
+
+run bportal "delete 3"
+assert "bruno portal client: exits 0" test "$code" -eq 0
+assert "bruno portal client: deleted" deleted id-E
 
 run portal "delete 2"
 assert "portal stack present: exits 0" test "$code" -eq 0

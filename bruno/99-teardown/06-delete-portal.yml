@@ -1,5 +1,5 @@
 info:
-  name: "Delete portal client (204 or 404) (204 or 404)"
+  name: "Delete portal client (204 or 404)"
   type: http
   seq: 6
 

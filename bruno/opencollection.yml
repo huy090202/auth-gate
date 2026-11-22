@@ -71,8 +71,8 @@ docs:
 
     ### Client management
 
-    `02-clients` also covers list, delete, `PATCH` (name changes, `rpId` refused) and
-    `DELETE /api/clients/{id}/keys/previous`. `01-the-boundary` ends with a disabled
+    `02-clients` also covers list, `PATCH` (name changes, `rpId` refused) and
+    `DELETE /api/clients/{id}/keys/previous`. Deleting is `99-teardown` (operator) and `07-portal` (tenant). `01-the-boundary` ends with a disabled
     client's key answering 401 and the enabled one working again. The Console, a
     separate app, drives these routes: see `bruno-console/`.
 

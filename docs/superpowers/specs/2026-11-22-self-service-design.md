@@ -131,7 +131,7 @@ Also under the admin key, asked for by the owner on 2026-11-22 to clean stg up:
 - `scripts/setup-and-deploy/06-prune-clients.sh`, run by hand under the admin profile: lists every
   client with its id, name, rpId, creation date and owner; proposes the ones named `smoke`,
   `bruno boundary A`, `bruno boundary B`, `bruno boundary C`, `bruno demo`, `bruno demo renamed`,
-  `bruno rate limit` or `rate-limit-probe`; lets the operator add or drop ids; never offers the
+  `bruno rate limit`, `bruno portal` or `rate-limit-probe`; lets the operator add or drop ids; never offers the
   Console's or the Portal's own client; and deletes only after a typed confirmation. On stg on
   2026-11-22 that is 52 of 55 clients; `auth-app-local`, `auth-app-stg` and
   `auth-gate-console-stg` stay.
