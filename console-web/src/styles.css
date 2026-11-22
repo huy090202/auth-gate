@@ -16,7 +16,6 @@
 html { scroll-padding-top: calc(var(--header-h) + 16px); }
 body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiased; }
 ::selection { background: rgba(54, 200, 122, 0.32); }
-:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 * { scrollbar-color: color-mix(in srgb, var(--mantine-color-dimmed) 45%, transparent) transparent; scrollbar-width: thin; }
 
 /* Background: three blurred leaf shapes and a grain layer, fixed behind everything. */

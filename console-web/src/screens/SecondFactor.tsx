@@ -8,6 +8,7 @@ import { formatDate } from '../lib/format';
 import { fmt, useStrings } from '../lib/i18n';
 import { serializeCredential, toRequestOptions } from '@authgate/web-kit/webauthn';
 import { Loading, LoadFailed, homeFor, passkeyCount, useMe } from '../session';
+import { isCancelled } from '@authgate/web-kit/actions';
 
 export type Factor = 'pin' | 'webauthn';
 export type Available = { pin: boolean; webauthn: boolean };
@@ -15,7 +16,7 @@ export type Challenge = { challengeId: string; expiresAt: string; publicKey?: un
 export type Proof = { pin: string } | { credential: object };
 
 /** A cancelled or timed-out browser prompt is not an error worth a red line. */
-export const isCancelled = (e: unknown) => e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError');
+export { isCancelled };
 
 // Copied from auth-app (app/src/app/SecondFactor.tsx).
 async function proofFor(factor: Factor, ch: Challenge, pin: string): Promise<Proof> {

@@ -1,4 +1,5 @@
-import { Anchor, Menu, Select } from '@mantine/core';
+import { Menu, Select } from '@mantine/core';
+import { NavItem, ShellLayout, endSession } from '@authgate/web-kit/shell-layout';
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate, useParams } from 'react-router';
 import { Brand } from './brand';
@@ -8,16 +9,6 @@ import { api } from './lib/api';
 import { fmt, useStrings } from './lib/i18n';
 import { auditPath, clientsPath, fetchTenants, tenantLabel, type Tenant } from './lib/tenants';
 import { useMe, type Me } from './session';
-
-const KEY = 'portal.sidebar';
-
-function readCollapsed(): boolean {
-  try {
-    return localStorage.getItem(KEY) === 'collapsed';
-  } catch {
-    return false;
-  }
-}
 
 /** The user's picture, or their initial when there is none or it cannot be loaded. */
 export function Avatar({ me, large }: { me: Me; large?: boolean }) {
@@ -53,9 +44,10 @@ function useTenants(me: Me): Tenant[] {
 }
 
 /**
- * The frame of every signed-in screen: a sticky sidebar (brand, workspace switcher, navigation), a
- * sticky header with the language, theme and account menu, and a centred content container. The
- * workspace is the one in the URL (`/t/:tenantId/…`); the account pages sit under the personal one.
+ * The frame of every signed-in screen (the layout is the kit's `ShellLayout`): a sticky sidebar
+ * (brand, workspace switcher, navigation), a sticky header with the language, theme and account
+ * menu, and a centred content container. The workspace is the one in the URL (`/t/:tenantId/…`);
+ * the account pages sit under the personal one.
  */
 export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const t = useStrings();
@@ -64,83 +56,49 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const { tenantId: urlTenant } = useParams();
   const { clear } = useMe();
   const tenants = useTenants(me);
-  const [collapsed, setCollapsed] = useState(readCollapsed);
   const current = tenants.find((x) => x.tenantId === (urlTenant ?? me.personalTenantId)) ?? tenants[0]!;
   // The audit log is for owners and admins (spec section 6).
   const canAudit = current.role === 'owner' || current.role === 'admin';
 
-  const toggle = () => {
-    const next = !collapsed;
-    setCollapsed(next);
-    try {
-      localStorage.setItem(KEY, next ? 'collapsed' : 'expanded');
-    } catch {
-      /* storage blocked: the choice lasts until reload */
-    }
-  };
-  const signOut = async () => {
-    try {
-      await api('/api/auth/logout', { method: 'POST' });
-    } catch {
-      /* a session that is already gone is what we wanted */
-    }
+  const signOut = () => endSession(() => api('/api/auth/logout', { method: 'POST' }), () => {
     clear();
     nav('/sign-in', { replace: true });
-  };
+  });
   // Switching keeps the section: the audit log of one workspace opens the audit log of the next.
   const switchTo = (id: string | null) => {
     if (id) nav(pathname.endsWith('/audit') && urlTenant ? auditPath(id) : clientsPath(id));
   };
-  const link = (to: string, label: string, icon: ReactNode) => (
-    <Anchor component={NavLink} to={to} className="nav-link" fz="sm" underline="never" title={label}>
-      {icon}
-      <span className="nav-label">{label}</span>
-    </Anchor>
-  );
+  const link = (to: string, label: string, icon: ReactNode) => <NavItem component={NavLink} to={to} label={label} icon={icon} />;
   return (
-    <div className="shell">
-      <aside className="sidebar glass" data-collapsed={collapsed}>
-        <div className="sidebar-brand"><Brand /></div>
+    <ShellLayout
+      storageKey="portal.sidebar"
+      strings={t.common}
+      brand={<Brand />}
+      collapseIcon={<PanelLeftIcon />}
+      switcher={
         <div className="tenant-switch">
           <Select aria-label={t.shell.workspace} value={current.tenantId} onChange={switchTo} allowDeselect={false}
             data={tenants.map((x) => ({ value: x.tenantId, label: tenantLabel(x, t) }))} />
         </div>
-        <nav className="sidebar-nav" aria-label={t.common.mainNav}>
-          {link(clientsPath(current.tenantId), t.shell.clients, <ClientsIcon />)}
-          {canAudit && link(auditPath(current.tenantId), t.shell.audit, <AuditIcon />)}
-          {link('/account', t.shell.account, <AccountIcon />)}
-        </nav>
-        <div className="sidebar-foot">
-          <button type="button" className="sidebar-collapse" onClick={toggle} aria-expanded={!collapsed}
-            aria-label={collapsed ? t.common.expandSidebar : t.common.collapseSidebar}
-            title={collapsed ? t.common.expandSidebar : t.common.collapseSidebar}>
-            <PanelLeftIcon />
-            <span className="nav-label">{t.common.collapse}</span>
-          </button>
-        </div>
-      </aside>
-      <div className="shell-main">
-        <header className="content-header glass">
-          <LangSwitch />
-          <SchemeToggle />
-          <Menu position="bottom-end" width={220} withinPortal={false}>
-            <Menu.Target>
-              <button type="button" className="avatar-btn" aria-label={fmt(t.common.accountMenu, { name: me.displayName })}>
-                <Avatar me={me} />
-                <span className="avatar-name">{me.displayName}</span>
-              </button>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Label>{me.email}</Menu.Label>
-              <Menu.Item component={NavLink} to="/account" leftSection={<AccountIcon />}>{t.shell.account}</Menu.Item>
-              <Menu.Item color="red" leftSection={<SignOutIcon />} onClick={() => void signOut()}>{t.common.signOut}</Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
-        </header>
-        <div className="shell-content">
-          <div className="shell-container">{children}</div>
-        </div>
-      </div>
-    </div>
+      }
+      nav={<>
+        {link(clientsPath(current.tenantId), t.shell.clients, <ClientsIcon />)}
+        {canAudit && link(auditPath(current.tenantId), t.shell.audit, <AuditIcon />)}
+        {link('/account', t.shell.account, <AccountIcon />)}
+      </>}
+      headerStart={<><LangSwitch /><SchemeToggle /></>}
+      account={{
+        avatar: <Avatar me={me} />,
+        name: me.displayName,
+        buttonLabel: fmt(t.common.accountMenu, { name: me.displayName }),
+        menu: <>
+          <Menu.Label>{me.email}</Menu.Label>
+          <Menu.Item component={NavLink} to="/account" leftSection={<AccountIcon />}>{t.shell.account}</Menu.Item>
+          <Menu.Item color="red" leftSection={<SignOutIcon />} onClick={() => void signOut()}>{t.common.signOut}</Menu.Item>
+        </>,
+      }}
+    >
+      {children}
+    </ShellLayout>
   );
 }

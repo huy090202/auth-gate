@@ -1,6 +1,10 @@
 /* Signed-in frame and the screens inside it (sidebar shell, tables, forms, key list), shared by the Console and the Portal.
    Import after styles.css of the kit and before the app's own stylesheet. */
 
+/* The focus ring is first here, not in the apps' stylesheets: the Select dropdown below must keep winning over it, as it did
+   when this file's rules still lived in the Console's stylesheet after it. */
+:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+
 .panel-form { margin-top: 18px; }
 .panel-form-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
 .panel .flush { margin-left: -8px; }
