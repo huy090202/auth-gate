@@ -8,6 +8,9 @@ func TestLoadRefusesIncompleteRoles(t *testing.T) {
 	verifyOK := map[string]string{
 		"ROLE": "verify", "TABLE_NAME": "t", "BASE_URL": "https://x", "ORIGIN_VERIFY_PARAM": "/p", "KMS_KEY_ID": "k",
 	}
+	adminOK := map[string]string{
+		"ROLE": "admin", "TABLE_NAME": "t", "ORIGIN_VERIFY_PARAM": "/p", "ADMIN_KEY_PARAM": "/a", "PORTAL_KEY_PARAM": "/k",
+	}
 	without := func(base map[string]string, drop ...string) map[string]string {
 		m := map[string]string{}
 		for k, v := range base {
@@ -27,7 +30,9 @@ func TestLoadRefusesIncompleteRoles(t *testing.T) {
 		{"verify without kms and without local signer", without(verifyOK, "KMS_KEY_ID"), false},
 		{"verify without origin param", without(verifyOK, "ORIGIN_VERIFY_PARAM"), false},
 		{"verify without base url", without(verifyOK, "BASE_URL"), false},
-		{"admin without admin key param", map[string]string{"ROLE": "admin", "TABLE_NAME": "t", "ORIGIN_VERIFY_PARAM": "/p"}, false},
+		{"admin complete", adminOK, true},
+		{"admin without admin key param", without(adminOK, "ADMIN_KEY_PARAM"), false},
+		{"admin without portal key param", without(adminOK, "PORTAL_KEY_PARAM"), false},
 		{"jwks without key ids", map[string]string{"ROLE": "jwks"}, false},
 		{"unknown role", map[string]string{"ROLE": "nope", "TABLE_NAME": "t"}, false},
 		{"dev with only table", map[string]string{"ROLE": "dev", "TABLE_NAME": "t"}, true},

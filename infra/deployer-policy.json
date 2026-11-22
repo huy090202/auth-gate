@@ -170,80 +170,6 @@
       "Resource": "arn:aws:kms:ap-southeast-1:826113468815:alias/auth-gate-*"
     },
     {
-      "Sid": "CreateTheDistribution",
-      "Effect": "Allow",
-      "Action": "cloudfront:CreateDistribution",
-      "Resource": "*",
-      "Condition": {
-        "StringEquals": {
-          "aws:RequestTag/app": "auth-gate"
-        }
-      }
-    },
-    {
-      "Sid": "ManageTheDistribution",
-      "Effect": "Allow",
-      "Action": [
-        "cloudfront:GetDistribution",
-        "cloudfront:GetDistributionConfig",
-        "cloudfront:UpdateDistribution",
-        "cloudfront:DeleteDistribution",
-        "cloudfront:TagResource",
-        "cloudfront:UntagResource",
-        "cloudfront:ListTagsForResource",
-        "cloudfront:CreateInvalidation",
-        "cloudfront:GetInvalidation"
-      ],
-      "Resource": "arn:aws:cloudfront::826113468815:distribution/*",
-      "Condition": {
-        "StringEquals": {
-          "aws:ResourceTag/app": "auth-gate"
-        }
-      }
-    },
-    {
-      "Sid": "DistributionPolicies",
-      "Effect": "Allow",
-      "Action": [
-        "cloudfront:CreateCachePolicy",
-        "cloudfront:GetCachePolicy",
-        "cloudfront:UpdateCachePolicy",
-        "cloudfront:DeleteCachePolicy",
-        "cloudfront:ListCachePolicies",
-        "cloudfront:GetOriginRequestPolicy",
-        "cloudfront:ListOriginRequestPolicies",
-        "cloudfront:CreateOriginAccessControl",
-        "cloudfront:GetOriginAccessControl",
-        "cloudfront:GetOriginAccessControlConfig",
-        "cloudfront:UpdateOriginAccessControl",
-        "cloudfront:DeleteOriginAccessControl",
-        "cloudfront:ListOriginAccessControls",
-        "cloudfront:CreateResponseHeadersPolicy",
-        "cloudfront:GetResponseHeadersPolicy",
-        "cloudfront:UpdateResponseHeadersPolicy",
-        "cloudfront:DeleteResponseHeadersPolicy",
-        "cloudfront:ListResponseHeadersPolicies",
-        "cloudfront:CreateFunction",
-        "cloudfront:ListFunctions"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "ManageTheEdgeFunctions",
-      "Effect": "Allow",
-      "Action": [
-        "cloudfront:DescribeFunction",
-        "cloudfront:GetFunction",
-        "cloudfront:UpdateFunction",
-        "cloudfront:PublishFunction",
-        "cloudfront:DeleteFunction",
-        "cloudfront:TagResource",
-        "cloudfront:UntagResource",
-        "cloudfront:ListTagsForResource"
-      ],
-      "Resource": "arn:aws:cloudfront::826113468815:function/auth-gate-*"
-    },
-    {
       "Sid": "ManageTheParameters",
       "Effect": "Allow",
       "Action": [
@@ -257,20 +183,6 @@
         "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate/*",
         "arn:aws:ssm:ap-southeast-1:826113468815:parameter/credo/auth-gate-console/*"
       ]
-    },
-    {
-      "Sid": "OptionalCustomDomain",
-      "Effect": "Allow",
-      "Action": [
-        "acm:RequestCertificate",
-        "acm:DescribeCertificate",
-        "acm:ListCertificates",
-        "route53:ChangeResourceRecordSets",
-        "route53:GetChange",
-        "route53:GetHostedZone",
-        "route53:ListResourceRecordSets"
-      ],
-      "Resource": "*"
     },
     {
       "Sid": "Diagnostics",

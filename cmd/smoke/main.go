@@ -49,7 +49,7 @@ func main() {
 	}
 }
 
-func run(base, adminKey string) error {
+func run(base, adminKey string) (err error) {
 	api, err := newAPI(base)
 	if err != nil {
 		return err
@@ -66,6 +66,29 @@ func run(base, adminKey string) error {
 	}
 	key := created.AccessKey
 	fmt.Println("ok client created", created.ClientID)
+
+	// The client is deleted on every exit path, so a failed run leaves nothing
+	// behind. A run that got this far otherwise must also see the delete answer 204
+	// and the deleted client's key stop working.
+	defer func() {
+		derr := api.call("DELETE", "/api/clients/"+created.ClientID, adminKey, nil, http.StatusNoContent, nil)
+		if derr != nil {
+			fmt.Fprintln(os.Stderr, "cleanup: delete client", created.ClientID+":", derr)
+			if err == nil {
+				err = fmt.Errorf("delete client: %w", derr)
+			}
+			return
+		}
+		fmt.Println("ok client deleted", created.ClientID)
+		if err != nil {
+			return
+		}
+		if kerr := api.call("GET", "/api/factors/smoke-after-delete", key, nil, http.StatusUnauthorized, nil); kerr != nil {
+			err = fmt.Errorf("client call after delete: %w", kerr)
+			return
+		}
+		fmt.Println("ok deleted client key refused")
+	}()
 
 	subject := "smoke-" + randHex(6)
 	rp := virtualwebauthn.RelyingParty{Name: "smoke", ID: rpID, Origin: origin}
@@ -202,7 +225,7 @@ func (a *api) url(path string) string {
 		return a.base + path
 	}
 	switch {
-	case strings.HasPrefix(path, "/api/clients"):
+	case strings.HasPrefix(path, "/api/clients"), strings.HasPrefix(path, "/api/portal"), strings.HasPrefix(path, "/api/owners"):
 		return a.base + "/admin" + path
 	case strings.HasPrefix(path, "/.well-known/"):
 		return a.base + "/jwks" + path

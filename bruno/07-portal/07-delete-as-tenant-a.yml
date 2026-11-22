@@ -1,0 +1,34 @@
+info:
+  name: "Delete the client as tenant A (204)"
+  type: http
+  seq: 7
+
+http:
+  method: DELETE
+  url: "{{baseUrl}}/api/portal/clients/{{portalClientId}}"
+  headers:
+    - name: X-Internal-Access-Key
+      value: "{{portalKey}}"
+    - name: X-Tenant-Id
+      value: "01KAZ5XQ3V8M2N7R4T6W9Y0B1C"
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        if (!bru.getEnvVar("portalKey")) bru.runner.skipRequest();
+    - type: tests
+      code: |-
+        test("204 — deleted", function() {
+          expect(res.getStatus()).to.equal(204);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  **Expected: 204.** The owning tenant deletes its client; `99-teardown` then finds it gone (404).

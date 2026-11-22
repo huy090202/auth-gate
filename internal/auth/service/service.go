@@ -408,7 +408,7 @@ func (s *Service) DisableClient(ctx context.Context, clientID string) (client.Cl
 	if err := validateIDs(clientID); err != nil {
 		return client.Client{}, err
 	}
-	return s.Clients.Disable(ctx, clientID)
+	return s.Clients.Disable(ctx, clientID, client.ByOperator)
 }
 
 // EnableClient lets the client's keys authenticate again.
@@ -416,7 +416,7 @@ func (s *Service) EnableClient(ctx context.Context, clientID string) (client.Cli
 	if err := validateIDs(clientID); err != nil {
 		return client.Client{}, err
 	}
-	return s.Clients.Enable(ctx, clientID)
+	return s.Clients.Enable(ctx, clientID, client.ByOperator)
 }
 
 // RevokePreviousKeys ends the grace of every replaced key and returns how many were still valid.
@@ -432,7 +432,61 @@ func (s *Service) RotateClientKey(ctx context.Context, clientID string) (string,
 	if err := validateIDs(clientID); err != nil {
 		return "", err
 	}
-	return s.Clients.RotateKey(ctx, clientID)
+	return s.rotate(ctx, clientID)
+}
+
+// rotate runs client.Service.RotateKey. A delete that lands inside the rotate
+// removes the key items the rotate is expiring, which fails with a generic
+// error; a client that is gone afterwards is reported as client.ErrNotFound.
+func (s *Service) rotate(ctx context.Context, clientID string) (string, error) {
+	key, err := s.Clients.RotateKey(ctx, clientID)
+	if err != nil && !errors.Is(err, client.ErrNotFound) {
+		if _, gerr := s.Clients.Get(ctx, clientID); errors.Is(gerr, client.ErrNotFound) {
+			return "", client.ErrNotFound
+		}
+	}
+	return key, err
+}
+
+// DeleteClient soft-deletes any client: its keys stop at once and it leaves every list.
+func (s *Service) DeleteClient(ctx context.Context, clientID string) error {
+	if err := validateIDs(clientID); err != nil {
+		return err
+	}
+	return s.Clients.Delete(ctx, clientID)
+}
+
+// GetOwner returns a tenant's counters; an unknown tenant has the defaults.
+// A tenant id that is not a canonical ULID is id.ErrInvalid.
+func (s *Service) GetOwner(ctx context.Context, tenantID string) (client.Owner, error) {
+	if err := id.ValidateULID(tenantID); err != nil {
+		return client.Owner{}, err
+	}
+	return s.Clients.GetOwner(ctx, tenantID)
+}
+
+// SetQuota sets how many clients a tenant may own.
+func (s *Service) SetQuota(ctx context.Context, tenantID string, quota int) (client.Owner, error) {
+	if err := id.ValidateULID(tenantID); err != nil {
+		return client.Owner{}, err
+	}
+	return s.Clients.SetQuota(ctx, tenantID, quota)
+}
+
+// SuspendOwner refuses the tenant's writes and, within the owner cache TTL, its keys.
+func (s *Service) SuspendOwner(ctx context.Context, tenantID string) (client.Owner, error) {
+	if err := id.ValidateULID(tenantID); err != nil {
+		return client.Owner{}, err
+	}
+	return s.Clients.Suspend(ctx, tenantID)
+}
+
+// UnsuspendOwner lifts a suspension.
+func (s *Service) UnsuspendOwner(ctx context.Context, tenantID string) (client.Owner, error) {
+	if err := id.ValidateULID(tenantID); err != nil {
+		return client.Owner{}, err
+	}
+	return s.Clients.Unsuspend(ctx, tenantID)
 }
 
 // PurgeSubject deletes the subject's PIN and every passkey of an existing

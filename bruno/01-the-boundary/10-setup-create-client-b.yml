@@ -24,7 +24,10 @@ runtime:
   scripts:
     - type: after-response
       code: |-
-        if (res.getStatus() === 201) bru.setVar("otherClientKey", res.getBody().accessKey);
+        if (res.getStatus() === 201) {
+          bru.setVar("otherClientKey", res.getBody().accessKey);
+          bru.setVar("tdBoundaryB", res.getBody().clientId);
+        }
     - type: tests
       code: |-
         test("201 — client created", function() {

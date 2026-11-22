@@ -78,7 +78,7 @@ func rolePath(base, path string) string {
 		return base + path
 	}
 	switch {
-	case strings.HasPrefix(path, "/api/clients"):
+	case strings.HasPrefix(path, "/api/clients"), strings.HasPrefix(path, "/api/portal"), strings.HasPrefix(path, "/api/owners"):
 		return base + "/admin" + path
 	case strings.HasPrefix(path, "/.well-known/"):
 		return base + "/jwks" + path
@@ -326,6 +326,12 @@ func (c *Client) DisableClient(ctx context.Context, id string) (json.RawMessage,
 // EnableClient enables a client.
 func (c *Client) EnableClient(ctx context.Context, id string) (json.RawMessage, error) {
 	return c.admin(ctx, http.MethodPost, "/api/clients/"+seg(id)+"/enable", struct{}{})
+}
+
+// DeleteClient deletes a client: its keys stop at once and its id answers 404 from then on.
+func (c *Client) DeleteClient(ctx context.Context, id string) error {
+	_, err := c.admin(ctx, http.MethodDelete, "/api/clients/"+seg(id), nil)
+	return err
 }
 
 // PurgeSubject deletes every factor a subject has under a client.

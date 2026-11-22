@@ -1,6 +1,6 @@
 import { Anchor, Button, Text, TextInput } from '@mantine/core';
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import { consoleTitle, useTitle } from '../brand';
 import { ApiError, api } from '../lib/api';
 import { parsePositive, parseWhole, splitOrigins, validSubject, type ClientView } from '../lib/clients';
@@ -11,7 +11,7 @@ import { Shell } from '../shell';
 import { ShownOnce } from '../ShownOnce';
 import { useStepUp } from '../stepup';
 import { useToast } from '../toast';
-import { IdChip, InlineLoading, LoadFailedInline, PageHead, StatusBadge } from '../ui';
+import { IdChip, InlineLoading, LoadFailedInline, PageHead, StatusBadge, TypeToConfirm } from '../ui';
 import { ClientFields, formFrom, positive, whole, type FormErrors, type FormState } from './clientForm';
 import { Feedback, useAction } from './factors';
 
@@ -34,6 +34,7 @@ function Detail({ me, id }: { me: Me; id: string }) {
   useTitle(consoleTitle(t.screens.clientDetail));
   const { stepUp, modal } = useStepUp();
   const toast = useToast();
+  const navigate = useNavigate();
   const [client, setClient] = useState<ClientView | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [form, setForm] = useState<FormState | null>(null);
@@ -43,10 +44,12 @@ function Detail({ me, id }: { me: Me; id: string }) {
   // from a write is the fallback for a backend that did not.
   const [refused, setRefused] = useState(false);
   const [subject, setSubject] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const settings = useAction();
   const keys = useAction();
   const state = useAction();
   const purge = useAction();
+  const remove = useAction();
 
   /** `resetForm`: after a save, replace what is typed; a plain reload (enable, disable) keeps unsaved edits. */
   const load = useCallback((resetForm = false) => {
@@ -77,6 +80,21 @@ function Detail({ me, id }: { me: Me; id: string }) {
   const dialogs = (
     <>
       {modal}
+      {confirmDelete && client && (
+        <TypeToConfirm title={t.clientDetail.deleteConfirmTitle} body={fmt(t.clientDetail.deleteConfirmBody, { name: client.name })}
+          expected={client.name} confirmLabel={t.clientDetail.delete}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => {
+            setConfirmDelete(false);
+            void remove.run(async () => {
+              const r = await guard(() => stepUp('delete-client', (token) =>
+                api(`/api/clients/${encodeURIComponent(id)}`, { method: 'DELETE', stepUpToken: token }), id));
+              if (!r) return false;
+              void navigate('/clients');
+              return t.clientDetail.deleted;
+            });
+          }} />
+      )}
       {secret && <ShownOnce title={secret.title} label={secret.label} value={secret.value} onClose={() => setSecret(null)} />}
     </>
   );
@@ -226,6 +244,18 @@ function Detail({ me, id }: { me: Me; id: string }) {
           </ActionRow>
           <Feedback error={purge.error} />
         </section>
+
+        {!own && (
+          <section className="panel glass">
+            <h2>{t.clientDetail.deleteTitle}</h2>
+            <ActionRow title={t.clientDetail.delete} body={t.clientDetail.deleteBody}>
+              <Button color="red" loading={remove.busy} disabled={remove.waiting} onClick={() => setConfirmDelete(true)}>
+                {t.clientDetail.delete}
+              </Button>
+            </ActionRow>
+            <Feedback error={remove.error} />
+          </section>
+        )}
       </div>
       {dialogs}
     </Shell>

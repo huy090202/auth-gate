@@ -20,6 +20,7 @@ type Config struct {
 	Role, Stage, Table, Region, KMSKeyID string
 	KMSKeyIDs                            []string
 	AdminKeyParam, OriginVerifyParam     string
+	PortalKeyParam                       string
 	BaseURL, DynamoEndpoint              string
 	LocalSigner                          bool
 	Port                                 string
@@ -35,6 +36,7 @@ func Load(getenv func(string) string) (Config, error) {
 		KMSKeyID:          getenv("KMS_KEY_ID"),
 		KMSKeyIDs:         splitList(getenv("KMS_KEY_IDS")),
 		AdminKeyParam:     getenv("ADMIN_KEY_PARAM"),
+		PortalKeyParam:    getenv("PORTAL_KEY_PARAM"),
 		OriginVerifyParam: getenv("ORIGIN_VERIFY_PARAM"),
 		BaseURL:           getenv("BASE_URL"),
 		DynamoEndpoint:    getenv("DYNAMO_ENDPOINT"),
@@ -58,6 +60,7 @@ func Load(getenv func(string) string) (Config, error) {
 	case RoleAdmin:
 		need("TABLE_NAME", c.Table)
 		need("ADMIN_KEY_PARAM", c.AdminKeyParam)
+		need("PORTAL_KEY_PARAM", c.PortalKeyParam)
 		need("ORIGIN_VERIFY_PARAM", c.OriginVerifyParam)
 	case RoleJWKS:
 		if len(c.KMSKeyIDs) == 0 && !c.LocalSigner {

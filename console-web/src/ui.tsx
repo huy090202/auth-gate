@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Button, Group, Loader, Modal, Stack, Text } from '@mantine/core';
+import { ActionIcon, Badge, Button, Group, Loader, Modal, Stack, Text, TextInput } from '@mantine/core';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { explain } from './lib/explain';
 import { fmt, useStrings } from './lib/i18n';
@@ -99,6 +99,27 @@ export function ConfirmDialog({ title, body, confirmLabel, danger, onConfirm, on
           {/* The safe answer takes the focus: Enter cancels, a destructive confirm needs a deliberate move. */}
           <Button variant="default" onClick={onCancel} data-autofocus>{t.ui.cancel}</Button>
           <Button color={danger ? 'red' : undefined} onClick={onConfirm}>{confirmLabel}</Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+/** Like ConfirmDialog, but the confirm button stays off until `expected` is typed exactly (case and spaces count). */
+export function TypeToConfirm({ title, body, expected, confirmLabel, onConfirm, onCancel }: {
+  title: string; body: string; expected: string; confirmLabel: string; onConfirm(): void; onCancel(): void;
+}) {
+  const t = useStrings();
+  const [typed, setTyped] = useState('');
+  return (
+    <Modal opened onClose={onCancel} title={title} centered>
+      <Stack gap="lg">
+        <Text fz="sm">{body}</Text>
+        <TextInput label={fmt(t.ui.typeToConfirm, { expected })} value={typed} onChange={(e) => setTyped(e.currentTarget.value)}
+          spellCheck={false} autoComplete="off" data-autofocus />
+        <Group justify="flex-end" gap="sm">
+          <Button variant="default" onClick={onCancel}>{t.ui.cancel}</Button>
+          <Button color="red" disabled={typed !== expected} onClick={onConfirm}>{confirmLabel}</Button>
         </Group>
       </Stack>
     </Modal>

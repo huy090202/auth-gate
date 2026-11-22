@@ -30,5 +30,5 @@ docs:
     The folder never waits for a refill: at 0.01 per second the next token is
     100 seconds away, far longer than the run.
 
-    > **On prd this creates a real client.** Deleting a client is out of v1.
+    > **On prd this creates a real client.** `99-teardown` deletes it.
   type: text/markdown

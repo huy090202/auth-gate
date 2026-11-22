@@ -27,6 +27,7 @@ runtime:
         if (res.getStatus() === 201) {
           bru.setVar("rlClientKey", res.getBody().accessKey);
           bru.setVar("rlClientId", res.getBody().clientId);
+          bru.setVar("tdRateLimit", res.getBody().clientId);
         }
     - type: tests
       code: |-
@@ -45,5 +46,5 @@ docs: |-
   **Setup, expected: 201.** Creates a client only this folder uses and captures
   `rlClientKey` and `rlClientId`. The shared `clientKey` is not touched.
 
-  > **On prd this creates a real client.** Deleting a client is out of v1; it
-  > stays until `99-purge.sh`. Do not run this folder against prd casually.
+  > **On prd this creates a real client.** `99-teardown` deletes it at the end
+  > of the run; a run that stops early leaves it until `06-prune-clients.sh`.

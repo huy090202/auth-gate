@@ -29,6 +29,7 @@ runtime:
         if (res.getStatus() === 201) {
           bru.setVar("clientKey", res.getBody().accessKey);
           bru.setVar("clientId", res.getBody().clientId);
+          bru.setVar("tdDemo", res.getBody().clientId);
         }
     - type: tests
       code: |-
@@ -66,5 +67,5 @@ docs: |-
     passkeys for its own domains.
   - `tokenTtlSec` defaults to 300, max 900.
 
-  > **On prd this creates a real client** that cannot be deleted in v1, and its
+  > **On prd this creates a real client**, deleted by `99-teardown`, and its
   > key is shown only in this response.

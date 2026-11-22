@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
@@ -58,7 +59,10 @@ func main() {
 		h = handler.NewVerify(svc, svc.Clients, &ratelimit.Limiter{DB: db, Table: cfg.Table})
 	case config.RoleAdmin:
 		svc := newService(mustDynamo(ctx, cfg), cfg, nil)
-		h = handler.NewAdmin(svc, mustSecret(ctx, awsCfg, cfg.AdminKeyParam))
+		h = adminRole(
+			handler.NewAdmin(svc, mustSecret(ctx, awsCfg, cfg.AdminKeyParam)),
+			handler.NewPortal(svc, mustSecret(ctx, awsCfg, cfg.PortalKeyParam)),
+		)
 	case config.RoleJWKS:
 		var signers []token.Signer
 		if cfg.LocalSigner {
@@ -79,12 +83,29 @@ func main() {
 	lambda.Start(httpadapter.NewV2(h).ProxyWithContext)
 }
 
-// runDev serves verify, admin and jwks under /verify, /admin and /jwks on
-// :PORT with a local signer and no origin check.
+// adminRole serves the admin function: the portal routes go to the portal
+// handler and every other path to the admin handler. Each handler checks its
+// own key before its routes see the request, so neither key opens the other's.
+func adminRole(admin, portal http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/portal/") {
+			portal.ServeHTTP(w, r)
+			return
+		}
+		admin.ServeHTTP(w, r)
+	})
+}
+
+// runDev serves verify, admin (with the portal routes) and jwks under
+// /verify, /admin and /jwks on :PORT with a local signer and no origin check.
 func runDev(ctx context.Context, cfg config.Config) {
 	adminKey := os.Getenv("ADMIN_KEY")
 	if adminKey == "" {
 		log.Fatal("ROLE=dev requires ADMIN_KEY")
+	}
+	portalKey := os.Getenv("PORTAL_KEY")
+	if portalKey == "" {
+		portalKey = "dev-portal"
 	}
 	// One signer instance, so tokens from /verify check against /jwks.
 	signer := mustLocalSigner()
@@ -93,7 +114,7 @@ func runDev(ctx context.Context, cfg config.Config) {
 	limiter := &ratelimit.Limiter{DB: db, Table: cfg.Table}
 	mux := http.NewServeMux()
 	mux.Handle("/verify/", http.StripPrefix("/verify", handler.NewVerify(svc, svc.Clients, limiter)))
-	mux.Handle("/admin/", http.StripPrefix("/admin", handler.NewAdmin(svc, adminKey)))
+	mux.Handle("/admin/", http.StripPrefix("/admin", adminRole(handler.NewAdmin(svc, adminKey), handler.NewPortal(svc, portalKey))))
 	mux.Handle("/jwks/", http.StripPrefix("/jwks", handler.NewJWKS(signer)))
 	addr := ":" + cfg.Port
 	log.Printf("auth-gate dev listening on %s", addr)

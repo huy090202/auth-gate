@@ -144,6 +144,7 @@ const enStrings = {
     confirm: 'Confirm',
     cancel: 'Cancel',
     none: 'None',
+    typeToConfirm: 'Type {expected} to confirm',
   },
   clients: {
     intro: 'Backends registered with AuthGate. Open one to edit it, rotate its key or disable it.',
@@ -153,6 +154,8 @@ const enStrings = {
     colRpId: 'Relying party',
     colStatus: 'Status',
     colCreated: 'Created',
+    colOwner: 'Owner',
+    ownerOperator: 'Operator',
     active: 'Active',
     disabled: 'Disabled',
     empty: 'No clients yet.',
@@ -224,6 +227,12 @@ const enStrings = {
     subjectHint: 'The id this client uses for the user.',
     purge: 'Clear factors',
     purged: 'Factors cleared for {id}.',
+    deleteTitle: 'Delete this client',
+    deleteBody: 'Its keys stop working at once. This cannot be undone.',
+    delete: 'Delete client',
+    deleteConfirmTitle: 'Delete client',
+    deleteConfirmBody: 'This deletes {name}. Its keys stop working at once and it cannot be undone.',
+    deleted: 'Client deleted.',
   },
   audit: {
     intro: 'Every change made through the Console and its operator commands, newest first.',
@@ -272,6 +281,7 @@ const enStrings = {
       'rotate-key': 'Key rotated',
       'revoke-previous-keys': 'Previous keys revoked',
       'disable-client': 'Client disabled',
+      'delete-client': 'Client deleted',
       'enable-client': 'Client enabled',
       'purge-subject': 'User factors cleared',
       'admin-create': 'Admin created',
@@ -280,7 +290,7 @@ const enStrings = {
       'admin-disable': 'Admin disabled',
       'admin-enable': 'Admin enabled',
       'admin-role': 'Admin role changed',
-    },
+    } satisfies Record<AuditAction, string>,
     detailKeys: {
       reason: 'Reason',
       role: 'Role',
@@ -445,6 +455,35 @@ const enStrings = {
   } satisfies Record<ErrorCode, string>,
 };
 
+/** Every action the backend audits (`audited(...)` in internal/console); a label missing here is a compile error. */
+export type AuditAction =
+  | 'login'
+  | 'logout'
+  | 'second-factor-start'
+  | 'second-factor-verify'
+  | 'stepup-start'
+  | 'stepup-verify'
+  | 'change-password'
+  | 'set-pin'
+  | 'delete-pin'
+  | 'passkey-start'
+  | 'passkey-finish'
+  | 'delete-passkey'
+  | 'create-client'
+  | 'update-client'
+  | 'rotate-key'
+  | 'revoke-previous-keys'
+  | 'disable-client'
+  | 'delete-client'
+  | 'enable-client'
+  | 'purge-subject'
+  | 'admin-create'
+  | 'admin-reset-password'
+  | 'admin-clear-factors'
+  | 'admin-disable'
+  | 'admin-enable'
+  | 'admin-role';
+
 export type Strings = Widen<typeof enStrings>;
 export const en: Strings = enStrings;
 
@@ -587,6 +626,7 @@ export const vi: Strings = {
     confirm: 'Xác nhận',
     cancel: 'Hủy',
     none: 'Không có',
+    typeToConfirm: 'Nhập {expected} để xác nhận',
   },
   clients: {
     intro: 'Các backend đã đăng ký với AuthGate. Mở một ứng dụng để sửa, đổi khóa hoặc vô hiệu hóa.',
@@ -596,6 +636,8 @@ export const vi: Strings = {
     colRpId: 'Relying party',
     colStatus: 'Trạng thái',
     colCreated: 'Ngày tạo',
+    colOwner: 'Chủ sở hữu',
+    ownerOperator: 'Nhà vận hành',
     active: 'Đang hoạt động',
     disabled: 'Đã vô hiệu hóa',
     empty: 'Chưa có ứng dụng khách nào.',
@@ -667,6 +709,12 @@ export const vi: Strings = {
     subjectHint: 'Mã mà ứng dụng khách này dùng cho người dùng đó.',
     purge: 'Xóa yếu tố',
     purged: 'Đã xóa yếu tố của {id}.',
+    deleteTitle: 'Xóa ứng dụng khách này',
+    deleteBody: 'Các khóa của nó ngừng hoạt động ngay. Không thể hoàn tác.',
+    delete: 'Xóa ứng dụng khách',
+    deleteConfirmTitle: 'Xóa ứng dụng khách',
+    deleteConfirmBody: 'Thao tác này xóa {name}. Các khóa của nó ngừng hoạt động ngay và không thể hoàn tác.',
+    deleted: 'Đã xóa ứng dụng khách.',
   },
   audit: {
     intro: 'Mọi thay đổi thực hiện qua Console và các lệnh vận hành, mới nhất trước.',
@@ -715,6 +763,7 @@ export const vi: Strings = {
       'rotate-key': 'Đổi khóa',
       'revoke-previous-keys': 'Thu hồi các khóa trước',
       'disable-client': 'Vô hiệu hóa ứng dụng khách',
+      'delete-client': 'Xóa ứng dụng khách',
       'enable-client': 'Bật ứng dụng khách',
       'purge-subject': 'Xóa yếu tố của người dùng',
       'admin-create': 'Tạo quản trị viên',

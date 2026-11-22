@@ -1,0 +1,27 @@
+info:
+  name: Portal
+  type: folder
+  seq: 7
+
+request: {}
+
+docs:
+  content: |-
+    ## The portal routes, under the portal key
+
+    `/api/portal/clients*` takes the portal key (`{{portalKey}}`) and an
+    `x-tenant-id` header (a canonical upper-case ULID). The folder uses two fixed
+    tenants, A and B, and creates one client under A; it deletes it at the end.
+
+    | request | expected | why it matters |
+    | --- | --- | --- |
+    | create as A | **201** | a tenant can create a client |
+    | get as A | **200**, rate limit burst 20 / 10 per second | the owner sees its client; a tenant cannot pick its own limit |
+    | get as B | **404** `client_not_found` | tenants cannot see each other |
+    | admin key on a portal route | **401** | the keys are not interchangeable |
+    | portal key on `/api/clients` | **401** | the portal cannot act as an operator |
+    | patch `rateLimit` | **400** `invalid_client` | only an operator tunes the limit |
+    | delete as A | **204** | a tenant deletes its own client |
+
+    The folder is skipped when the environment has no `portalKey`.
+  type: text/markdown

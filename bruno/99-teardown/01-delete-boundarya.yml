@@ -1,0 +1,32 @@
+info:
+  name: "Delete boundary A (204 or 404)"
+  type: http
+  seq: 1
+
+http:
+  method: DELETE
+  url: "{{baseUrl}}/api/clients/{{tdBoundaryA}}"
+  headers:
+    - name: X-Internal-Access-Key
+      value: "{{adminKey}}"
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        if (!bru.getVar("tdBoundaryA")) bru.runner.skipRequest();
+    - type: tests
+      code: |-
+        test("204 deleted, or 404 already gone", function() {
+          expect([204, 404]).to.include(res.getStatus());
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  Deletes the client saved as `tdBoundaryA`. Skipped when the variable is unset (the request that creates it did not run or did not return 201).

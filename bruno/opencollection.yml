@@ -20,7 +20,7 @@ request:
           else if (url.startsWith(base)) path = url.slice(base.length);
           if (path !== null) {
             let prefix = "/verify";
-            if (path.startsWith("/api/clients")) prefix = "/admin";
+            if (/^\/api\/(clients|portal|owners)/.test(path)) prefix = "/admin";
             else if (path.startsWith("/.well-known/")) prefix = "/jwks";
             req.setUrl(base + prefix + path);
           }
@@ -43,6 +43,7 @@ docs:
     | path | function | credential |
     | --- | --- | --- |
     | `/api/clients*` | `admin` | `x-internal-access-key: {{adminKey}}` |
+    | `/api/portal/clients*` | `admin` | `x-internal-access-key: {{portalKey}}` and `x-tenant-id` |
     | `/.well-known/*` | `jwks` | none |
     | everything else | `verify` | `x-internal-access-key: {{clientKey}}` |
 
@@ -55,7 +56,12 @@ docs:
     `baseUrl` is a localhost URL, so the requests are written once, against the
     deployed shape.
 
-    ### Two different keys
+    ### Three different keys
+
+    `{{portalKey}}` is the Portal's key: it manages one tenant's own clients under
+    `/api/portal/clients*` (header `x-tenant-id`, a canonical upper-case ULID),
+    with a forced rate limit, and nothing else. Neither it nor the admin key opens
+    the other's routes (401); `07-portal` shows each case.
 
     `{{adminKey}}` creates clients and rotates their keys. `{{clientKey}}` is
     what one client backend holds; it is captured by `02-clients/01-create`
@@ -66,7 +72,7 @@ docs:
     ### Client management
 
     `02-clients` also covers list, `PATCH` (name changes, `rpId` refused) and
-    `DELETE /api/clients/{id}/keys/previous`. `01-the-boundary` ends with a disabled
+    `DELETE /api/clients/{id}/keys/previous`. Deleting is `99-teardown` (operator) and `07-portal` (tenant). `01-the-boundary` ends with a disabled
     client's key answering 401 and the enabled one working again. The Console, a
     separate app, drives these routes: see `bruno-console/`.
 
@@ -79,9 +85,12 @@ docs:
 
     ### Variables
 
-    - `baseUrl`, `rawVerifyUrl`, `adminKey`, `subjectId` come from the environment.
+    - `baseUrl`, `rawVerifyUrl`, `adminKey`, `portalKey`, `subjectId` come from the environment.
     - `clientKey`, `clientId`, `challengeId`, `token` are captured at run time;
-      `rlClientKey` and `rlClientId` belong to `06-rate-limit` alone.
+      `rlClientKey` and `rlClientId` belong to `06-rate-limit` alone. `td*`
+      variables (`tdBoundaryA`, `tdBoundaryB`, `tdBoundaryC`, `tdDemo`,
+      `tdRateLimit`, `tdPortal`) hold the ids of the clients the run created,
+      for `99-teardown`.
 
     ### Environments
 
@@ -100,7 +109,7 @@ docs:
 
     For stg, `scripts/setup-and-deploy/04-smoke.sh` writes a temporary,
     gitignored `stg.yml` from the stack outputs (`BaseUrl`, `RawVerifyUrl`) and
-    SSM (`admin-key`), runs this collection, then deletes it.
+    SSM (`admin-key`, `portal-key`), runs this collection, then deletes it.
     `stg.example.yml` shows its shape with placeholders. Real environment files
     are gitignored; never commit a key.
 
@@ -110,6 +119,9 @@ docs:
     verifies, and `02-clients` creates the client that `03-pin` and
     `04-webauthn` use. The real WebAuthn round trip needs an authenticator, so it
     lives in `go run ./cmd/smoke`, not here.
+
+    `99-teardown` runs last and deletes every client the run created, so a run
+    leaves nothing behind on a stage (`DELETE /api/clients/{id}`: 204, then 404).
   type: text/markdown
 bundled: false
 extensions: {}

@@ -93,7 +93,8 @@ assert "protected: exits 0" test "$code" -eq 0
 assert "protected: turns protection off" called 'dynamodb update-table --region ap-southeast-1 --table-name auth-gate-t --no-deletion-protection-enabled'
 assert "protected: turns it off before the stack delete" test "$(line 'update-table')" -lt "$(line 'delete-stack')"
 assert "protected: deletes the stack" called 'cloudformation delete-stack --region ap-southeast-1 --stack-name auth-gate-t'
-assert "protected: deletes both parameters" test "$(grep -c 'ssm delete-parameter' "$CALLS")" -eq 2
+assert "protected: deletes the three parameters" test "$(grep -c 'ssm delete-parameter' "$CALLS")" -eq 3
+assert "protected: deletes portal-key" called 'ssm delete-parameter --region ap-southeast-1 --name /credo/auth-gate/t/portal-key'
 assert "protected: says so" grep -q 'turned off deletion protection on table auth-gate-t' <<<"$out"
 assert "protected: waits until protection is off" test "$(wc -l <"$POLLS")" -eq 2
 

@@ -19,6 +19,7 @@ import (
 // It is the allow-list and the step-up table of the spec.
 var stepUpActions = map[string]string{
 	"rotate-key": "console-rotate-key", "revoke-previous-keys": "console-revoke-previous-keys", "disable-client": "console-disable-client",
+	"delete-client": "console-delete-client",
 	"purge-subject": "console-purge-subject", "update-client": "console-update-client",
 	"change-password": "console-change-password", "add-factor": "console-add-factor", "remove-factor": "console-remove-factor",
 	"admin-create": "console-admin-create", "admin-reset-password": "console-admin-reset-password",
@@ -40,7 +41,7 @@ const (
 // stepUpTargets says which actions are bound to a target and of what kind. An
 // action not listed takes none.
 var stepUpTargets = map[string]targetKind{
-	"rotate-key": clientTarget, "revoke-previous-keys": clientTarget, "disable-client": clientTarget, "update-client": clientTarget,
+	"rotate-key": clientTarget, "revoke-previous-keys": clientTarget, "disable-client": clientTarget, "update-client": clientTarget, "delete-client": clientTarget,
 	"purge-subject": subjectTarget,
 	"admin-create":  userRoleTarget, "admin-reset-password": userTarget, "admin-clear-factors": userTarget,
 	"admin-disable": userTarget, "admin-enable": userTarget,

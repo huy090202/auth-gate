@@ -24,3 +24,13 @@ func Validate(s string) error {
 	}
 	return nil
 }
+
+// ValidateULID checks that s is a ULID in its canonical form (26 upper-case
+// Crockford base32 characters). Tenant ids use it: one tenant, one spelling.
+func ValidateULID(s string) error {
+	u, err := ulid.ParseStrict(s)
+	if err != nil || u.String() != s {
+		return ErrInvalid
+	}
+	return nil
+}

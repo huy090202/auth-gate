@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Create the IAM user auth-gate-deployer with infra/deployer-policy.json, the permissions
-# boundary auth-gate-boundary from infra/role-boundary.json, and a local AWS profile of the
-# same name, which the other scripts use by default. Rerun it after changing either JSON.
+# Create the IAM user auth-gate-deployer with infra/deployer-policy.json and
+# infra/deployer-policy-edge.json, the permissions boundary auth-gate-boundary from
+# infra/role-boundary.json, and a local AWS profile of the same name, which the other scripts use by default. Rerun it after changing either JSON.
 # Run with an admin profile: ADMIN_PROFILE=default ./00-deployer.sh
 # The secret access key goes straight into ~/.aws/credentials; it is never printed.
 set -euo pipefail
@@ -54,24 +54,32 @@ else
   echo "created boundary $BOUNDARY_NAME"
 fi
 
-# A managed policy, not inline: inline user policies are capped at 2 KB.
-policy_arn="arn:aws:iam::$account:policy/$USER_NAME-policy"
-doc="file://$ROOT/infra/deployer-policy.json"
-if aws iam get-policy "${admin[@]}" --policy-arn "$policy_arn" >/dev/null 2>&1; then
-  # IAM keeps at most 5 versions; drop the oldest non-default one before adding a new one.
-  oldest="$(aws iam list-policy-versions "${admin[@]}" --policy-arn "$policy_arn" \
-    --query 'reverse(Versions[?!IsDefaultVersion])[0].VersionId' --output text)"
-  if [ "$oldest" != "None" ]; then
-    aws iam delete-policy-version "${admin[@]}" --policy-arn "$policy_arn" --version-id "$oldest"
+# Managed policies, not inline: inline user policies are capped at 2 KB, and one managed policy
+# at 6144 non-whitespace characters, so the rights are split in two files that together make up
+# the deployer: the distribution and edge functions go in the second.
+# ensure_policy <name> <file>: create the policy or add a version, then attach it to the user.
+ensure_policy() {
+  local name="$1" doc="file://$ROOT/infra/$2" arn oldest
+  arn="arn:aws:iam::$account:policy/$name"
+  if aws iam get-policy "${admin[@]}" --policy-arn "$arn" >/dev/null 2>&1; then
+    # IAM keeps at most 5 versions; drop the oldest non-default one before adding a new one.
+    oldest="$(aws iam list-policy-versions "${admin[@]}" --policy-arn "$arn" \
+      --query 'reverse(Versions[?!IsDefaultVersion])[0].VersionId' --output text)"
+    if [ "$oldest" != "None" ]; then
+      aws iam delete-policy-version "${admin[@]}" --policy-arn "$arn" --version-id "$oldest"
+    fi
+    aws iam create-policy-version "${admin[@]}" --policy-arn "$arn" \
+      --policy-document "$doc" --set-as-default >/dev/null
+    echo "updated policy $name"
+  else
+    aws iam create-policy "${admin[@]}" --policy-name "$name" --policy-document "$doc" >/dev/null
+    echo "created policy $name"
   fi
-  aws iam create-policy-version "${admin[@]}" --policy-arn "$policy_arn" \
-    --policy-document "$doc" --set-as-default >/dev/null
-  echo "updated policy $USER_NAME-policy"
-else
-  aws iam create-policy "${admin[@]}" --policy-name "$USER_NAME-policy" --policy-document "$doc" >/dev/null
-  echo "created policy $USER_NAME-policy"
-fi
-aws iam attach-user-policy "${admin[@]}" --user-name "$USER_NAME" --policy-arn "$policy_arn"
+  aws iam attach-user-policy "${admin[@]}" --user-name "$USER_NAME" --policy-arn "$arn"
+}
+# The edge policy first: a rerun that stops after the first call must not leave the deployer without CloudFront rights.
+ensure_policy "$USER_NAME-edge-policy" deployer-policy-edge.json
+ensure_policy "$USER_NAME-policy" deployer-policy.json
 
 if aws configure get aws_access_key_id --profile "$USER_NAME" >/dev/null 2>&1; then
   echo "profile $USER_NAME already configured; not creating another access key"
