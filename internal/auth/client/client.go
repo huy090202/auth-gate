@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"math"
 	"net/url"
 	"strings"
 	"time"
@@ -26,6 +28,10 @@ var (
 	// ErrRotateConflict is returned when another rotate changed the client's keys
 	// between this rotate's read and its write. Nothing was changed; the caller may retry.
 	ErrRotateConflict = errors.New("client: rotate conflict")
+	// ErrQuotaExceeded is returned when the owner already has as many clients as its quota allows.
+	ErrQuotaExceeded = errors.New("client: quota exceeded")
+	// ErrOwnerSuspended is returned when the owner is suspended and may not create clients.
+	ErrOwnerSuspended = errors.New("client: owner suspended")
 )
 
 const (
@@ -34,6 +40,7 @@ const (
 	keyGrace           = 24 * time.Hour
 	maxRateBurst       = 10000
 	maxRatePerSecond   = 5000
+	maxClientQuota     = 1000
 	defaultPageSize    = 50
 )
 
@@ -46,12 +53,27 @@ func DefaultPinPolicy() PinPolicy { return PinPolicy{Length: 6, MaxAttempts: 5, 
 // DefaultRateLimit returns the bucket used when a client does not set one.
 func DefaultRateLimit() ratelimit.Settings { return ratelimit.Settings{Burst: 100, PerSecond: 50} }
 
+// DefaultClientQuota is how many clients a tenant may own when no quota is set.
+const DefaultClientQuota = 5
+
+// OwnerOf returns the owner value of a tenant's clients; operator clients have "".
+func OwnerOf(tenantID string) string { return "T#" + tenantID }
+
+// Owner is a tenant's client counters. SuspendedAt is set while it may not create clients.
+type Owner struct {
+	TenantID    string
+	ClientCount int
+	ClientQuota int
+	SuspendedAt *time.Time
+}
+
 // Client is a registered calling backend. KeyHashes holds the hashes of the
 // currently active access keys; it is bookkeeping for rotation and must never
 // be returned to callers. RetiredKeys maps the hash of each replaced key to the
 // end of its grace; it is bookkeeping for revocation and is never returned either.
 type Client struct {
 	ID          string
+	Owner       string // "" for an operator's client, OwnerOf(tenantId) for a tenant's; never changes
 	Name        string
 	RPID        string
 	Origins     []string
@@ -62,11 +84,14 @@ type Client struct {
 	KeyHashes   []string
 	RetiredKeys map[string]time.Time
 	DisabledAt  *time.Time
+	DisabledBy  string     // "operator" or "tenant" when disabled through a route that records it
+	DeletedAt   *time.Time // set by a soft delete; the Service treats such a client as not found
 }
 
 // Summary is the list view of a client.
 type Summary struct {
 	ID, Name, RPID string
+	Owner          string
 	CreatedAt      time.Time
 	DisabledAt     *time.Time
 }
@@ -110,6 +135,8 @@ func (p Patch) Validate() error {
 
 // CreateInput is the admin request to register a client.
 type CreateInput struct {
+	Owner       string // "" for an operator's client, else OwnerOf(tenantId)
+	RateLimit   *ratelimit.Settings
 	Name        string
 	RPID        string
 	Origins     []string
@@ -124,6 +151,14 @@ func (in CreateInput) Validate() error {
 	}
 	if strings.TrimSpace(in.Name) == "" {
 		return bad("name is required")
+	}
+	if in.Owner != "" && (!strings.HasPrefix(in.Owner, "T#") || id.Validate(strings.TrimPrefix(in.Owner, "T#")) != nil) {
+		return bad("owner is not a tenant")
+	}
+	if in.RateLimit != nil {
+		if err := (Patch{RateLimit: in.RateLimit}).Validate(); err != nil {
+			return err
+		}
 	}
 	rp := strings.ToLower(in.RPID)
 	if rp == "" {
@@ -191,6 +226,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Client, string, e
 	raw, hash := NewAccessKey()
 	c := Client{
 		ID:          id.New(),
+		Owner:       in.Owner,
 		Name:        in.Name,
 		RPID:        in.RPID,
 		Origins:     in.Origins,
@@ -216,19 +252,97 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Client, string, e
 	if in.TokenTTLSec != nil {
 		c.TokenTTLSec = *in.TokenTTLSec
 	}
+	if in.RateLimit != nil {
+		c.RateLimit = *in.RateLimit
+	}
 	// Key first: a client without a usable key is harmless, a key without a client is not reachable.
 	if err := s.Store.PutKey(ctx, hash, c.ID, nil); err != nil {
 		return Client{}, "", err
 	}
 	if err := s.Store.CreateClient(ctx, c); err != nil {
+		if errors.Is(err, ErrQuotaExceeded) || errors.Is(err, ErrOwnerSuspended) {
+			// Definitely refused: the key item reaches nothing, so do not leave it.
+			if derr := s.Store.DeleteKey(ctx, hash); derr != nil {
+				slog.Warn("client: delete key of a refused create", "error", derr)
+			}
+		}
 		return Client{}, "", err
 	}
 	return c, raw, nil
 }
 
-// Get returns a client by id.
+// Get returns a client by id; a deleted client is ErrNotFound.
 func (s *Service) Get(ctx context.Context, clientID string) (Client, error) {
-	return s.Store.GetClient(ctx, clientID)
+	return s.live(ctx, clientID)
+}
+
+// live reads a client and hides a soft-deleted one.
+func (s *Service) live(ctx context.Context, clientID string) (Client, error) {
+	c, err := s.Store.GetClient(ctx, clientID)
+	if err != nil {
+		return Client{}, err
+	}
+	if c.DeletedAt != nil {
+		return Client{}, ErrNotFound
+	}
+	return c, nil
+}
+
+// Delete soft-deletes a client: it stops authenticating at once, leaves every
+// list and frees the owner's quota slot. Its key items are then removed best
+// effort; Authenticate already refuses a deleted client, so a failure there is
+// only logged. Deleting a missing or already deleted client is ErrNotFound.
+func (s *Service) Delete(ctx context.Context, clientID string) error {
+	c, err := s.live(ctx, clientID)
+	if err != nil {
+		return err
+	}
+	if err := s.Store.DeleteClient(ctx, c, s.now().UTC().Truncate(time.Second)); err != nil {
+		return err
+	}
+	hashes := append([]string(nil), c.KeyHashes...)
+	for h := range c.RetiredKeys {
+		hashes = append(hashes, h)
+	}
+	for _, h := range hashes {
+		if err := s.Store.DeleteKey(ctx, h); err != nil {
+			slog.Warn("client: delete key of a deleted client", "client", clientID, "error", err)
+		}
+	}
+	return nil
+}
+
+// ListOwned returns one page of a tenant's client summaries, newest first, and
+// the cursor of the next page (empty on the last).
+func (s *Service) ListOwned(ctx context.Context, tenantID, cursor string) ([]Summary, string, error) {
+	if err := id.Validate(tenantID); err != nil {
+		return nil, "", fmt.Errorf("%w: tenant id", ErrInvalid)
+	}
+	return s.Store.ListOwned(ctx, tenantID, cursor, s.pageSize())
+}
+
+// GetOwner returns a tenant's counters; an unknown tenant has the defaults.
+func (s *Service) GetOwner(ctx context.Context, tenantID string) (Owner, error) {
+	if err := id.Validate(tenantID); err != nil {
+		return Owner{}, fmt.Errorf("%w: tenant id", ErrInvalid)
+	}
+	return s.Store.GetOwner(ctx, tenantID)
+}
+
+// SetQuota sets how many clients a tenant may own, 0 to 1000. Lowering it below
+// the current count keeps the existing clients and refuses further creates; 0
+// freezes creation.
+func (s *Service) SetQuota(ctx context.Context, tenantID string, quota int) (Owner, error) {
+	if err := id.Validate(tenantID); err != nil {
+		return Owner{}, fmt.Errorf("%w: tenant id", ErrInvalid)
+	}
+	if quota < 0 || quota > maxClientQuota {
+		return Owner{}, fmt.Errorf("%w: quota must be 0-%d", ErrInvalid, maxClientQuota)
+	}
+	if err := s.Store.SetQuota(ctx, tenantID, quota); err != nil {
+		return Owner{}, err
+	}
+	return s.Store.GetOwner(ctx, tenantID)
 }
 
 // RotateKey issues a new active key; every previously active key keeps working
@@ -236,7 +350,7 @@ func (s *Service) Get(ctx context.Context, clientID string) (Client, error) {
 // retiredKeys so RevokePreviousKeys can find them; entries past their grace
 // are dropped here. A disabled client stays disabled.
 func (s *Service) RotateKey(ctx context.Context, clientID string) (string, error) {
-	c, err := s.Store.GetClient(ctx, clientID)
+	c, err := s.live(ctx, clientID)
 	if err != nil {
 		return "", err
 	}
@@ -274,7 +388,7 @@ func (s *Service) RotateKey(ctx context.Context, clientID string) (string, error
 // how many were still inside it. The current key is untouched. A retry after a
 // partial failure is safe: deleting a missing key item is not an error.
 func (s *Service) RevokePreviousKeys(ctx context.Context, clientID string) (int, error) {
-	c, err := s.Store.GetClient(ctx, clientID)
+	c, err := s.live(ctx, clientID)
 	if err != nil {
 		return 0, err
 	}
@@ -302,17 +416,20 @@ func (s *Service) RevokePreviousKeys(ctx context.Context, clientID string) (int,
 // List returns one page of client summaries, newest first, and the cursor of
 // the next page (empty on the last). A bad cursor wraps ErrBadCursor.
 func (s *Service) List(ctx context.Context, cursor string) ([]Summary, string, error) {
-	n := s.PageSize
-	if n <= 0 {
-		n = defaultPageSize
+	return s.Store.ListClients(ctx, cursor, s.pageSize())
+}
+
+func (s *Service) pageSize() int32 {
+	if s.PageSize <= 0 || s.PageSize > math.MaxInt32 {
+		return defaultPageSize
 	}
-	return s.Store.ListClients(ctx, cursor, int32(n))
+	return int32(s.PageSize)
 }
 
 // Disable stops the client's keys from authenticating. Disabling again keeps
 // the first time.
 func (s *Service) Disable(ctx context.Context, clientID string) (Client, error) {
-	c, err := s.Store.GetClient(ctx, clientID)
+	c, err := s.live(ctx, clientID)
 	if err != nil {
 		return Client{}, err
 	}
@@ -324,19 +441,19 @@ func (s *Service) Disable(ctx context.Context, clientID string) (Client, error) 
 	if err := s.Store.SetDisabled(ctx, c, at); err != nil {
 		return Client{}, err
 	}
-	return s.Store.GetClient(ctx, clientID)
+	return s.live(ctx, clientID)
 }
 
 // Enable clears the disabled mark.
 func (s *Service) Enable(ctx context.Context, clientID string) (Client, error) {
-	c, err := s.Store.GetClient(ctx, clientID)
+	c, err := s.live(ctx, clientID)
 	if err != nil {
 		return Client{}, err
 	}
 	if err := s.Store.SetDisabled(ctx, c, nil); err != nil {
 		return Client{}, err
 	}
-	return s.Store.GetClient(ctx, clientID)
+	return s.live(ctx, clientID)
 }
 
 // Update applies a patch to an existing client and returns the stored result.
@@ -344,7 +461,7 @@ func (s *Service) Enable(ctx context.Context, clientID string) (Client, error) {
 // origins still pass the rpId suffix check. An invalid patch wraps ErrInvalid;
 // an unknown client is ErrNotFound.
 func (s *Service) Update(ctx context.Context, id string, p Patch) (Client, error) {
-	c, err := s.Store.GetClient(ctx, id)
+	c, err := s.live(ctx, id)
 	if err != nil {
 		return Client{}, err
 	}
@@ -381,7 +498,7 @@ func (s *Service) Update(ctx context.Context, id string, p Patch) (Client, error
 	if err := s.Store.UpdateClient(ctx, c, p); err != nil {
 		return Client{}, err
 	}
-	return s.Store.GetClient(ctx, id)
+	return s.live(ctx, id)
 }
 
 // Authenticate resolves a raw access key to its client. It returns
@@ -401,7 +518,7 @@ func (s *Service) Authenticate(ctx context.Context, rawKey string) (Client, erro
 	if expiresAt != nil && expiresAt.Before(s.now()) {
 		return Client{}, ErrUnauthorized
 	}
-	c, err := s.Store.GetClient(ctx, clientID)
+	c, err := s.live(ctx, clientID)
 	if errors.Is(err, ErrNotFound) {
 		return Client{}, ErrUnauthorized
 	}
