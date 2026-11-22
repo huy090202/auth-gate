@@ -632,7 +632,7 @@ tenant route without a cookie. `gh variable list` shows the two variables.
 export AWS_PROFILE=default AWS_REGION=ap-southeast-1 STAGE=stg
 read -r -p 'Sender address: ' addr
 acct="$(aws sts get-caller-identity --query Account --output text)"
-aws sesv2 get-email-identity --email-address "$addr" --query VerifiedForSendingStatus
+aws sesv2 get-email-identity --email-identity "$addr" --query VerifiedForSendingStatus
 aws sesv2 get-account --query '[ProductionAccessEnabled,SuppressionAttributes.SuppressedReasons]'
 b="arn:aws:iam::$acct:policy/auth-gate-boundary"
 v="$(aws iam get-policy --policy-arn "$b" --query Policy.DefaultVersionId --output text)"
