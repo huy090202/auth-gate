@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Create the GitHub OIDC identity provider (if the account has none) and the role
 # ci-auth-gate-deploy that GitHub Actions assumes to deploy stg from main. The trust policy
-# is infra/ci-trust.json; the role carries the managed policy auth-gate-deployer-policy that
-# 00-deployer.sh made. The role name does not match auth-gate-*, so the deployer policy cannot
-# change it. Rerunnable: an existing provider is used unchanged, an existing role gets its
+# is infra/ci-trust.json; the role carries the managed policies auth-gate-deployer-policy and
+# auth-gate-deployer-edge-policy that 00-deployer.sh made. The role name does not match auth-gate-*, so the deployer
+# policies cannot change it. Rerunnable: an existing provider is used unchanged, an existing role gets its
 # trust policy replaced by the file's.
 # Run with an admin profile: ADMIN_PROFILE=default ./00-ci-role.sh
 set -euo pipefail
@@ -26,11 +26,15 @@ account="$(aws sts get-caller-identity "${admin[@]}" --query Account --output te
 [ "$account" = "$account_expected" ] ||
   die "account is $account, expected $account_expected (infra/ci-trust.json and the policy name that account)"
 
-policy_arn="arn:aws:iam::$account:policy/auth-gate-deployer-policy"
-aws iam get-policy "${admin[@]}" --policy-arn "$policy_arn" >/dev/null 2>"$err" || {
-  cat "$err" >&2
-  die "cannot find $policy_arn; run 00-deployer.sh first"
-}
+policy_arns=()
+for policy_name in auth-gate-deployer-policy auth-gate-deployer-edge-policy; do
+  policy_arn="arn:aws:iam::$account:policy/$policy_name"
+  aws iam get-policy "${admin[@]}" --policy-arn "$policy_arn" >/dev/null 2>"$err" || {
+    cat "$err" >&2
+    die "cannot find $policy_arn; run 00-deployer.sh first"
+  }
+  policy_arns+=("$policy_arn")
+done
 
 provider_arn="arn:aws:iam::$account:oidc-provider/token.actions.githubusercontent.com"
 if provider="$(aws iam get-open-id-connect-provider "${admin[@]}" \
@@ -67,7 +71,9 @@ else
   die "cannot read the role $role_name"
 fi
 
-aws iam attach-role-policy "${admin[@]}" --role-name "$role_name" --policy-arn "$policy_arn"
+for policy_arn in "${policy_arns[@]}"; do
+  aws iam attach-role-policy "${admin[@]}" --role-name "$role_name" --policy-arn "$policy_arn"
+done
 echo "role arn: arn:aws:iam::$account:role/$role_name"
 echo "attached policies: $(aws iam list-attached-role-policies "${admin[@]}" --role-name "$role_name" \
   --query 'AttachedPolicies[].PolicyName' --output text)"

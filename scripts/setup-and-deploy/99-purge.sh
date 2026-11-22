@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Delete stack auth-gate-$STAGE and both SSM parameters after a typed confirmation.
+# Delete stack auth-gate-$STAGE and its three SSM parameters after a typed confirmation.
 set -euo pipefail
 # shellcheck source=lib.sh
 # shellcheck source-path=SCRIPTDIR
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-echo "This destroys AuthGate's table: every client and every user's factors, with the two parameters."
+echo "This destroys AuthGate's table: every client and every user's factors, with the three parameters."
 read -r -p "Type '$STACK' to delete the stack, its table and its SSM parameters: " answer
 [ "$answer" = "$STACK" ] || die "confirmation did not match; nothing deleted"
 
@@ -43,7 +43,7 @@ if ! { aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK" 
 fi
 echo "deleted stack $STACK"
 
-for name in admin-key origin-verify; do
+for name in admin-key origin-verify portal-key; do
   if err="$(aws ssm delete-parameter --region "$REGION" --name "$PARAM_PREFIX/$name" 2>&1)"; then
     echo "deleted $PARAM_PREFIX/$name"
   elif [[ "$err" == *ParameterNotFound* ]]; then

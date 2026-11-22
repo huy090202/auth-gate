@@ -148,6 +148,7 @@ Resources:
           TABLE_NAME: !Ref Table
           ADMIN_KEY_PARAM: !Sub /credo/auth-gate/${Stage}/admin-key
           ORIGIN_VERIFY_PARAM: !Sub /credo/auth-gate/${Stage}/origin-verify
+          PORTAL_KEY_PARAM: !Sub /credo/auth-gate/${Stage}/portal-key
       Policies:
         - Statement:
             - Effect: Allow
@@ -164,6 +165,7 @@ Resources:
               Resource:
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate/${Stage}/admin-key"
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate/${Stage}/origin-verify"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate/${Stage}/portal-key"
 
   # jwks: the only public route. Public keys only; no DynamoDB, no SSM.
   Jwks:
@@ -255,6 +257,20 @@ Resources:
             CachedMethods: [GET, HEAD]
             CachePolicyId: !Ref OriginCachePolicy
           - PathPattern: /api/clients*
+            TargetOriginId: admin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
+          - PathPattern: /api/portal*
+            TargetOriginId: admin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
+          - PathPattern: /api/owners*
             TargetOriginId: admin
             ViewerProtocolPolicy: redirect-to-https
             AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
