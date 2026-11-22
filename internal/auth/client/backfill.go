@@ -15,11 +15,12 @@ import (
 // clients created before the index existed show up in the list. An index item
 // that already exists is never overwritten: it may hold a newer name or
 // disabledAt than the client item the scan just read. It is safe to rerun.
+// A soft-deleted client is skipped: it must stay out of the list.
 // The "C#" prefix does not match the "CLIENTS" index partition.
 func Backfill(ctx context.Context, db *dynamodb.Client, table string) (written, skipped int, err error) {
 	in := &dynamodb.ScanInput{
 		TableName:                 aws.String(table),
-		FilterExpression:          aws.String("begins_with(pk, :c) AND sk = :m"),
+		FilterExpression:          aws.String("begins_with(pk, :c) AND sk = :m AND attribute_not_exists(deletedAt)"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{":c": str("C#"), ":m": str("META")},
 		ConsistentRead:            aws.Bool(true),
 	}
@@ -31,7 +32,7 @@ func Backfill(ctx context.Context, db *dynamodb.Client, table string) (written, 
 		for _, it := range page.Items {
 			id := getS(it, "pk")[len("C#"):]
 			idx := dynamo.Key(indexPK, "C#"+id)
-			for _, a := range []string{"name", "rpId", "createdAt", "disabledAt"} {
+			for _, a := range []string{"name", "rpId", "createdAt", "disabledAt", "owner"} {
 				if v, ok := it[a]; ok {
 					idx[a] = v
 				}

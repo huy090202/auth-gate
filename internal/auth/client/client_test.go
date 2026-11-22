@@ -442,6 +442,30 @@ func TestBackfillIsIdempotentAndKeepsIndexState(t *testing.T) {
 	}
 }
 
+func TestBackfillSkipsDeletedAndCopiesOwner(t *testing.T) {
+	svc, db, table := newSvc(t)
+	ctx := context.Background()
+	t1 := newTenant()
+	owned, _ := mustOwned(t, svc, t1)
+	gone, _ := mustOwned(t, svc, t1)
+	if err := svc.Delete(ctx, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(table), Key: dynamo.Key("CLIENTS", "C#"+owned.ID)}); err != nil {
+		t.Fatal(err)
+	}
+	written, skipped, err := client.Backfill(ctx, db, table)
+	if err != nil || written != 1 || skipped != 0 {
+		t.Fatalf("written %d skipped %d err %v, want 1 0", written, skipped, err)
+	}
+	if got := attrS(rawItemSK(t, db, table, "CLIENTS", "C#"+owned.ID), "owner"); got != client.OwnerOf(t1) {
+		t.Fatalf("backfilled owner %q, want %q", got, client.OwnerOf(t1))
+	}
+	if it := rawItemSK(t, db, table, "CLIENTS", "C#"+gone.ID); it != nil {
+		t.Fatalf("deleted client is back in the list: %v", it)
+	}
+}
+
 // --- ownership, quota and soft delete ---
 
 func newTenant() string { return id.New() }
