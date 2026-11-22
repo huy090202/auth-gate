@@ -20,6 +20,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 command -v curl >/dev/null || die "curl is required"
+command -v jq >/dev/null || die "jq is required"
 
 base_url="$(output "$STACK" BaseUrl)"
 raw_url="$(output "$STACK" RawPortalUrl)"
@@ -96,7 +97,7 @@ fi
 # 4. the function answers through CloudFront
 fetch "$base_url/api/config"
 if [[ "$code" == 200 ]]; then pass "GET /api/config is 200"; else fail "GET /api/config is $code, want 200"; fi
-if [[ "$(tr -d ' \n\r' <"$tmp/body")" == '{"turnstileSiteKey":"'?* ]]; then
+if jq -e '.turnstileSiteKey | length > 0' "$tmp/body" >/dev/null 2>&1; then
   pass "/api/config carries a turnstileSiteKey"
 else
   fail "/api/config has no turnstileSiteKey"

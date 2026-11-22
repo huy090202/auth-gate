@@ -22,8 +22,11 @@ docs:
     | `/api/me` without a cookie | **401** | no session, no data |
     | `/api/t/<ulid>/clients` without a cookie | **401** | no session, no workspace data |
 
-    The unknown-account login spends one token of the per-IP login limiter (burst 10, then
-    one per 6 seconds) and counts as a failure: after two in 15 minutes the IP needs a
-    Turnstile token. The sign-up spends one token of the per-IP sign-up limiter (burst 5,
-    then one per 10 minutes). Do not run this folder more than once in 15 minutes.
+    The unknown-account login uses a fresh address on every run, so the per-address failure
+    count never builds up. It still counts as one failure for the caller's IP, and it spends one
+    token of the per-IP login limiter: from one IP the third run within 15 minutes is answered
+    403 `turnstile_required` instead of 401, and the request accepts that. The sign-up refusal
+    spends one token of the per-IP sign-up limiter (burst 5, then one per 10 minutes) and
+    accepts 429 `rate_limited` once they are gone. So the folder passes any number of times,
+    but only the first runs from an IP exercise the 401 and 403 `turnstile_failed` paths.
   type: text/markdown

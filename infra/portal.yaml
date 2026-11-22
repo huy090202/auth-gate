@@ -281,14 +281,36 @@ Resources:
               Override: true
               Value: same-origin
 
-  # The /api and /avatars answers: no CSP or frame options, which a JSON API and an image
-  # do not need, and HSTS and nosniff as on the site.
+  # The /api answers: no CSP or frame options, which a JSON API does not need, and HSTS
+  # and nosniff as on the site.
   ApiHeaders:
     Type: AWS::CloudFront::ResponseHeadersPolicy
     Properties:
       ResponseHeadersPolicyConfig:
         Name: !Sub auth-gate-portal-${Stage}-api-headers
         SecurityHeadersConfig:
+          StrictTransportSecurity:
+            Override: true
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: false
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: no-referrer
+
+  # The /avatars answers: an uploaded object is user content, so a mistyped one must not run
+  # script or load anything even if opened directly.
+  AvatarHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub auth-gate-portal-${Stage}-avatar-headers
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: "default-src 'none'; sandbox"
           StrictTransportSecurity:
             Override: true
             AccessControlMaxAgeSec: 31536000
@@ -358,7 +380,7 @@ Resources:
             CachedMethods: [GET, HEAD]
             Compress: true
             CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
-            ResponseHeadersPolicyId: !Ref ApiHeaders
+            ResponseHeadersPolicyId: !Ref AvatarHeaders
         # No CustomErrorResponses: they are distribution-wide and would turn the
         # Portal's own 403/404 JSON on /api/* into index.html 200.
 
