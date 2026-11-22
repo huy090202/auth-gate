@@ -317,11 +317,20 @@ func (s *Service) live(ctx context.Context, clientID string) (Client, error) {
 // effort; Authenticate already refuses a deleted client, so a failure there is
 // only logged. Deleting a missing or already deleted client is ErrNotFound.
 func (s *Service) Delete(ctx context.Context, clientID string) error {
+	return s.DeleteBy(ctx, clientID, ByOperator)
+}
+
+// DeleteBy is Delete for a caller of the given kind. A tenant cannot delete a
+// client an operator disabled (ErrDisabledByOperator).
+func (s *Service) DeleteBy(ctx context.Context, clientID string, by DisabledBy) error {
 	c, err := s.live(ctx, clientID)
 	if err != nil {
 		return err
 	}
-	if err := s.Store.DeleteClient(ctx, c, s.now().UTC().Truncate(time.Second)); err != nil {
+	if by != ByOperator && c.DisabledAt != nil && c.DisabledBy == string(ByOperator) {
+		return ErrDisabledByOperator
+	}
+	if err := s.Store.DeleteClient(ctx, c, s.now().UTC().Truncate(time.Second), by); err != nil {
 		return err
 	}
 	hashes := append([]string(nil), c.KeyHashes...)
@@ -613,7 +622,11 @@ func (s *Service) Authenticate(ctx context.Context, rawKey string) (Client, erro
 	if c.Owner != "" {
 		// Operator clients never read the owner item. A failed read denies (fail closed).
 		o, err := s.cachedOwner(ctx, tenantOf(c.Owner))
-		if err != nil || o.SuspendedAt != nil {
+		if err != nil {
+			slog.Warn("client: owner read failed, denying the key", "client", c.ID, "error", err)
+			return Client{}, ErrUnauthorized
+		}
+		if o.SuspendedAt != nil {
 			return Client{}, ErrUnauthorized
 		}
 	}

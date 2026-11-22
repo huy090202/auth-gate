@@ -798,6 +798,28 @@ func TestPortalEnableAfterOperatorDisable(t *testing.T) {
 	}
 }
 
+// Why: an operator's disable is a hold; a tenant must not escape it (or free
+// its quota slot) by deleting the client.
+func TestPortalDeleteAfterOperatorDisable(t *testing.T) {
+	e := newEnv(t)
+	tenant := id.New()
+	c, _ := e.portalCreate(t, tenant)
+	if w := e.admin_(http.MethodPost, "/api/clients/"+c+"/disable", ""); w.Code != http.StatusOK {
+		t.Fatalf("admin disable: %d %s", w.Code, w.Body)
+	}
+	wantError(t, e.portal_(http.MethodDelete, "/api/portal/clients/"+c, tenant, ""), http.StatusConflict, "disabled_by_operator")
+	if w := e.admin_(http.MethodGet, "/api/clients/"+c, ""); w.Code != http.StatusOK {
+		t.Fatalf("client gone: %d %s", w.Code, w.Body)
+	}
+	if o, err := e.clients.GetOwner(context.Background(), tenant); err != nil || o.ClientCount != 1 {
+		t.Fatalf("owner %+v %v", o, err)
+	}
+	// The operator's own delete is unchanged.
+	if w := e.admin_(http.MethodDelete, "/api/clients/"+c, ""); w.Code != http.StatusNoContent {
+		t.Fatalf("operator delete: %d %s", w.Code, w.Body)
+	}
+}
+
 func TestAdminDeleteClient(t *testing.T) {
 	e := newEnv(t)
 	c, key := e.newClient(t, fast())

@@ -1026,6 +1026,27 @@ func TestTenantEnableRacingOperatorDisableKeepsIt(t *testing.T) {
 	}
 }
 
+func TestTenantDeleteRacingOperatorDisableKeepsClient(t *testing.T) {
+	c, table := dynamotest.NewTable(t)
+	ctx := context.Background()
+	plain := &client.Service{Store: client.NewDynamoStore(c, table)}
+	seam := &seamStore{Store: plain.Store}
+	svc := &client.Service{Store: seam}
+	tenant := newTenant()
+	cl, _ := mustOwned(t, plain, tenant)
+	// The operator disables between the tenant's read and its delete.
+	seam.afterGet = func() { _, _ = plain.Disable(ctx, cl.ID, client.ByOperator) }
+	if err := svc.DeleteBy(ctx, cl.ID, client.ByTenant); !errors.Is(err, client.ErrDisabledByOperator) {
+		t.Fatalf("DeleteBy: want ErrDisabledByOperator, got %v", err)
+	}
+	if item := rawItemSK(t, c, table, "C#"+cl.ID, "META"); item["deletedAt"] != nil {
+		t.Fatalf("client was deleted: %v", item)
+	}
+	if o, err := plain.GetOwner(ctx, tenant); err != nil || o.ClientCount != 1 {
+		t.Fatalf("owner %+v %v", o, err)
+	}
+}
+
 func TestUnknownDisabledByFailsClosed(t *testing.T) {
 	svc, _, _ := newSvc(t)
 	ctx := context.Background()

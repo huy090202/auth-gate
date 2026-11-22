@@ -36,7 +36,9 @@ type Store interface {
 	// DeleteClient soft-deletes c in one transaction: deletedAt is set, the index
 	// items go and the owner's count drops by one. A missing or already deleted
 	// client is ErrNotFound and nothing changes. Key items are left to the caller.
-	DeleteClient(ctx context.Context, c Client, at time.Time) error
+	// A tenant (by != ByOperator) never deletes a client an operator disabled:
+	// that is ErrDisabledByOperator, checked in the same transaction.
+	DeleteClient(ctx context.Context, c Client, at time.Time, by DisabledBy) error
 	// GetOwner returns the tenant's counters; an unknown tenant gets the defaults.
 	GetOwner(ctx context.Context, tenantID string) (Owner, error)
 	// SetQuota sets the tenant's client quota, creating its counters if needed.
@@ -220,13 +222,20 @@ func (s *dynamoStore) CreateClient(ctx context.Context, c Client) error {
 }
 
 // DeleteClient: see Store.
-func (s *dynamoStore) DeleteClient(ctx context.Context, c Client, at time.Time) error {
+func (s *dynamoStore) DeleteClient(ctx context.Context, c Client, at time.Time, by DisabledBy) error {
+	cond := "attribute_exists(pk) AND attribute_not_exists(deletedAt)"
+	vals := map[string]types.AttributeValue{":at": ts(at)}
+	if by != ByOperator {
+		// A tenant's delete must not remove a client an operator disabled, even one disabled after the caller's read.
+		cond += " AND (attribute_not_exists(disabledBy) OR disabledBy <> :op)"
+		vals[":op"] = str(string(ByOperator))
+	}
 	items := []types.TransactWriteItem{
 		{Update: &types.Update{
 			TableName: aws.String(s.table), Key: clientKey(c.ID),
 			UpdateExpression:          aws.String("SET deletedAt = :at"),
-			ConditionExpression:       aws.String("attribute_exists(pk) AND attribute_not_exists(deletedAt)"),
-			ExpressionAttributeValues: map[string]types.AttributeValue{":at": ts(at)},
+			ConditionExpression:       aws.String(cond),
+			ExpressionAttributeValues: vals,
 		}},
 		{Delete: &types.Delete{TableName: aws.String(s.table), Key: indexKey(c.ID)}},
 	}
@@ -241,7 +250,14 @@ func (s *dynamoStore) DeleteClient(ctx context.Context, c Client, at time.Time) 
 			}},
 		)
 	}
-	return s.txError(s.transact(ctx, items...), "delete client")
+	err := s.transact(ctx, items...)
+	if by != ByOperator && dynamo.IsConditionFailed(err) {
+		// Gone, or an operator's mark is there: look to tell which.
+		if cur, gerr := s.GetClient(ctx, c.ID); gerr == nil && cur.DeletedAt == nil && cur.DisabledBy == string(ByOperator) {
+			return ErrDisabledByOperator
+		}
+	}
+	return s.txError(err, "delete client")
 }
 
 func (s *dynamoStore) GetOwner(ctx context.Context, tenantID string) (Owner, error) {
@@ -427,7 +443,7 @@ func (s *dynamoStore) UpdateClient(ctx context.Context, c Client, p Patch) error
 		ExpressionAttributeValues: vals,
 	}}}
 	items = append(items, s.indexUpdates(c, "SET #name = :n, rpId = if_not_exists(rpId, :r), createdAt = if_not_exists(createdAt, :c)", map[string]types.AttributeValue{":n": str(*p.Name)})...)
-	return s.txError(dynamo.TransactWrite(ctx, s.c, items...), "update client")
+	return s.txError(s.transact(ctx, items...), "update client")
 }
 
 // indexUpdates builds the writes to the client's index items: the CLIENTS item
@@ -504,7 +520,7 @@ func (s *dynamoStore) SetDisabled(ctx context.Context, c Client, at *time.Time, 
 		upd.ExpressionAttributeValues = cv
 	}
 	items := append([]types.TransactWriteItem{{Update: upd}}, s.indexUpdates(c, idxExpr, vals)...)
-	err := dynamo.TransactWrite(ctx, s.c, items...)
+	err := s.transact(ctx, items...)
 	if at == nil && by != ByOperator && dynamo.IsConditionFailed(err) {
 		// Gone, or an operator's mark is there: look to tell which.
 		if cur, gerr := s.GetClient(ctx, c.ID); gerr == nil && cur.DeletedAt == nil && cur.DisabledBy == string(ByOperator) {

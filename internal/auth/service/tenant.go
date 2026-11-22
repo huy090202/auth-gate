@@ -140,10 +140,11 @@ func (t *Tenant) PurgeSubject(ctx context.Context, clientID, subjectID string) e
 	return t.s.Factors.PurgeSubject(ctx, clientID, subjectID)
 }
 
-// Delete soft-deletes one of this tenant's clients and frees its quota slot.
+// Delete soft-deletes one of this tenant's clients and frees its quota slot,
+// unless an operator disabled it (client.ErrDisabledByOperator).
 func (t *Tenant) Delete(ctx context.Context, clientID string) error {
 	if _, err := t.writable(ctx, clientID); err != nil {
 		return err
 	}
-	return t.s.Clients.Delete(ctx, clientID)
+	return t.s.Clients.DeleteBy(ctx, clientID, client.ByTenant)
 }
