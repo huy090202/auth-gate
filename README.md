@@ -703,6 +703,7 @@ internal/platform/   foundation: dynamo, kms, ssm, httpx, config, log, ratelimit
 internal/auth/       domain: client, pin, webauthn, challenge, token, handlers
 internal/console/    Console: accounts, sessions, step-up, audit, handlers, authgate client
 console-web/         Console web app: React, Vite, Mantine, EN/VI strings
+packages/web-kit/   shared web code (theme, UI parts, API client, i18n, WebAuthn) for the Console and the Portal
 infra/template.yaml  SAM: three functions, table, KMS key, CloudFront door
 infra/console.yaml   SAM: the Console stack
 infra/*.json         deployer policy and the permissions boundary

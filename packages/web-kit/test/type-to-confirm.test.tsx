@@ -29,7 +29,7 @@ beforeEach(async () => {
   await act(async () => {
     root.render(
       <MantineProvider withCssVariables={false} withGlobalClasses={false} defaultColorScheme="light" theme={theme}>
-        <TypeToConfirm title="Delete" body="Gone." expected="My App" confirmLabel="Delete it" onConfirm={onConfirm} onCancel={() => {}} />
+        <TypeToConfirm title="Delete" body="Gone." expected="My App" confirmLabel="Delete it" cancelLabel="Cancel" typeLabel="Type {expected} to confirm" onConfirm={onConfirm} onCancel={() => {}} />
       </MantineProvider>,
     );
   });

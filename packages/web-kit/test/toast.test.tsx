@@ -38,7 +38,7 @@ test('a toast shows, waits while hovered, auto-dismisses and renders no <style>'
   await act(async () => {
     root.render(
       <MantineProvider withCssVariables={false} withGlobalClasses={false} theme={theme}>
-        <ToastProvider><Trigger /></ToastProvider>
+        <ToastProvider strings={{ dismiss: 'Dismiss notification' }}><Trigger /></ToastProvider>
       </MantineProvider>,
     );
   });
@@ -77,7 +77,7 @@ test('the close button dismisses a toast', async () => {
   document.body.append(host);
   const root = createRoot(host);
   await act(async () => {
-    root.render(<MantineProvider theme={theme}><ToastProvider><Trigger /></ToastProvider></MantineProvider>);
+    root.render(<MantineProvider theme={theme}><ToastProvider strings={{ dismiss: 'Dismiss notification' }}><Trigger /></ToastProvider></MantineProvider>);
   });
   await act(async () => host.querySelector<HTMLButtonElement>('#go')!.click());
   await act(async () => host.querySelector<HTMLButtonElement>('.toast-close')!.click());
@@ -106,7 +106,7 @@ test('identical toasts are dropped, the stack holds three, and clear() empties i
   document.body.append(host);
   const root = createRoot(host);
   await act(async () => {
-    root.render(<MantineProvider theme={theme}><ToastProvider><Many /></ToastProvider></MantineProvider>);
+    root.render(<MantineProvider theme={theme}><ToastProvider strings={{ dismiss: 'Dismiss notification' }}><Many /></ToastProvider></MantineProvider>);
   });
   const click = (id: string) => act(async () => host.querySelector<HTMLButtonElement>(id)!.click());
   await click('#dup');

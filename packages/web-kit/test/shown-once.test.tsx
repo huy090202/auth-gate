@@ -6,6 +6,8 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { ShownOnce } from '../src/ShownOnce';
 import { theme } from '../src/theme';
 
+const strings = { notice: 'Shown once.', copy: 'Copy', copied: 'Copied', copyFailed: 'Copy failed.', saved: 'I have saved it', close: 'Close' };
+
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 // Why this test exists: ShownOnce guards a value that can never be read again. If Escape, a click
@@ -30,7 +32,7 @@ beforeEach(async () => {
   await act(async () => {
     root.render(
       <MantineProvider withCssVariables={false} withGlobalClasses={false} defaultColorScheme="light" theme={theme}>
-        <ShownOnce title="Client created" label="Access key" value="key-123" onClose={onClose} />
+        <ShownOnce strings={strings} title="Client created" label="Access key" value="key-123" onClose={onClose} />
       </MantineProvider>,
     );
   });

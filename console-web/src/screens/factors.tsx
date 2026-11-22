@@ -4,7 +4,7 @@ import { ApiError, api } from '../lib/api';
 import { explain, waitSeconds } from '../lib/explain';
 import { useStrings } from '../lib/i18n';
 import { useToast } from '../toast';
-import { serializeCredential, toCreationOptions } from '../lib/webauthn';
+import { serializeCredential, toCreationOptions } from '@authgate/web-kit/webauthn';
 import { isCancelled } from './SecondFactor';
 
 /**

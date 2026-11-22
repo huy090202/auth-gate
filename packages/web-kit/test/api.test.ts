@@ -1,5 +1,8 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { ApiError, api } from '../src/lib/api';
+import { createApi } from '../src/lib/api';
+
+const { ApiError, api, isErrorCode } = createApi(['rate_limited', 'busy'] as const);
+type ApiError = InstanceType<typeof ApiError>;
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -37,4 +40,9 @@ test('api maps a 429 to ApiError rate_limited with retryAfter', async () => {
   expect(e.status).toBe(429);
   expect(e.code).toBe('rate_limited');
   expect(e.extras.retryAfter).toBe(7);
+});
+
+test('isErrorCode tells known codes from the rest', () => {
+  expect(isErrorCode('busy')).toBe(true);
+  expect(isErrorCode('network_error')).toBe(false);
 });

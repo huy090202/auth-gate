@@ -6,7 +6,7 @@ import { ApiError, api } from '../lib/api';
 import { explain } from '../lib/explain';
 import { formatDate } from '../lib/format';
 import { fmt, useStrings } from '../lib/i18n';
-import { serializeCredential, toRequestOptions } from '../lib/webauthn';
+import { serializeCredential, toRequestOptions } from '@authgate/web-kit/webauthn';
 import { Loading, LoadFailed, homeFor, passkeyCount, useMe } from '../session';
 
 export type Factor = 'pin' | 'webauthn';
