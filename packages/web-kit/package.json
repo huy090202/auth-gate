@@ -10,6 +10,7 @@
     "./format": "./src/lib/format.ts",
     "./i18n": "./src/lib/i18n.ts",
     "./mantine-vars": "./src/lib/mantine-vars.ts",
+    "./styles.css": "./src/kit.css",
     "./shown-once": "./src/ShownOnce.tsx",
     "./theme": "./src/theme.ts",
     "./toast": "./src/toast.tsx",

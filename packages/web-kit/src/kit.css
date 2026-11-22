@@ -1,0 +1,87 @@
+/* Styles for the parts of @authgate/web-kit (glass surfaces, site header, page head, panel, id chip,
+   one-time secret box, inline loading, toasts) and the tokens they use. An app imports this once, before
+   its own stylesheet. Bundled by Vite as a file: the CSP forbids inline styles. */
+
+:root {
+  --header-h: 60px;
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-strong: rgba(255, 255, 255, 0.86);
+  --glass-border: rgba(255, 255, 255, 0.75);
+  --glass-edge: rgba(18, 32, 26, 0.08);
+  --glass-shadow: 0 1px 2px rgba(10, 40, 25, 0.06), 0 12px 32px -12px rgba(10, 40, 25, 0.18);
+  --accent-soft: rgba(11, 112, 65, 0.1);
+  --accent-text: #0b7041;
+  --field-bg: rgba(255, 255, 255, 0.7);
+  --field-border: rgba(18, 32, 26, 0.16);
+  --nav-hover: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+
+[data-mantine-color-scheme='dark'] {
+  --glass-bg: rgba(14, 26, 21, 0.7);
+  --glass-strong: rgba(14, 26, 21, 0.86);
+  --glass-border: rgba(160, 220, 190, 0.1);
+  --glass-edge: rgba(0, 0, 0, 0.3);
+  --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 40px -16px rgba(0, 0, 0, 0.6);
+  --accent-soft: rgba(110, 224, 160, 0.12);
+  --accent-text: #6ee0a0;
+  --field-bg: rgba(255, 255, 255, 0.05);
+  --field-border: rgba(160, 220, 190, 0.18);
+}
+
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+@supports not (backdrop-filter: blur(1px)) { .glass { background: var(--glass-strong); } }
+
+/* Header */
+.site-header {
+  position: sticky; top: 0; z-index: 100; height: var(--header-h);
+  display: flex; align-items: center; gap: 24px; padding: 0 20px;
+  border-width: 0 0 1px; border-radius: 0; box-shadow: none;
+}
+.header-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+.page-head { margin-bottom: 20px; }
+.page-head h1 { font-size: 1.75rem; letter-spacing: -0.015em; margin-bottom: 6px; }
+.page-head-row { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; }
+.page-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding-top: 4px; }
+.panel { padding: 22px 24px; border-radius: 14px; }
+.panel h2 { font-size: 1.0625rem; font-weight: 650; }
+.panel h3 { font-size: 0.9375rem; font-weight: 650; margin-bottom: 4px; }
+.glass .mantine-Input-input, .glass .mantine-PasswordInput-input { background: var(--field-bg); border-color: var(--field-border); }
+@media (max-width: 520px) { .panel { padding: 20px 18px; } }
+.page-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-top: 14px; }
+.inline-loading { display: grid; place-items: center; padding: 64px 0; }
+.id-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; vertical-align: middle; }
+.id-text { max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mantine-font-family-monospace); font-size: 0.8125rem; color: var(--mantine-color-dimmed); }
+
+/* The value of a one-time secret. */
+.secret-box { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px 14px; border-radius: 10px; background: var(--field-bg); border: 1px solid var(--field-border); }
+.secret-value { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; user-select: all; font-family: var(--mantine-font-family-monospace); font-size: 0.9375rem; }
+
+/* Toast: top right, under the sticky header (bottom on small screens, clear of the nav). Enter and exit are CSS animations; reduced motion turns them off. */
+.toast-stack {
+  position: fixed; z-index: 400; top: calc(var(--header-h) + 12px); right: clamp(12px, 3vw, 24px);
+  display: grid; gap: 10px; width: min(380px, calc(100vw - 24px)); pointer-events: none;
+}
+.toast {
+  pointer-events: auto; display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 14px; border-radius: 12px;
+  background: var(--glass-strong); animation: toast-in 180ms ease both;
+}
+.toast[data-leaving='true'] { animation: toast-out 180ms ease both; }
+.toast-icon { flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin-top: 1px; color: var(--accent-text); }
+.toast[data-kind='info'] .toast-icon { color: var(--mantine-color-dimmed); }
+.toast-text { flex: 1; min-width: 0; padding-top: 2px; font-size: 0.9375rem; line-height: 1.45; overflow-wrap: anywhere; }
+.toast-close {
+  flex: none; display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--mantine-color-dimmed);
+}
+.toast-close:hover { background: var(--nav-hover); color: var(--mantine-color-text); }
+@keyframes toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes toast-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(16px); } }
+@media (prefers-reduced-motion: reduce) { .toast, .toast[data-leaving='true'] { animation: none; } }
+@media (max-width: 768px) { .toast-stack { top: auto; bottom: 12px; } }
