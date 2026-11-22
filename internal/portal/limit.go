@@ -21,18 +21,27 @@ func rateLimited(retryAfter int) *webapi.Error {
 func (a *App) limitIP(scope string, set ratelimit.Settings) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip, ok := a.clientIP(r)
-			if !ok && !a.Config.Dev {
-				slog.Warn("portal: no viewer address; using the shared bucket", "scope", scope)
-			}
-			if d := a.Limiter.Allow(r.Context(), scope+"#"+ip, set); !d.Allowed {
-				slog.Warn("portal: rate limited", "scope", scope, "ip", ip, "route", truncate(r.Method+" "+r.URL.Path, maxAuditTarget))
-				webapi.WriteErr(w, rateLimited(d.RetryAfterSec))
+			if err := a.spendIP(r, scope, set); err != nil {
+				webapi.WriteErr(w, err)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// spendIP is limitIP for a handler that must validate its input first, so a
+// malformed request does not spend the caller's bucket.
+func (a *App) spendIP(r *http.Request, scope string, set ratelimit.Settings) error {
+	ip, ok := a.clientIP(r)
+	if !ok && !a.Config.Dev {
+		slog.Warn("portal: no viewer address; using the shared bucket", "scope", scope)
+	}
+	if d := a.Limiter.Allow(r.Context(), scope+"#"+ip, set); !d.Allowed {
+		slog.Warn("portal: rate limited", "scope", scope, "ip", ip, "route", truncate(r.Method+" "+r.URL.Path, maxAuditTarget))
+		return rateLimited(d.RetryAfterSec)
+	}
+	return nil
 }
 
 // spendUser spends one token from the user's bucket. The session guard calls

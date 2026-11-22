@@ -1,0 +1,278 @@
+package portal
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"log/slog"
+	"net/http"
+	"net/mail"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/huy090202/auth-gate/internal/platform/httpx"
+	"github.com/huy090202/auth-gate/internal/platform/id"
+	"github.com/huy090202/auth-gate/internal/platform/password"
+	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
+	"github.com/huy090202/auth-gate/internal/platform/webapi"
+	"github.com/huy090202/auth-gate/internal/platform/websession"
+	pmail "github.com/huy090202/auth-gate/internal/portal/mail"
+)
+
+const (
+	maxEmailBytes   = 254
+	maxDisplayName  = 64
+	verifyTokenLife = 24 * time.Hour
+	sideEffectLimit = 10 * time.Second
+)
+
+var (
+	// signupIPLimit: 5 at once, then one per 10 minutes.
+	signupIPLimit = ratelimit.Settings{Burst: 5, PerSecond: 1.0 / 600}
+	// resendIPLimit: 10 per hour.
+	resendIPLimit = ratelimit.Settings{Burst: 10, PerSecond: 1.0 / 360}
+	// emailLimit: 3 emails per address per hour.
+	emailLimit = ratelimit.Settings{Burst: 3, PerSecond: 1.0 / 1200}
+)
+
+func apiErr(status int, code string) *webapi.Error { return &webapi.Error{Status: status, Code: code} }
+
+func checkEmail() map[string]string { return map[string]string{"status": "check_email"} }
+
+// emailHash is the key a limiter holds for an address: never the address itself.
+func emailHash(normalised string) string {
+	sum := sha256.Sum256([]byte(normalised))
+	return hex.EncodeToString(sum[:])
+}
+
+// parseEmail accepts one bare address of at most 254 bytes, no display name,
+// and returns it normalised.
+func parseEmail(raw string) (string, bool) {
+	e := NormalizeEmail(raw)
+	if e == "" || len(e) > maxEmailBytes {
+		return "", false
+	}
+	a, err := mail.ParseAddress(e)
+	if err != nil || a.Name != "" || a.Address != e {
+		return "", false
+	}
+	return e, true
+}
+
+func validName(raw string) (string, bool) {
+	n := strings.TrimSpace(raw)
+	if c := utf8.RuneCountInString(n); c < 1 || c > maxDisplayName {
+		return "", false
+	}
+	for _, r := range n {
+		if unicode.IsControl(r) {
+			return "", false
+		}
+	}
+	return n, true
+}
+
+func validLang(l string) bool { return l == "en" || l == "vi" }
+
+// turnstileOK checks the widget token for the caller. A missing or refused
+// token is 403 turnstile_failed; Cloudflare being unreachable is 503.
+func (a *App) turnstileOK(r *http.Request, token string) error {
+	if strings.TrimSpace(token) == "" {
+		return apiErr(http.StatusForbidden, "turnstile_failed")
+	}
+	ip, _ := a.clientIP(r)
+	ok, err := a.Turnstile.Verify(r.Context(), token, ip)
+	if err != nil {
+		slog.Warn("portal: turnstile unavailable", "err", err)
+		return apiErr(http.StatusServiceUnavailable, "turnstile_unavailable")
+	}
+	if !ok {
+		return apiErr(http.StatusForbidden, "turnstile_failed")
+	}
+	return nil
+}
+
+// limitEmail spends one of the address's 3 emails per hour. The same bucket
+// serves a new and a known address, so the limit says nothing about either.
+func (a *App) limitEmail(ctx context.Context, normalised string) error {
+	if d := a.Limiter.Allow(ctx, "email#"+emailHash(normalised), emailLimit); !d.Allowed {
+		slog.Warn("portal: email rate limited")
+		return rateLimited(d.RetryAfterSec)
+	}
+	return nil
+}
+
+// sendVerify stores a fresh verify token for the user and mails its link. The
+// link carries the token in the fragment, so it never reaches CloudFront or a
+// server log.
+func (a *App) sendVerify(ctx context.Context, u User) error {
+	token, hash, err := websession.NewToken()
+	if err != nil {
+		return err
+	}
+	if err := a.Store.PutToken(ctx, Token{Hash: hash, Purpose: PurposeVerify, UserID: u.ID, ExpiresAt: a.now().Add(verifyTokenLife)}); err != nil {
+		return err
+	}
+	a.mailBestEffort(ctx, pmail.Message{To: u.Email, Lang: u.Lang, Kind: "verify",
+		Vars: map[string]string{"link": a.Config.PublicBaseURL + "/verify-email#token=" + token}})
+	return nil
+}
+
+// mailBestEffort sends, and logs a failure instead of answering it: a failed
+// send for one kind of address and not the other would tell them apart.
+func (a *App) mailBestEffort(ctx context.Context, m pmail.Message) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sideEffectLimit)
+	defer cancel()
+	if err := a.Mail.Send(ctx, m); err != nil {
+		slog.Error("portal: email send failed", "kind", m.Kind, "err", err)
+	}
+}
+
+type signupReq struct {
+	Email, DisplayName, Password, Lang, TurnstileToken string
+}
+
+// signup answers 202 check_email for a new and for a known address alike.
+func (a *App) signup(w http.ResponseWriter, r *http.Request) error {
+	var in signupReq
+	if err := webapi.DecodeBody(r, &in); err != nil {
+		return err
+	}
+	email, ok := parseEmail(in.Email)
+	if !ok {
+		return apiErr(http.StatusBadRequest, "invalid_email")
+	}
+	name, ok := validName(in.DisplayName)
+	if !ok {
+		return apiErr(http.StatusBadRequest, "invalid_name")
+	}
+	if password.Validate(in.Password) != nil {
+		return apiErr(http.StatusBadRequest, "invalid_password")
+	}
+	if !validLang(in.Lang) {
+		return apiErr(http.StatusBadRequest, "invalid_lang")
+	}
+	if err := a.spendIP(r, "signup-ip", signupIPLimit); err != nil {
+		return err
+	}
+	if err := a.turnstileOK(r, in.TurnstileToken); err != nil {
+		return err
+	}
+	switch breached, err := a.Passwords.Breached(r.Context(), in.Password); {
+	case err != nil:
+		slog.Warn("portal: breached-password check failed; letting the password through", "err", err)
+	case breached:
+		return apiErr(http.StatusBadRequest, "password_breached")
+	}
+	if err := a.limitEmail(r.Context(), email); err != nil {
+		return err
+	}
+	// Hash before deciding, so a known address costs the same as a new one.
+	hash, err := password.Hash(in.Password)
+	if err != nil {
+		return err
+	}
+	u := User{ID: id.New(), Email: email, DisplayName: name, Lang: in.Lang, PasswordHash: hash, CreatedAt: a.now()}
+	switch err := a.Store.CreateUser(r.Context(), u); {
+	case err == nil:
+		if err := a.sendVerify(r.Context(), u); err != nil {
+			return err
+		}
+	case errors.Is(err, ErrEmailTaken):
+		lang := in.Lang
+		if known, gerr := a.Store.GetUserByEmail(r.Context(), email); gerr == nil && validLang(known.Lang) {
+			lang = known.Lang // the owner's language, not the stranger's
+		}
+		a.mailBestEffort(r.Context(), pmail.Message{To: email, Lang: lang, Kind: "signup-exists"})
+	default:
+		return err
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, checkEmail())
+	return nil
+}
+
+// verifyEmail spends the token, creates the personal workspace and opens an
+// enroll session. Every failure is the same 400 invalid_token.
+func (a *App) verifyEmail(w http.ResponseWriter, r *http.Request) error {
+	var in struct{ Token string }
+	if err := webapi.DecodeBody(r, &in); err != nil {
+		return err
+	}
+	invalid := apiErr(http.StatusBadRequest, "invalid_token")
+	if in.Token == "" || len(in.Token) > 128 {
+		return invalid
+	}
+	t, err := a.Store.UseToken(r.Context(), PurposeVerify, hashToken(in.Token), a.now())
+	if errors.Is(err, ErrTokenInvalid) {
+		return invalid
+	}
+	if err != nil {
+		return err
+	}
+	tenant := Tenant{ID: id.New()}
+	switch err := a.Store.VerifyEmail(r.Context(), t.UserID, tenant, a.now()); {
+	case errors.Is(err, ErrUserNotFound), errors.Is(err, ErrAlreadyVerified), errors.Is(err, ErrConflict):
+		return invalid
+	case err != nil:
+		return err
+	}
+	u, err := a.Store.GetUser(r.Context(), t.UserID)
+	if err != nil {
+		return err
+	}
+	setAuditActor(r.Context(), u.ID)
+	setAuditTenant(r.Context(), tenant.ID)
+	if err := a.startSession(r.Context(), w, u, StageEnroll); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"next": "enroll"})
+	return nil
+}
+
+// resendVerification mails a fresh link only for an existing unverified
+// account; the answer is the same either way.
+func (a *App) resendVerification(w http.ResponseWriter, r *http.Request) error {
+	var in struct{ Email, TurnstileToken string }
+	if err := webapi.DecodeBody(r, &in); err != nil {
+		return err
+	}
+	email, ok := parseEmail(in.Email)
+	if !ok {
+		return apiErr(http.StatusBadRequest, "invalid_email")
+	}
+	if err := a.spendIP(r, "resend-ip", resendIPLimit); err != nil {
+		return err
+	}
+	if err := a.turnstileOK(r, in.TurnstileToken); err != nil {
+		return err
+	}
+	if err := a.limitEmail(r.Context(), email); err != nil {
+		return err
+	}
+	switch u, err := a.Store.GetUserByEmail(r.Context(), email); {
+	case err == nil && u.EmailVerifiedAt == nil:
+		if err := a.sendVerify(r.Context(), u); err != nil {
+			return err
+		}
+	case err == nil, errors.Is(err, ErrUserNotFound):
+	default:
+		return err
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, checkEmail())
+	return nil
+}
+
+// config is the public configuration the sign-up page needs.
+func (a *App) config(w http.ResponseWriter, _ *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"turnstileSiteKey": a.Config.TurnstileSiteKey})
+}
+
+func (a *App) mountSignup(mux *http.ServeMux) {
+	mux.Handle("POST /api/auth/signup", a.audited("signup", webapi.HandlerFunc(a.signup)))
+	mux.Handle("POST /api/auth/verify-email", a.audited("email-verified", webapi.HandlerFunc(a.verifyEmail)))
+	mux.Handle("POST /api/auth/resend-verification", a.audited("resend-verification", webapi.HandlerFunc(a.resendVerification)))
+	mux.HandleFunc("GET /api/config", a.config)
+}

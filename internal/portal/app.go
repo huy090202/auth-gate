@@ -48,6 +48,7 @@ func newApp(d Deps) *App {
 // their route groups before the "/api/" catch-all.
 func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
+	a.mountSignup(mux)
 	mux.HandleFunc("/api/", notFound)
 	return webapi.NoStore(webapi.RequireJSON(mux))
 }
