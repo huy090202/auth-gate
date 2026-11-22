@@ -75,6 +75,10 @@ func (a *App) clientRoutes(mux *http.ServeMux) {
 		func(ctx context.Context, a *App, id string) (json.RawMessage, error) {
 			return a.AuthGate.DisableClient(ctx, id)
 		}))))
+	mux.Handle("DELETE /api/clients/{id}", a.audited("delete-client", full(a.clientWrite("delete-client", http.StatusNoContent,
+		func(ctx context.Context, a *App, id string) (json.RawMessage, error) {
+			return nil, a.AuthGate.DeleteClient(ctx, id)
+		}))))
 	mux.Handle("POST /api/clients/{id}/enable", a.audited("enable-client", full(handlerFunc(a.enableClient))))
 	mux.Handle("DELETE /api/clients/{id}/subjects/{subjectId}", a.audited("purge-subject", full(handlerFunc(a.purgeSubject))))
 	mux.Handle("GET /api/audit", full(handlerFunc(a.listAudit)))
@@ -286,6 +290,10 @@ func (a *App) clientWrite(action string, status int, call func(context.Context, 
 		raw, err := call(r.Context(), a, id)
 		if err != nil {
 			return agError(err)
+		}
+		if status == http.StatusNoContent {
+			w.WriteHeader(status)
+			return nil
 		}
 		writeRaw(w, status, raw)
 		return nil

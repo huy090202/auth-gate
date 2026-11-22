@@ -7,7 +7,7 @@ import { FactorForm, type Available } from './screens/SecondFactor';
 import { passkeyCount, type Me } from './session';
 
 export type StepUpAction =
-  | 'rotate-key' | 'revoke-previous-keys' | 'disable-client' | 'purge-subject' | 'update-client'
+  | 'rotate-key' | 'revoke-previous-keys' | 'disable-client' | 'delete-client' | 'purge-subject' | 'update-client'
   | 'change-password' | 'add-factor' | 'remove-factor'
   | 'admin-create' | 'admin-reset-password' | 'admin-clear-factors' | 'admin-disable' | 'admin-enable' | 'admin-role';
 

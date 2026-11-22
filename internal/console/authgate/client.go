@@ -328,6 +328,12 @@ func (c *Client) EnableClient(ctx context.Context, id string) (json.RawMessage, 
 	return c.admin(ctx, http.MethodPost, "/api/clients/"+seg(id)+"/enable", struct{}{})
 }
 
+// DeleteClient deletes a client: its keys stop at once and its id answers 404 from then on.
+func (c *Client) DeleteClient(ctx context.Context, id string) error {
+	_, err := c.admin(ctx, http.MethodDelete, "/api/clients/"+seg(id), nil)
+	return err
+}
+
 // PurgeSubject deletes every factor a subject has under a client.
 func (c *Client) PurgeSubject(ctx context.Context, clientID, subject string) error {
 	_, err := c.admin(ctx, http.MethodDelete, "/api/clients/"+seg(clientID)+"/subjects/"+seg(subject), nil)

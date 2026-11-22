@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -362,6 +363,7 @@ func TestMalformedIDsNeverReachAuthGate(t *testing.T) {
 		{"PATCH", "/api/clients/%s", "update-client"},
 		{"POST", "/api/clients/%s/keys", "rotate-key"},
 		{"DELETE", "/api/clients/%s/keys/previous", "revoke-previous-keys"},
+		{"DELETE", "/api/clients/%s", "delete-client"},
 		{"POST", "/api/clients/%s/disable", "disable-client"},
 		{"POST", "/api/clients/%s/enable", ""},
 		{"DELETE", "/api/clients/%s/subjects/s1", "purge-subject"},
@@ -616,4 +618,84 @@ func TestRefusedAdminAttemptRecordsTarget(t *testing.T) {
 			t.Fatalf("%s result = %q", c[0], e.Result)
 		}
 	}
+}
+
+// deleteRT counts the DELETE calls to AuthGate (step-up challenges are POSTs).
+type deleteRT struct {
+	base http.RoundTripper
+	n    atomic.Int32
+}
+
+func (d *deleteRT) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodDelete {
+		d.n.Add(1)
+	}
+	return d.base.RoundTrip(r)
+}
+
+// countedAdmin is a signed-in admin whose Console reaches AuthGate through a DELETE counter.
+func countedAdmin(t *testing.T, h *consoletest.Harness) (*consoletest.Browser, *deleteRT) {
+	t.Helper()
+	a := h.CreateAdmin("ada", pw, console.RoleAdmin, false)
+	withPIN(t, h, a, pin1)
+	rt := &deleteRT{base: h.AuthGate.HTTP.Transport}
+	deps := h.Deps
+	deps.AuthGate = &authgate.Client{BaseURL: h.AuthGateURL, ClientKey: h.ClientKey, AdminKey: consoletest.AdminKey, HTTP: &http.Client{Transport: rt}}
+	b := h.BrowserFor(console.New(deps))
+	want(t, b.Login("ada", pw), 200, "")
+	want(t, b.SignInWithPIN(pin1), 200, "")
+	return b, rt
+}
+
+// Why: deleting a client ends its keys for good, so it is a step-up action like the other client writes.
+func TestDeleteClientNeedsStepUp(t *testing.T) {
+	h := consoletest.New(t)
+	b, rt := countedAdmin(t, h)
+	id, _ := newClient(t, b, "app")
+	other, _ := newClient(t, b, "other")
+	calls := rt.n.Load()
+	want(t, b.Do("DELETE", "/api/clients/"+id, nil), 403, "step_up_required")
+	// A token for another client does not open this one.
+	want(t, b.Do("DELETE", "/api/clients/"+id, nil, tokHeader, b.StepUp("delete-client", other)), 403, "")
+	if got := rt.n.Load() - calls; got != 0 {
+		t.Fatalf("a refused delete reached AuthGate %d times", got)
+	}
+	if clientOf(t, h, id).Name != "app" {
+		t.Fatal("the client changed")
+	}
+}
+
+// Why: the Console authenticates to AuthGate with its own client, so deleting it would lock every operator out.
+func TestDeleteOwnClientRefused(t *testing.T) {
+	h := consoletest.New(t)
+	b, rt := countedAdmin(t, h)
+	tok := b.StepUp("delete-client", h.ClientID)
+	calls := rt.n.Load()
+	want(t, b.Do("DELETE", "/api/clients/"+h.ClientID, nil, tokHeader, tok), 409, "own_client_protected")
+	if got := rt.n.Load() - calls; got != 0 {
+		t.Fatalf("the refusal reached AuthGate %d times", got)
+	}
+	requireUnspent(t, h, tok)
+	want(t, b.Do("GET", "/api/clients/"+h.ClientID, nil), 200, "")
+}
+
+// Why: a delete must leave a trace naming the client, and must reach AuthGate once, then the id is gone.
+func TestDeleteClientAudited(t *testing.T) {
+	h := consoletest.New(t)
+	b, rt := countedAdmin(t, h)
+	id, _ := newClient(t, b, "app")
+	calls := rt.n.Load()
+	r := b.Do("DELETE", "/api/clients/"+id, nil, tokHeader, b.StepUp("delete-client", id))
+	want(t, r, 204, "")
+	if got := rt.n.Load() - calls; got != 1 {
+		t.Fatalf("a delete reached AuthGate %d times, want 1", got)
+	}
+	want(t, b.Do("GET", "/api/clients/"+id, nil), 404, "client_not_found")
+	entries, _ := auditOf(t, b, "")
+	for _, e := range entries {
+		if e.Action == "delete-client" && e.Target == id && e.Result == "success" {
+			return
+		}
+	}
+	t.Fatalf("no delete-client audit row for %s in %+v", id, entries)
 }

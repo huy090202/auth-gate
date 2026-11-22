@@ -1,11 +1,15 @@
 import { api } from './api';
 
-export type ClientSummary = { clientId: string; name: string; rpId: string; createdAt: string; disabledAt?: string };
+/** `owner` is the tenant id that owns the client; absent for an operator's. */
+export type ClientSummary = { clientId: string; name: string; rpId: string; createdAt: string; disabledAt?: string; owner?: string };
 export type ClientView = {
   clientId: string; name: string; rpId: string; origins: string[];
   pinPolicy: { length: number; maxAttempts: number; lockoutSec: number };
   tokenTtlSec: number; rateLimit: { burst: number; perSecond: number };
   createdAt: string; disabledAt?: string;
+  owner?: string;
+  /** Who disabled the client; absent unless it is disabled. */
+  disabledBy?: string;
   /** Set by the Console's backend on the Console's own client, which is read-only here. */
   ownClient?: boolean;
 };

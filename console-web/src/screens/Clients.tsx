@@ -62,6 +62,7 @@ function ClientsBody({ me }: { me: Me }) {
                   <Table.Tr>
                     <Table.Th>{t.clients.colName}</Table.Th>
                     <Table.Th>{t.clients.colRpId}</Table.Th>
+                    <Table.Th>{t.clients.colOwner}</Table.Th>
                     <Table.Th>{t.clients.colStatus}</Table.Th>
                     <Table.Th>{t.clients.colCreated}</Table.Th>
                   </Table.Tr>
@@ -74,6 +75,9 @@ function ClientsBody({ me }: { me: Me }) {
                         <IdChip id={c.clientId} what={t.clients.id} />
                       </Table.Td>
                       <Table.Td><code className="cell-mono cell-clip">{c.rpId}</code></Table.Td>
+                      <Table.Td>
+                        {c.owner ? <code className="cell-mono" title={c.owner}>{c.owner.slice(0, 8)}</code> : <Text fz="sm" c="dimmed">{t.clients.ownerOperator}</Text>}
+                      </Table.Td>
                       <Table.Td>
                         <StatusBadge active={!c.disabledAt} on={t.clients.active} off={t.clients.disabled} />
                       </Table.Td>
