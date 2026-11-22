@@ -31,6 +31,8 @@ var (
 	// forgotIPLimit and factorResetIPLimit: 10 per hour, as resend.
 	forgotIPLimit      = ratelimit.Settings{Burst: 10, PerSecond: 1.0 / 360}
 	factorResetIPLimit = ratelimit.Settings{Burst: 10, PerSecond: 1.0 / 360}
+	// recoverIPLimit guards the two routes that spend a link: 10, then one per 6 minutes.
+	recoverIPLimit = ratelimit.Settings{Burst: 10, PerSecond: 1.0 / 360}
 )
 
 // SetPassword stores a new password hash and moves sessionEpoch up by one in a
@@ -75,7 +77,7 @@ func (a *App) sendRecoveryLink(ctx context.Context, u User, purpose, kind, path 
 	if err != nil {
 		return err
 	}
-	if err := a.Store.PutToken(ctx, Token{Hash: hash, Purpose: purpose, UserID: u.ID, ExpiresAt: a.now().Add(life)}); err != nil {
+	if err := a.Store.PutToken(ctx, Token{Hash: hash, Purpose: purpose, UserID: u.ID, ExpiresAt: a.now().Add(life), Epoch: u.SessionEpoch}); err != nil {
 		return err
 	}
 	a.mailBestEffort(ctx, pmail.Message{To: u.Email, Lang: u.Lang, Kind: kind,
@@ -130,7 +132,8 @@ func (a *App) recoveryUser(ctx context.Context, purpose, token string) (User, er
 		return User{}, err
 	}
 	u, err := a.Store.GetUser(ctx, t.UserID)
-	if errors.Is(err, ErrUserNotFound) || (err == nil && !mailable(u)) {
+	// A bump of sessionEpoch (password reset or change, applied factor reset) voids every link issued before it.
+	if errors.Is(err, ErrUserNotFound) || (err == nil && (!mailable(u) || u.SessionEpoch != t.Epoch)) {
 		return User{}, invalid
 	}
 	if err != nil {
@@ -145,6 +148,9 @@ func (a *App) recoveryUser(ctx context.Context, purpose, token string) (User, er
 func (a *App) resetPassword(w http.ResponseWriter, r *http.Request) error {
 	var in struct{ Token, NewPassword string }
 	if err := webapi.DecodeBody(r, &in); err != nil {
+		return err
+	}
+	if err := a.spendIP(r, "recover-ip", recoverIPLimit); err != nil {
 		return err
 	}
 	if in.Token == "" || len(in.Token) > 128 {
@@ -189,6 +195,9 @@ func (a *App) resetPassword(w http.ResponseWriter, r *http.Request) error {
 func (a *App) confirmFactorReset(w http.ResponseWriter, r *http.Request) error {
 	var in struct{ Token string }
 	if err := webapi.DecodeBody(r, &in); err != nil {
+		return err
+	}
+	if err := a.spendIP(r, "recover-ip", recoverIPLimit); err != nil {
 		return err
 	}
 	if in.Token == "" || len(in.Token) > 128 {

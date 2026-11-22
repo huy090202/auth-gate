@@ -84,6 +84,8 @@ type Token struct {
 	Hash, Purpose, UserID string
 	Email                 string // the new address, for email-change
 	ExpiresAt             time.Time
+	// Epoch is the user's sessionEpoch when a recovery link was issued; a later bump voids it.
+	Epoch int
 }
 
 // Session is a server-side session. Hash is the hex sha256 of the cookie token;
@@ -490,6 +492,7 @@ func (st *Store) PutToken(ctx context.Context, t Token) error {
 	it := tokenKey(t.Hash)
 	it["purpose"], it["userId"], it["expiresAt"] = s(t.Purpose), s(t.UserID), s(ts(t.ExpiresAt))
 	it["ttl"] = n(t.ExpiresAt.Unix())
+	it["epoch"] = n(int64(t.Epoch))
 	if t.Email != "" {
 		it["email"] = s(t.Email)
 	}
@@ -523,7 +526,7 @@ func (st *Store) UseToken(ctx context.Context, purpose, hash string, now time.Ti
 		return Token{}, fmt.Errorf("token expiresAt: %v", err)
 	}
 	return Token{Hash: hash, Purpose: getS(out.Attributes, "purpose"), UserID: getS(out.Attributes, "userId"),
-		Email: getS(out.Attributes, "email"), ExpiresAt: *exp}, nil
+		Email: getS(out.Attributes, "email"), ExpiresAt: *exp, Epoch: getN(out.Attributes, "epoch")}, nil
 }
 
 // ---- tenants and memberships ----

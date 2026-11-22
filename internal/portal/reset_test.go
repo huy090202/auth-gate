@@ -300,3 +300,58 @@ func TestFactorResetLinkRefusals(t *testing.T) {
 	}
 	_ = u
 }
+
+// Why: a reset bumps the epoch, so a link left in a mailbox must not set the password again.
+func TestResetVoidsEveryOtherRecoveryLink(t *testing.T) {
+	e := newAuthEnv(t)
+	e.user(t, "a@x.com", goodPW)
+	body := func(tok string) map[string]string {
+		return map[string]string{"token": tok, "newPassword": "another-long-passphrase"}
+	}
+	e.post("/api/auth/forgot", recoveryBody("a@x.com"))
+	first := e.lastLink(t, "reset")
+	e.post("/api/auth/forgot", recoveryBody("a@x.com"))
+	second := e.lastLink(t, "reset")
+	e.post("/api/auth/factor-reset/request", recoveryBody("a@x.com"))
+	frTok := e.lastLink(t, "factor-reset-confirm")
+	if first == second {
+		t.Fatal("two links are the same")
+	}
+	if r := e.post("/api/auth/reset-password", body(first)); r.Code != 204 {
+		t.Fatalf("first = %d %s", r.Code, r.Body)
+	}
+	if r := e.post("/api/auth/reset-password", body(second)); r.Code != 400 || code(t, r) != "invalid_token" {
+		t.Fatalf("second = %d %s", r.Code, r.Body)
+	}
+	if r := e.post("/api/auth/factor-reset/confirm", map[string]string{"token": frTok}); r.Code != 400 || code(t, r) != "invalid_token" {
+		t.Fatalf("factor-reset link after a reset = %d %s", r.Code, r.Body)
+	}
+}
+
+type countHIBP struct{ n *int }
+
+func (c countHIBP) Breached(context.Context, string) (bool, error) { *c.n++; return false, nil }
+
+// Why: the routes that spend a link are limited per IP, before any HIBP call.
+func TestRecoverRoutesRateLimitedBeforeHIBP(t *testing.T) {
+	e := newAuthEnv(t)
+	calls := 0
+	e.a.Passwords = countHIBP{&calls}
+	body := map[string]string{"token": "bogus", "newPassword": "another-long-passphrase"}
+	for i := 0; i < 10; i++ {
+		if r := e.post("/api/auth/reset-password", body); r.Code != 400 {
+			t.Fatalf("request %d = %d", i, r.Code)
+		}
+	}
+	r := e.post("/api/auth/reset-password", body)
+	if r.Code != 429 || code(t, r) != "rate_limited" || r.Header().Get("Retry-After") == "" {
+		t.Fatalf("11th = %d %s %v", r.Code, r.Body, r.Header())
+	}
+	if calls != 10 {
+		t.Fatalf("HIBP calls = %d, want 10", calls)
+	}
+	// The confirm route shares the bucket.
+	if r := e.post("/api/auth/factor-reset/confirm", map[string]string{"token": "bogus"}); r.Code != 429 {
+		t.Fatalf("confirm = %d", r.Code)
+	}
+}
