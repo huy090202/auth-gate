@@ -44,9 +44,14 @@ func TestDevAvatarUploadAndServe(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/avatars/avatars/u1/a.png", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/avatars/u1/a.png", nil))
 	if rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), pngHeader) {
 		t.Fatalf("serve: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/avatars/u1/", nil))
+	if rec.Code != 404 {
+		t.Fatalf("directory listing: %d", rec.Code)
 	}
 	if rec := upload(t, h, "../escape.png", pngHeader); rec.Code != 400 {
 		t.Fatalf("path escape: %d", rec.Code)
