@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huy090202/auth-gate/internal/portal/mail"
 )
@@ -32,6 +33,7 @@ func (f fakeHIBP) Breached(context.Context, string) (bool, error) { return f.bre
 type signupEnv struct {
 	*env
 	mailbox string
+	slept   []time.Duration // what the answer floor asked to wait
 	h       http.Handler
 }
 
@@ -45,7 +47,9 @@ func newSignupEnv(t *testing.T) *signupEnv {
 	}
 	e.a.Mail, e.a.Turnstile, e.a.Passwords = box, fakeTurnstile{ok: true}, fakeHIBP{}
 	e.a.Config.PublicBaseURL = "https://portal.test"
-	return &signupEnv{env: e, mailbox: dir, h: e.a.handler()}
+	se := &signupEnv{env: e, mailbox: dir, h: e.a.handler()}
+	e.a.Sleep = func(_ context.Context, d time.Duration) { se.slept = append(se.slept, d) }
+	return se
 }
 
 func (e *signupEnv) post(path string, body any) *httptest.ResponseRecorder {
@@ -319,5 +323,43 @@ func TestPublicConfig(t *testing.T) {
 	e.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
 	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"turnstileSiteKey":"site"}` {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
+	}
+}
+
+// Why: a new and a known address, an unknown and a pending one, must take the same time to answer, or timing reveals the account.
+func TestSignupAndResendWaitTheSameFloor(t *testing.T) {
+	e := newSignupEnv(t)
+	e.post("/api/auth/signup", signupBody("a@x.com")) // new
+	e.post("/api/auth/signup", signupBody("a@x.com")) // known
+	e.post("/api/auth/resend-verification", map[string]string{"email": "nobody@x.com", "turnstileToken": "t"})
+	e.post("/api/auth/resend-verification", map[string]string{"email": "a@x.com", "turnstileToken": "t"}) // pending
+	if len(e.slept) != 4 {
+		t.Fatalf("waits = %v", e.slept)
+	}
+	for _, d := range e.slept {
+		if d != answerFloor {
+			t.Fatalf("waits = %v, want every one %v", e.slept, answerFloor)
+		}
+	}
+	// A refusal that does not depend on the account answers at once.
+	n := len(e.slept)
+	b := signupBody("a@x.com")
+	b["lang"] = "fr"
+	if rec := e.post("/api/auth/signup", b); rec.Code != 400 || len(e.slept) != n {
+		t.Fatalf("malformed waited or passed: %d %v", rec.Code, e.slept)
+	}
+}
+
+// Why: a failing token write must not make the pending address answer 5xx while an unknown one answers 202.
+func TestResendFailureStillAnswers202(t *testing.T) {
+	e := newSignupEnv(t)
+	e.post("/api/auth/signup", signupBody("a@x.com"))
+	// A generator that repeats itself makes the second PutToken collide.
+	e.a.newToken = func() (string, string, error) { return "fixed", hashToken("fixed"), nil }
+	for i := 0; i < 2; i++ {
+		rec := e.post("/api/auth/resend-verification", map[string]string{"email": "a@x.com", "turnstileToken": "t"})
+		if rec.Code != 202 || strings.TrimSpace(rec.Body.String()) != `{"status":"check_email"}` {
+			t.Fatalf("resend %d: %d %s", i, rec.Code, rec.Body)
+		}
 	}
 }

@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 	"github.com/huy090202/auth-gate/internal/platform/viewerip"
 	"github.com/huy090202/auth-gate/internal/platform/webapi"
+	"github.com/huy090202/auth-gate/internal/platform/websession"
 	"github.com/huy090202/auth-gate/internal/portal/avatar"
 	"github.com/huy090202/auth-gate/internal/portal/hibp"
 	"github.com/huy090202/auth-gate/internal/portal/mail"
@@ -29,19 +31,23 @@ type Deps struct {
 	Passwords hibp.Checker
 	Avatars   avatar.Store
 	Now       func() time.Time
+	// Sleep waits for d or until ctx ends; nil waits on a real timer. Tests inject a recorder.
+	Sleep func(ctx context.Context, d time.Duration)
 }
 
 // App holds the dependencies of the handlers.
 type App struct {
 	Deps
 	Store *Store
+	// newToken makes an email token and its hash; tests replace it.
+	newToken func() (token, hash string, err error)
 }
 
 // New returns the Portal's HTTP handler.
 func New(d Deps) http.Handler { return newApp(d).handler() }
 
 func newApp(d Deps) *App {
-	return &App{Deps: d, Store: &Store{DB: d.DB, Table: d.Config.Table, Now: d.Now}}
+	return &App{Deps: d, Store: &Store{DB: d.DB, Table: d.Config.Table, Now: d.Now}, newToken: websession.NewToken}
 }
 
 // handler is the mux every route of the Portal registers on. Later tasks add

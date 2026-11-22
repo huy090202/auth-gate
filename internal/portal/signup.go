@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,7 +19,6 @@ import (
 	"github.com/huy090202/auth-gate/internal/platform/password"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 	"github.com/huy090202/auth-gate/internal/platform/webapi"
-	"github.com/huy090202/auth-gate/internal/platform/websession"
 	pmail "github.com/huy090202/auth-gate/internal/portal/mail"
 )
 
@@ -27,6 +27,9 @@ const (
 	maxDisplayName  = 64
 	verifyTokenLife = 24 * time.Hour
 	sideEffectLimit = 10 * time.Second
+	// answerFloor is the least time a 202 on sign-up and resend takes, so the
+	// work only an existing account causes (token write, send) cannot be timed.
+	answerFloor = 1500 * time.Millisecond
 )
 
 var (
@@ -109,7 +112,7 @@ func (a *App) limitEmail(ctx context.Context, normalised string) error {
 // link carries the token in the fragment, so it never reaches CloudFront or a
 // server log.
 func (a *App) sendVerify(ctx context.Context, u User) error {
-	token, hash, err := websession.NewToken()
+	token, hash, err := a.newToken()
 	if err != nil {
 		return err
 	}
@@ -179,7 +182,7 @@ func (a *App) signup(w http.ResponseWriter, r *http.Request) error {
 	switch err := a.Store.CreateUser(r.Context(), u); {
 	case err == nil:
 		if err := a.sendVerify(r.Context(), u); err != nil {
-			return err
+			slog.Error("portal: sign-up verify email not issued", "err", err)
 		}
 	case errors.Is(err, ErrEmailTaken):
 		lang := in.Lang
@@ -188,7 +191,7 @@ func (a *App) signup(w http.ResponseWriter, r *http.Request) error {
 		}
 		a.mailBestEffort(r.Context(), pmail.Message{To: email, Lang: lang, Kind: "signup-exists"})
 	default:
-		return err
+		slog.Error("portal: sign-up account write failed", "err", err)
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, checkEmail())
 	return nil
@@ -255,11 +258,11 @@ func (a *App) resendVerification(w http.ResponseWriter, r *http.Request) error {
 	switch u, err := a.Store.GetUserByEmail(r.Context(), email); {
 	case err == nil && u.EmailVerifiedAt == nil:
 		if err := a.sendVerify(r.Context(), u); err != nil {
-			return err
+			slog.Error("portal: resend verify email not issued", "err", err)
 		}
 	case err == nil, errors.Is(err, ErrUserNotFound):
 	default:
-		return err
+		slog.Error("portal: resend lookup failed", "err", err)
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, checkEmail())
 	return nil
@@ -271,8 +274,55 @@ func (a *App) config(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) mountSignup(mux *http.ServeMux) {
-	mux.Handle("POST /api/auth/signup", a.audited("signup", webapi.HandlerFunc(a.signup)))
+	mux.Handle("POST /api/auth/signup", a.audited("signup", webapi.HandlerFunc(a.evenly(answerFloor, a.signup))))
 	mux.Handle("POST /api/auth/verify-email", a.audited("email-verified", webapi.HandlerFunc(a.verifyEmail)))
-	mux.Handle("POST /api/auth/resend-verification", a.audited("resend-verification", webapi.HandlerFunc(a.resendVerification)))
+	mux.Handle("POST /api/auth/resend-verification", a.audited("resend-verification", webapi.HandlerFunc(a.evenly(answerFloor, a.resendVerification))))
 	mux.HandleFunc("GET /api/config", a.config)
+}
+
+// bufferedResponse holds an answer until evenly decides to release it.
+type bufferedResponse struct {
+	h      http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func (b *bufferedResponse) Header() http.Header         { return b.h }
+func (b *bufferedResponse) WriteHeader(code int)        { b.status = code }
+func (b *bufferedResponse) Write(p []byte) (int, error) { return b.body.Write(p) }
+
+// evenly runs h into a buffer and releases a success only once floor has passed
+// since the request started. An error answers at once: the ones these routes
+// return (malformed input, Turnstile, limits) do not depend on whether the
+// address has an account.
+func (a *App) evenly(floor time.Duration, h func(http.ResponseWriter, *http.Request) error) func(http.ResponseWriter, *http.Request) error {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		start := a.now()
+		buf := &bufferedResponse{h: http.Header{}, status: http.StatusOK}
+		if err := h(buf, r); err != nil {
+			return err
+		}
+		if wait := floor - a.now().Sub(start); wait > 0 {
+			a.sleep(r.Context(), wait)
+		}
+		for k, v := range buf.h {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(buf.status)
+		_, _ = w.Write(buf.body.Bytes())
+		return nil
+	}
+}
+
+func (a *App) sleep(ctx context.Context, d time.Duration) {
+	if a.Sleep != nil {
+		a.Sleep(ctx, d)
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
 }
