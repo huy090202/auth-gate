@@ -49,8 +49,10 @@ type Guard struct {
 	// Known, when set, runs once the account is loaded and its epoch matches,
 	// before the stage is checked (the app records the actor for its audit log).
 	Known func(ctx context.Context, acct any)
-	// Limit, when set, runs for a session in stage full that passed every check,
-	// before it is touched. A non-nil error answers the request (rate limits).
+	// Limit, when set, runs for every session whose account was loaded and whose
+	// epoch matches, whatever its stage, and before the stage is checked: a
+	// request the route then refuses for its stage has still spent. A non-nil
+	// error answers the request (rate limits).
 	Limit func(ctx context.Context, x Session, acct any) error
 	// Attach returns the request context carrying the session and account.
 	Attach func(ctx context.Context, x Session, acct any) context.Context
@@ -185,15 +187,15 @@ func (g Guard) Middleware(extra []string, stages ...Stage) func(http.Handler) ht
 			if g.Known != nil {
 				g.Known(r.Context(), acct)
 			}
-			if !stageAllowed(x.Stage, stages) {
-				webapi.WriteErr(w, stageError(x.Stage))
-				return
-			}
-			if x.Stage == StageFull && g.Limit != nil {
+			if g.Limit != nil {
 				if err := g.Limit(r.Context(), x, acct); err != nil {
 					webapi.WriteErr(w, err)
 					return
 				}
+			}
+			if !stageAllowed(x.Stage, stages) {
+				webapi.WriteErr(w, stageError(x.Stage))
+				return
 			}
 			if x.Stage == StageFull && now.Sub(x.LastSeenAt) > TouchAfter {
 				x.LastSeenAt = now

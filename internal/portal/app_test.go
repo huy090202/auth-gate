@@ -282,8 +282,9 @@ func TestMemberGuard(t *testing.T) {
 	}
 }
 
-// Why: the per-user bucket must cap a signed-in caller at 60 calls in a burst on every full-session route, without a route opting in.
-func TestSessionGuardSpendsTheUserBucketOnFullSessions(t *testing.T) {
+// Why: the per-user bucket must cap a signed-in caller at 60 calls in a burst on every guarded route, whatever the
+// session's stage, without a route opting in: a half or enrolling session is as able to hammer GET /api/me.
+func TestSessionGuardSpendsTheUserBucketOnEveryStage(t *testing.T) {
 	e := newEnv(t)
 	u, _ := e.verified(t, "a@x.com")
 	c := e.login(t, u, StageFull)
@@ -296,9 +297,21 @@ func TestSessionGuardSpendsTheUserBucketOnFullSessions(t *testing.T) {
 	if rec.Code != 429 || code(t, rec) != "rate_limited" || rec.Header().Get("Retry-After") == "" {
 		t.Fatalf("call 61: %d %s retry-after %q", rec.Code, rec.Body, rec.Header().Get("Retry-After"))
 	}
+	// The bucket is the user's: an enrolling session of the same user is out of tokens too.
 	enroll := e.login(t, u, StageEnroll)
-	if rec := e.get("/api/me", enroll); rec.Code != 200 {
-		t.Fatalf("enroll session is not metered by the user bucket: %d", rec.Code)
+	if rec := e.get("/api/me", enroll); rec.Code != 429 {
+		t.Fatalf("enroll session not metered by the user bucket: %d", rec.Code)
+	}
+	// An enrolling session spends on its own, too.
+	v, _ := e.verified(t, "b@x.com")
+	enroll = e.login(t, v, StageEnroll)
+	for i := 0; i < 60; i++ {
+		if rec := e.get("/api/me", enroll); rec.Code != 200 {
+			t.Fatalf("enroll call %d: %d", i+1, rec.Code)
+		}
+	}
+	if rec := e.get("/api/me", enroll); rec.Code != 429 || code(t, rec) != "rate_limited" {
+		t.Fatalf("enroll call 61: %d %s", rec.Code, rec.Body)
 	}
 }
 

@@ -45,9 +45,10 @@ func (a *App) spendIP(r *http.Request, scope string, set ratelimit.Settings) err
 }
 
 // spendUser spends one token from the user's bucket. The session guard calls
-// it for every request of a session in stage full, so no route can leave it
-// out; a half or enroll session is not metered here (its routes sit behind
-// limitIP).
+// it for every request of a session of any stage (half, enroll or full) once
+// the user is loaded and the epoch matches, before the route's stage rule, so
+// no route can leave it out. The half-session sign-in routes also sit behind
+// their per-IP buckets.
 func (a *App) spendUser(ctx context.Context, userID string) error {
 	if d := a.Limiter.Allow(ctx, "user#"+userID, userLimit); !d.Allowed {
 		slog.Warn("portal: user rate limited", "user", userID)

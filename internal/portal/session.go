@@ -48,9 +48,9 @@ func hashToken(token string) string { return websession.HashToken(token) }
 // guard is the shared session machinery configured for the Portal: the user is
 // read with a consistent read on every request, so a password reset, suspension
 // or deletion shows on the next call; the session is refused when the user is
-// gone, unverified or suspended, or its epoch no longer matches. A session in
-// stage full spends the user's bucket (burst 60, then one per second) before
-// anything else runs.
+// gone, unverified or suspended, or its epoch no longer matches. A session of
+// any stage then spends the user's bucket (burst 60, then one per second)
+// before the route's stage rule or handler runs.
 func (a *App) guard() websession.Guard {
 	return websession.Guard{
 		Store: a.Store.sessions(), CookieName: a.cookieName(), Secure: !a.Config.Dev, Now: a.now,

@@ -426,7 +426,8 @@ admin key; `make check` fails if either import appears. It shares `internal/plat
   for the IP or the account (`403 turnstile_required`).
 - Limits (`429 rate_limited` with `Retry-After`): sign-up 5 per IP then one per 10 minutes, 3 emails
   per address per hour; sign-in 10 per IP then one per 6 seconds; forgotten password and resend 10
-  per IP per hour; a signed-in user 60 requests then one per second. Fixed cost: none, and no WAF.
+  per IP per hour; a signed-in user, at any stage (`half`, `enroll` or `full`), 60 requests then one
+  per second. Fixed cost: none, and no WAF.
 - Step-up (a PIN or passkey, single use, bound to the action and its target) guards `rotate-key`,
   `revoke-previous-keys`, `disable-client`, `purge-subject`, `delete-client`, `change-password`,
   `change-email`, `add-factor`, `remove-factor`, `regenerate-recovery-codes` and `delete-account`.
