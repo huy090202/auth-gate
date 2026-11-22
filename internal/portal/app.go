@@ -58,6 +58,7 @@ func newApp(d Deps) *App {
 func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
 	a.mountSignup(mux)
+	a.mountReset(mux)
 	a.mountAuth(mux)
 	a.mountMe(mux)
 	a.mountStepUp(mux)
