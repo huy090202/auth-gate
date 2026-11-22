@@ -126,11 +126,15 @@ Also under the admin key, asked for by the owner on 2026-11-22 to clean stg up:
   Console's own client and the Portal's answer `409 own_client_protected`. The Console gains a
   Delete action on a client, with step-up and the client's name typed again.
 - The smoke runs delete what they create: `cmd/smoke` and the Bruno collection end by deleting
-  their clients, so CI no longer adds three clients to stg on every merge.
+  their clients, so CI no longer adds six clients to stg on every merge (`bruno boundary A`, `B`,
+  `C`, `bruno demo renamed`, `bruno rate limit`, `smoke`).
 - `scripts/setup-and-deploy/06-prune-clients.sh`, run by hand under the admin profile: lists every
   client with its id, name, rpId, creation date and owner; proposes the ones named `smoke`,
-  `bruno demo`, `bruno demo renamed` or `bruno rate limit`; lets the operator add or drop ids; never
-  offers the Console's or the Portal's own client; and deletes only after a typed confirmation.
+  `bruno boundary A`, `bruno boundary B`, `bruno boundary C`, `bruno demo`, `bruno demo renamed`,
+  `bruno rate limit` or `rate-limit-probe`; lets the operator add or drop ids; never offers the
+  Console's or the Portal's own client; and deletes only after a typed confirmation. On stg on
+  2026-11-22 that is 52 of 55 clients; `auth-app-local`, `auth-app-stg` and
+  `auth-gate-console-stg` stay.
 
 ### 4.4 Verification
 
