@@ -541,7 +541,7 @@ complained.
 (
 export AWS_PROFILE=default AWS_REGION=ap-southeast-1
 read -r -p 'Sender address: ' addr
-aws sesv2 create-email-identity --email-address "$addr"
+aws sesv2 create-email-identity --email-identity "$addr"
 aws sesv2 put-account-suppression-attributes --suppressed-reasons BOUNCE COMPLAINT
 )
 ```
