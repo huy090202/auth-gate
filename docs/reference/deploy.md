@@ -18,7 +18,7 @@ other stages, with AWS access. They live in `scripts/setup-and-deploy/` and read
    distributions and policies, edge functions, the ACM certificate rights). Both are
    attached to the user and to the CI role, and together they are the deployer's rights. The deployer cannot create the stacks: a stage's first deploy runs under the
    admin profile ([First deploy of a stage](#first-deploy-of-a-stage)).
-1. `00-cert.sh DOMAIN [--wait]` (optional): request the ACM certificate for `DOMAIN` and `*.DOMAIN` in `us-east-1`, record `domain` and `certificate-arn` in SSM, and print the DNS validation record. `03-deploy.sh` then deploys AuthGate on `api.DOMAIN` once the certificate is issued. The rollout is in [Custom domain](custom-domain.md#custom-domain).
+1. `00-cert.sh DOMAIN [--wait]` (optional): request the ACM certificate for `DOMAIN` and `*.DOMAIN` in `us-east-1`, record `domain` and `certificate-arn` in SSM, and print the DNS validation record. `03-deploy.sh` then deploys AuthGate on `api.DOMAIN` once the certificate is issued. The rollout is in [the custom-domain runbook](../runbooks/rollout-custom-domain.md).
 2. `01-ssm.sh`: write the random `admin-key` and `portal-key` (SecureStrings) and
    `origin-verify` (plain String; CloudFront cannot resolve a SecureString). A parameter that
    exists is kept, and no value ever goes on an argv.
