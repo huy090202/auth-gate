@@ -947,10 +947,14 @@ set -euo pipefail
 export ADMIN_PROFILE=default STACK=auth-gate-console-stg
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+dd="$(aws cloudformation describe-stacks --stack-name "$STACK" --profile "$ADMIN_PROFILE" --region ap-southeast-1 \
+  --query "Stacks[0].Outputs[?OutputKey=='DistributionDomain'].OutputValue" --output text)"
+[[ "$dd" == *.cloudfront.net ]] || { echo "no DistributionDomain output on $STACK" >&2; exit 1; }
 aws cloudformation describe-stacks --stack-name "$STACK" --profile "$ADMIN_PROFILE" --region ap-southeast-1 \
   --query 'Stacks[0].Parameters[].ParameterKey' --output json |
-  jq 'map(if . == "DomainName" or . == "CertificateArn"
+  jq --arg url "https://$dd" 'map(if . == "DomainName" or . == "CertificateArn"
           then {ParameterKey: ., ParameterValue: ""}
+          elif . == "PublicBaseUrl" then {ParameterKey: ., ParameterValue: $url}
           else {ParameterKey: ., UsePreviousValue: true} end)' >"$tmp/params.json"
 aws cloudformation update-stack --stack-name "$STACK" --use-previous-template \
   --parameters "file://$tmp/params.json" \
@@ -963,7 +967,15 @@ aws cloudformation wait stack-update-complete --stack-name "$STACK" \
 
 This works for AuthGate at any point, and for the Console or the Portal only before their
 `--replace`. After `--replace` their new client carries the new rpId, so they fix forward. The
-capabilities are listed because the templates are SAM transforms and may name IAM resources.
+capabilities are listed because the templates are SAM transforms and may name IAM resources. The
+Portal's `PublicBaseUrl` (email links, the avatar bucket's CORS origin) is set back to the
+distribution's own address too.
+
+Sending AuthGate back moves the token issuer back to its CloudFront address. Then redeploy the
+Console and the Portal (their deploy scripts read AuthGate's `BaseUrl` output) and auth-app
+(`AUTHGATE_BASE_URL` set to that address), or they refuse its tokens. Before the merge, `main`'s CI
+does not read the SSM parameters; after it, also delete `/credo/auth-gate/stg/domain`, or the next
+CI deploy moves the stack forward again.
 
 **7. Merge.** Push the branch, open the pull request and merge it. CI runs `check`, then redeploys
 AuthGate, the Console and the Portal from the SSM parameters (`domain`, `certificate-arn`), with
