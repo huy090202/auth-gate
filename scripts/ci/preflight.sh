@@ -18,7 +18,7 @@ for stack in "auth-gate-$STAGE" "auth-gate-console-$STAGE" "auth-gate-portal-$ST
   }
   case "$status" in
     CREATE_COMPLETE | UPDATE_COMPLETE | UPDATE_ROLLBACK_COMPLETE) ;;
-    *) die "$stack is $status: a first deploy or a recovery runs by hand under the admin profile (README, First deploy of a stage)" ;;
+    *) die "$stack is $status: a first deploy or a recovery runs by hand under the admin profile (docs/reference/deploy.md, First deploy of a stage)" ;;
   esac
   echo "ok $stack $status"
 done
@@ -31,6 +31,6 @@ for app in console portal; do
     --stack-name "auth-gate-$app-$STAGE" \
     --query 'Stacks[0].Outputs[?OutputKey==`AuthGateClientId`].OutputValue | [0]' --output text)"
   case "$client_id" in
-    "" | None) die "auth-gate-$app-$STAGE has no AuthGateClientId output: its second deploy pass has not run; do it by hand (README, First deploy of a stage)" ;;
+    "" | None) die "auth-gate-$app-$STAGE has no AuthGateClientId output: its second deploy pass has not run; do it by hand (docs/reference/deploy.md, First deploy of a stage)" ;;
   esac
 done
