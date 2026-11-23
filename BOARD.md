@@ -18,6 +18,6 @@
 | fix-ci-shellcheck-pin | fix/ci-shellcheck-pin | CI passes its token to the shellcheck wrapper (GitHub API 403 rate limit) | merged | | PR #13 merged (5b56cf0, 2026-11-23); its release pin had no effect and was removed in PR #15; worktree still present |
 | feat-readme | feat/readme | README for first-time readers; reference to docs/reference, rollouts to docs/runbooks | merged | | PR #14 merged (3f8f0a9, 2026-11-23); worktree still present |
 | fix-post-domain-docs | fix/post-domain-docs | Drop the dead shellcheck pin; SES production-access text as sent; README demo link to the apex | merged | | PR #15 merged (7f8c8c4, 2026-11-23); worktree still present |
-| feat-stg-reset | feat/stg-reset | Script to reset stg user data (dry run, --apply, typed confirmation); keeps Console admins, app clients, stacks | review | | pushed 4c6ded2 2026-11-23 (3 tasks + final opus review, clean); PR to open; then Huy runs the reset on stg |
+| feat-stg-reset | feat/stg-reset | Script to reset stg user data (dry run, --apply, typed confirmation); keeps Console admins, app clients, stacks | merged | | PR #16 merged 2026-11-23; Huy runs the reset on stg from main; worktree still present |
 
 Status values: planned, active, review, merged, abandoned.
