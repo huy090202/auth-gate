@@ -95,7 +95,7 @@ needs no new variable.
 - No custom MAIL FROM: DKIM on the domain makes DMARC pass. DMARC starts at `p=none` without `rua`
   (there is no mailbox to receive reports) and moves to `p=quarantine` after a few weeks of clean
   sending.
-- No inbox: every email already says not to reply.
+- No inbox: mail goes out from a no-reply address and no email asks for a reply.
 - SES production access: the owner submits Request production access in the SES console, region
   `ap-southeast-1`. The README gives the text: transactional mail only (account verification,
   password reset, security notices) to people who signed up and verified themselves; website

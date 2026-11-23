@@ -15,7 +15,7 @@ var linkKinds = map[string]bool{"verify": true, "reset": true, "factor-reset-con
 var untilLabel = map[string]string{"en": "Until: ", "vi": "Đến: "}
 
 var notYou = map[string]string{
-	"en": "If this was not you, do not open the link above and change your password now; if you cannot sign in, reply to the operator who runs this service.",
+	"en": "If this was not you, do not open the link above and change your password now; if you cannot sign in, contact the operator who runs this service.",
 	"vi": "Nếu đây không phải là bạn, đừng mở liên kết ở trên và hãy đổi mật khẩu ngay; nếu không đăng nhập được, hãy liên hệ người vận hành dịch vụ này.",
 }
 

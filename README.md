@@ -774,20 +774,27 @@ exist: those come later. Add the three DKIM records and the `_dmarc` record in C
 few minutes, then rerun:
 
 ```bash
+(
+cd /home/work/auth-gate/feat-custom-domain
 ADMIN_PROFILE=default AWS_REGION=ap-southeast-1 scripts/domain/ses-identity.sh authgatehq.com
+)
 ```
 
 Expect `SES identity authgatehq.com already exists in ap-southeast-1`, `VerifiedForSendingStatus:
-true` and `DkimAttributes.Status:     SUCCESS`. The account suppression of bounces and complaints
+True` and `DkimAttributes.Status:     SUCCESS`. The account suppression of bounces and complaints
 was set in the [Portal rollout](#rollout-of-p2-the-portal); it applies to the domain too.
 
 **3. The deployer policy and the CI role**, back to back, as in the other rollouts (no merge or
 deploy between them), then a minute for IAM:
 
 ```bash
+(
+set -euo pipefail
+cd /home/work/auth-gate/feat-custom-domain
 ADMIN_PROFILE=default scripts/setup-and-deploy/00-deployer.sh
 ADMIN_PROFILE=default scripts/ci/00-ci-role.sh
 sleep 60
+)
 ```
 
 **4. AuthGate on `api.`** From here to step 6 the apps refuse tokens until each is redeployed:
@@ -810,7 +817,9 @@ several minutes. Add the `api` CNAME in Cloudflare (Target: the distribution nam
 row), then:
 
 ```bash
+cd /home/work/auth-gate/feat-custom-domain && pnpm install --frozen-lockfile && (
 AWS_PROFILE=default scripts/setup-and-deploy/04-smoke.sh
+)
 ```
 
 **5. The Console on `admin.`** Deploy on the new name (the old client id stays for now), register
@@ -837,7 +846,9 @@ old id) and `AUTHGATE_CLIENT_ID=<new id>`. Add the `admin` CNAME in Cloudflare (
 `admin` row), then:
 
 ```bash
+cd /home/work/auth-gate/feat-custom-domain && pnpm install --frozen-lockfile && (
 AWS_PROFILE=default scripts/console/smoke.sh
+)
 ```
 
 Then open `https://admin.authgatehq.com`, sign in with your password, and add a PIN or a passkey
@@ -850,7 +861,7 @@ Turnstile widget:
 2. Settings, Hostname management: add `portal.authgatehq.com` next to the existing hostnames.
 3. Save. Keep the old CloudFront host for now.
 
-Then deploy, register, deploy, and point `PORTAL_EMAIL_FROM` at the new sender. The Turnstile
+Then deploy and register, deploy again, and (after the smoke) point `PORTAL_EMAIL_FROM` at the new sender. The Turnstile
 secret is already in SSM and is kept.
 
 ```bash
@@ -867,15 +878,18 @@ export AUTHGATE_CLIENT_ID
 scripts/portal/deploy.sh                           # sets the new client id
 ADMIN_PROFILE=default scripts/domain/dns-records.sh
 )
-gh variable set PORTAL_EMAIL_FROM --body no-reply@authgatehq.com
 ```
 
 The site key is the repository variable `PORTAL_TURNSTILE_SITE_KEY` (`gh variable list`). Expect
 `BaseUrl: https://portal.authgatehq.com` and `AUTHGATE_CLIENT_ID=<new id>`; write down the old id
-the register step printed. Add the `portal` CNAME in Cloudflare, smoke, then sign up in a browser:
+the register step printed. Add the `portal` CNAME in Cloudflare, then smoke. The variable is set only if the smoke passes. Then sign up in a browser:
 
 ```bash
+cd /home/work/auth-gate/feat-custom-domain && pnpm install --frozen-lockfile && (
+set -euo pipefail
 AWS_PROFILE=default scripts/portal/smoke.sh
+gh variable set PORTAL_EMAIL_FROM --body no-reply@authgatehq.com
+)
 ```
 
 1. Open `https://portal.authgatehq.com` and sign up. While SES is in its sandbox the address must
@@ -916,13 +930,13 @@ Volume: under 100 emails a day, in the low tens in practice.
 Bounces and complaints: the account-level suppression list is on for BOUNCE and COMPLAINT, so SES
 stops mailing any address that bounced or complained. Every sign-up and email route is also
 protected by Cloudflare Turnstile and per-address and per-IP rate limits, so the service cannot be
-used to send mail to people who did not ask for it. Every email says not to reply, and the Portal
-has no way to send to an address that has not signed up.
+used to send mail to people who did not ask for it. Mail goes out from a no-reply address with no inbox, no email asks for a
+reply, and the Portal has no way to send to an address that has not signed up.
 ```
 
 Until approval, verified addresses keep working. Check it with
 `aws sesv2 get-account --profile default --region ap-southeast-1 --query ProductionAccessEnabled`
-(`true` once approved).
+(`True` once approved).
 
 **10. Clean-up.**
 
@@ -950,7 +964,7 @@ aws sesv2 delete-email-identity --email-identity "$addr"
 
 **The proofs**, read-only, under the admin profile in a subshell. Expect: `301` and the new
 hostname with the path and query kept, for the Console's and the Portal's old address (for
-example `301 https://portal.authgatehq.com/sign-in?a=1&a=2`); then `true` and `SUCCESS` for the SES
+example `301 https://portal.authgatehq.com/sign-in?a=1&a=2`); then `True` and `SUCCESS` for the SES
 identity. The smokes of steps 4 to 6 already proved the three new names.
 
 ```bash
