@@ -175,6 +175,9 @@ Resources:
         Runtime: cloudfront-js-2.0
       FunctionCode: !Sub
         - |
+          function tryDecode(v) {
+            try { return decodeURIComponent(v); } catch (e) { return v; }
+          }
           function handler(event) {
             var host = '${Hostname}';
             var req = event.request;
@@ -189,7 +192,7 @@ Resources:
                   ? qs[name].multiValue.map(function (m) { return m.value; })
                   : [qs[name].value];
                 for (var i = 0; i < vals.length; i++) {
-                  pairs.push(encodeURIComponent(name) + '=' + encodeURIComponent(vals[i]));
+                  pairs.push(encodeURIComponent(name) + '=' + encodeURIComponent(tryDecode(vals[i])));
                 }
               }
               return {

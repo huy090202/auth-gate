@@ -693,8 +693,11 @@ The scripts, all run by a person under an admin profile (`ADMIN_PROFILE`, defaul
   the new rpId, overwrite the stored client key only after you type the confirmation it asks for,
   and print the new id. It refuses while the stack's `BaseUrl` is still the CloudFront address.
 
-With no `domain` parameter every deploy is unchanged and uses the CloudFront address. With one, a
-deploy stops before `sam deploy` unless the certificate is `ISSUED`. CI passes no client id, and an
+A stack that was never deployed with a domain is unchanged: with no `domain` parameter its deploy
+uses the CloudFront address. The move is **forward-only per stack**: once a stack has been deployed
+with `DomainName` and `CertificateArn`, deleting the SSM parameter does not move it back, because
+`sam deploy` reuses the previous values (see "If a step fails"). With a domain, a deploy stops
+before `sam deploy` unless the certificate is `ISSUED`. CI passes no client id, and an
 empty id keeps the deployed one, so after the rollout CI keeps the new clients and needs no
 repository variable for them. Only `PORTAL_EMAIL_FROM` changes.
 
@@ -709,9 +712,10 @@ distribution does not redirect and answers on both addresses.
   and enrol a PIN or a passkey. Until you do, whoever holds the account's password can enrol its
   first factor. Portal users and auth-app demo users enrol again too. Tenant clients are unaffected.
 - The token issuer changes to `https://api.authgatehq.com` when AuthGate is deployed on its name.
-  The Console and the Portal read AuthGate's `BaseUrl` output in their deploy scripts, and refuse
-  the new tokens until they are redeployed. Do steps 4 to 6 back to back. On stg a short sign-in
-  outage is accepted. Tokens issued before live at most 15 minutes.
+  The Console and the Portal read AuthGate's `BaseUrl` output in their deploy scripts, and the
+  auth-app demo takes it as `AUTHGATE_BASE_URL`; each refuses the new tokens until it is
+  redeployed. Do steps 4 to 6, including 4b, back to back. On stg a short sign-in outage is
+  accepted. Tokens issued before live at most 15 minutes.
 
 ### Rollout of the custom domain
 
@@ -719,6 +723,10 @@ From the `feat-custom-domain` worktree, before the merge, with a person at an ad
 block asks for what it needs and no secret goes on a command line. `AWS_PROFILE=default` below is
 the admin profile, as in the other rollouts. Cloudflare steps are clicks, numbered; each one adds
 records that `dns-records.sh` prints, so paste its values rather than typing them.
+
+Merge nothing else to `main`, and re-run no `main` deploy, between step 1 and step 7: `main`'s
+templates have no `DomainName`, so a deploy from it would drop the aliases and the redirect while
+the new clients already carry the new rpIds.
 
 To add a record in Cloudflare (every record in this rollout):
 
@@ -728,7 +736,8 @@ To add a record in Cloudflare (every record in this rollout):
 
 **1. The certificate.** Request it, then add the validation CNAME it prints (the apex and the
 wildcard share one record) and wait for `ISSUED`. Validation usually takes a few minutes after the
-record resolves.
+record resolves. Keep this CNAME forever: ACM renews the certificate through it, and without it
+all three apps lose HTTPS about 13 months later.
 
 ```bash
 (
@@ -797,7 +806,7 @@ sleep 60
 )
 ```
 
-**4. AuthGate on `api.`** From here to step 6 the apps refuse tokens until each is redeployed:
+**4. AuthGate on `api.`** From here to step 6 (and 4b) the apps refuse tokens until each is redeployed:
 keep going. Before the Console and Portal steps, add the CNAME `api` printed by `dns-records.sh`
 (it needs the stack), then smoke.
 
@@ -821,6 +830,29 @@ cd /home/work/auth-gate/feat-custom-domain && pnpm install --frozen-lockfile && 
 AWS_PROFILE=default scripts/setup-and-deploy/04-smoke.sh
 )
 ```
+
+**4b. The auth-app demo, on the new AuthGate address.** auth-app's step-up verifies tokens
+against `iss = AUTHGATE_BASE_URL`, so after step 4 the deployed `auth-app-stg` refuses every
+token. Redeploy it from its own worktree with only the new base URL: the same client and the same
+CloudFront host (AuthGate answers on both addresses; plan B moves the rest). `AUTHGATE_CLIENT_ID`
+stays unset, so `sam` keeps the deployed client id. auth-app's scripts default to the
+`auth-app-deployer` profile, region `ap-southeast-1` and stage `stg`, so set none of them. Nothing
+in auth-app's CI deploys, so nothing reverts this.
+
+```bash
+cd /home/work/auth-app/main && pnpm install --frozen-lockfile && (
+set -euo pipefail
+export AUTHGATE_BASE_URL=https://api.authgatehq.com
+scripts/setup-and-deploy/02-build.sh
+scripts/setup-and-deploy/03-deploy.sh
+scripts/setup-and-deploy/04-smoke.sh
+)
+```
+
+Expect `built bff/dist and app/dist`, the `sam` changeset, `invalidated <id>`, `BaseUrl: https://...cloudfront.net`
+and `RawBffUrl: ...`, then the Bruno run and `smoke ok`. `03-deploy.sh` also prints
+`AUTHGATE_CLIENT_ID is empty: /api returns 502 until the second pass`; ignore it here, the stack
+keeps its client id.
 
 **5. The Console on `admin.`** Deploy on the new name (the old client id stays for now), register
 the new client (type the confirmation it asks for), deploy again with the new id. Add the CNAME
@@ -869,7 +901,7 @@ cd /home/work/auth-gate/feat-custom-domain && pnpm install --frozen-lockfile && 
 set -euo pipefail
 export AWS_PROFILE=default AWS_REGION=ap-southeast-1 STAGE=stg
 export EMAIL_FROM=no-reply@authgatehq.com
-read -r -p 'Turnstile site key: ' TURNSTILE_SITE_KEY
+TURNSTILE_SITE_KEY="$(gh variable get PORTAL_TURNSTILE_SITE_KEY)"
 export TURNSTILE_SITE_KEY
 scripts/portal/deploy.sh                           # alias, PublicBaseUrl on portal.; old id kept
 scripts/portal/register-client.sh stg --replace    # asks: Type 'replace auth-gate-portal-stg' ...
@@ -880,7 +912,8 @@ ADMIN_PROFILE=default scripts/domain/dns-records.sh
 )
 ```
 
-The site key is the repository variable `PORTAL_TURNSTILE_SITE_KEY` (`gh variable list`). Expect
+The site key is read from the repository variable `PORTAL_TURNSTILE_SITE_KEY` (the one CI uses),
+so there is no prompt. Expect
 `BaseUrl: https://portal.authgatehq.com` and `AUTHGATE_CLIENT_ID=<new id>`; write down the old id
 the register step printed. Add the `portal` CNAME in Cloudflare, then smoke. The variable is set only if the smoke passes. Then sign up in a browser:
 
@@ -900,12 +933,44 @@ gh variable set PORTAL_EMAIL_FROM --body no-reply@authgatehq.com
 3. Open the link, land in `enroll`, add a PIN or a passkey, and save the recovery codes.
 4. An account that existed under the old client enrols a factor again the same way.
 
+**If a line in a step 5 or 6 block fails,** resume from that line; do not rerun the block.
+Rerunning `--replace` registers a second new client and orphans the first.
+
+**If a step fails.** The default is to fix forward. To send one stack back to its CloudFront
+address, an admin runs the block below (set `STACK` to `auth-gate-stg`, `auth-gate-console-stg` or
+`auth-gate-portal-stg`). It keeps every parameter at its previous value except `DomainName` and
+`CertificateArn`, which become empty, and waits for the update.
+
+```bash
+(
+set -euo pipefail
+export ADMIN_PROFILE=default STACK=auth-gate-console-stg
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+aws cloudformation describe-stacks --stack-name "$STACK" --profile "$ADMIN_PROFILE" --region ap-southeast-1 \
+  --query 'Stacks[0].Parameters[].ParameterKey' --output json |
+  jq 'map(if . == "DomainName" or . == "CertificateArn"
+          then {ParameterKey: ., ParameterValue: ""}
+          else {ParameterKey: ., UsePreviousValue: true} end)' >"$tmp/params.json"
+aws cloudformation update-stack --stack-name "$STACK" --use-previous-template \
+  --parameters "file://$tmp/params.json" \
+  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+  --profile "$ADMIN_PROFILE" --region ap-southeast-1
+aws cloudformation wait stack-update-complete --stack-name "$STACK" \
+  --profile "$ADMIN_PROFILE" --region ap-southeast-1
+)
+```
+
+This works for AuthGate at any point, and for the Console or the Portal only before their
+`--replace`. After `--replace` their new client carries the new rpId, so they fix forward. The
+capabilities are listed because the templates are SAM transforms and may name IAM resources.
+
 **7. Merge.** Push the branch, open the pull request and merge it. CI runs `check`, then redeploys
 AuthGate, the Console and the Portal from the SSM parameters (`domain`, `certificate-arn`), with
 `PORTAL_EMAIL_FROM` from step 6, and runs the three smokes.
 
-**8. auth-app.** Its own plan, in its own repository, after this is live: it takes the apex and its
-own client. The apex `@` row of `dns-records.sh` stays `pending` until its stack exists.
+**8. auth-app.** Its own plan (plan B), in its own repository, after this is live: it takes the apex
+and its own client. Step 4b already keeps the demo working until then. The apex `@` row of `dns-records.sh` stays `pending` until its stack exists.
 
 **9. SES production access.** In the sandbox SES sends only to verified addresses. Request
 production access in the AWS console:
@@ -949,7 +1014,8 @@ Until approval, verified addresses keep working. Check it with
    (counts only), then the same with `--apply`.
 3. Remove the old CloudFront host from the Turnstile widget (Turnstile, `auth-gate-portal-stg`,
    Settings, Hostname management).
-4. Delete the old Gmail identity from SES, after the sign-up in step 6 has worked:
+4. Delete the old Gmail identity from SES only after step 9 shows `ProductionAccessEnabled`
+   `True`: while SES is in its sandbox that identity is the only verified recipient.
 
 ```bash
 (
@@ -964,7 +1030,7 @@ aws sesv2 delete-email-identity --email-identity "$addr"
 
 **The proofs**, read-only, under the admin profile in a subshell. Expect: `301` and the new
 hostname with the path and query kept, for the Console's and the Portal's old address (for
-example `301 https://portal.authgatehq.com/sign-in?a=1&a=2`); then `True` and `SUCCESS` for the SES
+example `301 https://portal.authgatehq.com/sign-in?a=1&a=2&q=a%20b`, the `q` value unchanged); then `True` and `SUCCESS` for the SES
 identity. The smokes of steps 4 to 6 already proved the three new names.
 
 ```bash
@@ -973,7 +1039,7 @@ export AWS_PROFILE=default AWS_REGION=ap-southeast-1 STAGE=stg
 out() { aws cloudformation describe-stacks --stack-name "$1" \
   --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue | [0]" --output text; }
 for s in "auth-gate-console-$STAGE" "auth-gate-portal-$STAGE"; do
-  curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' "https://$(out "$s" DistributionDomain)/sign-in?a=1&a=2"
+  curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' "https://$(out "$s" DistributionDomain)/sign-in?a=1&a=2&q=a%20b"
 done
 aws sesv2 get-email-identity --email-identity authgatehq.com \
   --query '[VerifiedForSendingStatus,DkimAttributes.Status]' --output text

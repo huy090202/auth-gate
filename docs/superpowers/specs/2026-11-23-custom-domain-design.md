@@ -134,6 +134,9 @@ One spec; two plans:
 2. `ses-identity.sh`, add the DKIM CNAMEs and `_dmarc`, wait for verification.
 3. `00-deployer.sh` then `00-ci-role.sh`, back to back.
 4. AuthGate deploy; CNAME `api`; smoke.
+4b. auth-app-stg redeployed from its own worktree with only the new `AUTHGATE_BASE_URL`
+   (same client, same CloudFront host), so its step-up keeps verifying the `api.` issuer until
+   plan B.
 5. Console deploy; `register-client.sh stg --replace`; deploy with the new id; CNAME `admin`;
    smoke; sign in and enrol a factor at once.
 6. Portal likewise; Turnstile hostname; repository variable `PORTAL_EMAIL_FROM`; CNAME `portal`;
@@ -145,6 +148,8 @@ One spec; two plans:
     identity; raise DMARC later.
 
 `dns-records.sh` prints, at each step, the records that step needs.
+
+Steps 4 to 6, including 4b, run back to back: from step 4 every consumer of the issuer refuses tokens until it is redeployed.
 
 ### Tests
 

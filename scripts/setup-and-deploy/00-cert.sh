@@ -4,8 +4,8 @@
 #
 #   ADMIN_PROFILE=default ./00-cert.sh DOMAIN [--wait]
 #
-# A certificate for DOMAIN that is ISSUED or PENDING_VALIDATION is reused; any other is
-# ignored and a new one requested. Prints the validation CNAME (the wildcard shares the
+# DOMAIN is lowercased. A certificate for DOMAIN with the SAN *.DOMAIN that is ISSUED or
+# PENDING_VALIDATION is reused; any other is ignored and a new one requested. Prints the validation CNAME (the wildcard shares the
 # apex's record) and the ARN, and writes /credo/auth-gate/$STAGE/domain and
 # /credo/auth-gate/$STAGE/certificate-arn (String, overwritten). With --wait, polls every
 # 15 s for up to 30 minutes until the certificate is ISSUED; dies if it FAILED.
@@ -27,13 +27,16 @@ for arg in "$@"; do
   esac
 done
 [ -n "$domain" ] || die "usage: 00-cert.sh DOMAIN [--wait]"
+# Hostnames are case-insensitive but the apps compare the Host header lowercased: store lowercase.
+domain="$(tr '[:upper:]' '[:lower:]' <<<"$domain")"
 
 profile="${ADMIN_PROFILE:-default}"
 acm() { aws --profile "$profile" --region us-east-1 acm "$@"; }
 
-# Reuse: the first ISSUED certificate for the domain, else the first pending one.
+# Reuse: the first ISSUED certificate for the domain, else the first pending one. Only one whose
+# SANs include the wildcard counts: an apex-only certificate would fail at CloudFront.
 listing="$(acm list-certificates --certificate-statuses ISSUED PENDING_VALIDATION \
-  --query "CertificateSummaryList[?DomainName=='$domain'].[CertificateArn,Status]" --output text)"
+  --query "CertificateSummaryList[?DomainName=='$domain' && contains(SubjectAlternativeNameSummaries || \`[]\`, '*.$domain')].[CertificateArn,Status]" --output text)"
 arn="$(awk '$2 == "ISSUED" {print $1; exit}' <<<"$listing")"
 [ -n "$arn" ] || arn="$(awk 'NF >= 2 {print $1; exit}' <<<"$listing")"
 

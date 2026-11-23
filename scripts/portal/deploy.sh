@@ -29,6 +29,7 @@ client_id="${AUTHGATE_CLIENT_ID:-}"
 email_from="${EMAIL_FROM:-}"
 site_key="${TURNSTILE_SITE_KEY:-}"
 [[ -n "$email_from" ]] || die "EMAIL_FROM is required (the SES identity address emails are sent from)"
+[[ "$email_from" != *[\<\ ]* ]] || die "EMAIL_FROM must be a bare address (no display name, no '<' or space): the display name is added in code"
 [[ -n "$site_key" ]] || die "TURNSTILE_SITE_KEY is required (the Cloudflare Turnstile site key)"
 
 tmp="$(mktemp -d)"

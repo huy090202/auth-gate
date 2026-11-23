@@ -112,6 +112,16 @@ assert "--wait: exits 0 once issued" run wait-issued example.com --wait
 if [ "$(wc -l <"$POLLS")" = 3 ]; then ok "--wait: three polls"; else nok "--wait: three polls"; fi
 if [ "$(calls 'acm request-certificate')" = 0 ]; then ok "--wait: pending certificate reused"; else nok "--wait: pending certificate reused"; fi
 
+# A listing asks for a certificate whose SANs include the wildcard (the stub cannot evaluate the
+# query, so the test pins its text).
+if has_call "contains(SubjectAlternativeNameSummaries || \`[]\`, '*.example.com')"; then ok "list matches only a certificate with the wildcard SAN"; else nok "list matches only a certificate with the wildcard SAN"; fi
+
+# A mixed-case argument is lowercased everywhere: the request, the query and the parameter.
+assert "mixed case: script succeeds" run none Example.COM
+if has_call "--domain-name example.com" && has_call "*.example.com"; then ok "mixed case: request uses the lowercase domain"; else nok "mixed case: request uses the lowercase domain"; fi
+if has_put '"Name":"/credo/auth-gate/t/domain","Value":"example.com"'; then ok "mixed case: SSM domain is lowercase"; else nok "mixed case: SSM domain is lowercase"; fi
+refute "mixed case: no uppercase reaches aws" grep -q 'Example\|COM' "$CALLS" "$PUTS"
+
 refute "--wait: FAILED exits non-zero" run wait-failed example.com --wait
 refute "no domain: usage error" run none
 refute "unknown flag: usage error" run none example.com --nope

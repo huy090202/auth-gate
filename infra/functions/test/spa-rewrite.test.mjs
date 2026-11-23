@@ -50,6 +50,19 @@ for (const file of ['console.yaml', 'portal.yaml']) {
     assert.equal(out.headers.location.value, 'https://admin.authgatehq.com/clients/x?a=1&a=2&q=a%20b');
   });
 
+  test(`${file}: a query value comes out percent-encoded once, whether it arrives encoded or decoded`, () => {
+    const h = handlerFor(file, 'admin.authgatehq.com');
+    for (const value of ['a%20b', 'a b']) {
+      const out = h(event('dxxx.cloudfront.net', '/', { q: { value } }));
+      assert.equal(out.headers.location.value, 'https://admin.authgatehq.com/?q=a%20b', value);
+    }
+  });
+
+  test(`${file}: a malformed percent sequence stays encoded and does not throw`, () => {
+    const out = handlerFor(file, 'admin.authgatehq.com')(event('dxxx.cloudfront.net', '/', { q: { value: '%E0%A4%A' } }));
+    assert.equal(out.headers.location.value, 'https://admin.authgatehq.com/?q=%25E0%25A4%25A');
+  });
+
   test(`${file}: no query string gives no question mark`, () => {
     const out = handlerFor(file, 'admin.authgatehq.com')(event('dxxx.cloudfront.net', '/'));
     assert.equal(out.headers.location.value, 'https://admin.authgatehq.com/');

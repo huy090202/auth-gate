@@ -10,7 +10,7 @@ Every app of auth-gate has a name on `authgatehq.com`: AuthGate `api.`, the Cons
 - AuthGate refuses an rpId change, so each app registers a new client instead.
 - Email is signed by the domain: Easy DKIM, and a DMARC record at `p=none`.
 
-The deploy scripts read the domain and the certificate ARN from SSM (`/credo/auth-gate/<stage>/domain` and `/certificate-arn`). With no `domain` parameter every app deploys on its CloudFront address, as before.
+The deploy scripts read the domain and the certificate ARN from SSM (`/credo/auth-gate/<stage>/domain` and `/certificate-arn`). A stack that was never deployed with a domain is unchanged and stays on its CloudFront address. The move is forward-only per stack: once a stack has been deployed with `DomainName` and `CertificateArn`, deleting the SSM parameter does not move it back, because `sam deploy` reuses the previous values. The way back is an admin `update-stack` that empties the two parameters (README, "If a step fails"), and for the Console and the Portal it ends at `--replace`, since their new clients carry the new rpId.
 
 ## Context
 
@@ -18,9 +18,9 @@ The apps ran on `*.cloudfront.net` and the Portal mailed from a personal address
 
 ## One certificate
 
-CloudFront takes a certificate only from `us-east-1`. A SAN of `*.<domain>` makes one certificate cover `api`, `admin`, `portal` and any later name, and the apex and the wildcard share a single validation CNAME. One certificate means one record to add by hand and one ARN to keep. auth-app reads the same ARN from its own parameter, so its deployer needs no right on auth-gate's parameters.
+CloudFront takes a certificate only from `us-east-1`. A SAN of `*.<domain>` makes one certificate cover `api`, `admin`, `portal` and any later name, and the apex and the wildcard share a single validation CNAME. One certificate means one record to add by hand and one ARN to keep. The validation CNAME stays at Cloudflare forever: ACM renews the certificate through it, and without it all three apps lose HTTPS about 13 months after issuance. auth-app reads the same ARN from its own parameter, so its deployer needs no right on auth-gate's parameters.
 
-`00-cert.sh` reuses an `ISSUED` or `PENDING_VALIDATION` certificate for the domain and ignores a `FAILED`, `EXPIRED` or `REVOKED` one. Every deploy stops before `sam deploy` if the domain is set and the certificate is missing or not `ISSUED`, rather than deploying quietly on the old address.
+`00-cert.sh` lowercases its domain argument and reuses an `ISSUED` or `PENDING_VALIDATION` certificate for the domain whose SANs include `*.<domain>` and ignores a `FAILED`, `EXPIRED` or `REVOKED` one. Every deploy stops before `sam deploy` if the domain is set and the certificate is missing or not `ISSUED`, rather than deploying quietly on the old address.
 
 ## DNS only, and why
 
@@ -43,7 +43,7 @@ Consequences, accepted:
 
 ## The issuer moves
 
-With a domain, AuthGate's `BASE_URL`, and so the JWT issuer, becomes `https://api.<domain>`. Apps still on the old issuer refuse the new tokens and the other way round, so the Console and the Portal are redeployed straight after AuthGate. On stg a short sign-in outage is accepted.
+With a domain, AuthGate's `BASE_URL`, and so the JWT issuer, becomes `https://api.<domain>`. Apps still on the old issuer refuse the new tokens and the other way round, so the Console, the Portal and the auth-app demo (with only the new base URL, same client) are redeployed straight after AuthGate. On stg a short sign-in outage is accepted.
 
 ## DKIM and DMARC
 
