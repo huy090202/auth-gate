@@ -100,7 +100,7 @@ else
   row "*._domainkey" CNAME "pending (run ses-identity.sh)"
 fi
 
-row _dmarc TXT "v=DMARC1; p=none"
+row _dmarc TXT "v=DMARC1; p=none; rua=mailto:dmarc@$domain"
 
 echo "# Records for $domain in Cloudflare. Every record is DNS only (grey cloud), never proxied."
 { printf 'name\ttype\tcontent\tnote\n'; cat "$rows"; } | awk -F'\t' '

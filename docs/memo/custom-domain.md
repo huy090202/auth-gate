@@ -49,7 +49,7 @@ With a domain, AuthGate's `BASE_URL`, and so the JWT issuer, becomes `https://ap
 
 The SES identity is the domain, with Easy DKIM (RSA 2048). Three `<token>._domainkey` CNAMEs to `<token>.dkim.amazonses.com` verify it, and then any `@authgatehq.com` sender works; the Portal sends as `AuthGate <no-reply@authgatehq.com>`. The display name is added in code, while `EMAIL_FROM` and the IAM `ses:FromAddress` condition stay the bare address.
 
-There is no custom MAIL FROM: DKIM alignment on the domain is enough for DMARC to pass. DMARC starts as `v=DMARC1; p=none`, with no `rua`, because no mailbox exists to receive reports, and moves to `p=quarantine` after a few weeks of clean sending. There is no inbox: mail goes out from a no-reply address and no email asks for a reply.
+There is no custom MAIL FROM: DKIM alignment on the domain is enough for DMARC to pass. DMARC starts as `v=DMARC1; p=none; rua=mailto:dmarc@authgatehq.com` and moves to `p=quarantine` after a few weeks of clean sending. Mail is sent from a no-reply address, and replies go to `support@authgatehq.com`, which a person reads: Cloudflare Email Routing forwards `support@`, `dmarc@`, `postmaster@` and `abuse@` to the owner (see the portal-email spec).
 
 ## The old-host redirect
 
