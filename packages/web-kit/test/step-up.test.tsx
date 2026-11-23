@@ -1,14 +1,19 @@
 // @vitest-environment jsdom
 import { MantineProvider } from '@mantine/core';
 import { act } from 'react';
-import { createRoot } from 'react-dom/client';
+import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, expect, test, vi } from 'vitest';
 import { useStepUp, type StepUpConfig } from '../src/step-up';
 import { theme } from '../src/theme';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-afterEach(() => {
+// Why: a root left mounted keeps the modal's close transition scheduled; it then runs after the
+// file's jsdom is torn down and fails the run with "window is not defined" (seen in CI).
+let root: Root | undefined;
+afterEach(async () => {
+  if (root) await act(async () => root!.unmount());
+  root = undefined;
   vi.unstubAllGlobals();
   document.body.innerHTML = '';
 });
@@ -32,8 +37,8 @@ function Probe() {
 
 async function mount() {
   vi.stubGlobal('matchMedia', (q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false }));
-  const root = createRoot(document.body.appendChild(document.createElement('div')));
-  await act(async () => root.render(<MantineProvider theme={theme}><Probe /></MantineProvider>));
+  root = createRoot(document.body.appendChild(document.createElement('div')));
+  await act(async () => root!.render(<MantineProvider theme={theme}><Probe /></MantineProvider>));
 }
 const give = async () => {
   let b: HTMLButtonElement | undefined;
