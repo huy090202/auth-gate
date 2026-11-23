@@ -1,6 +1,6 @@
 # Portal email: a branded HTML layout, and mail sent to the domain
 
-Date: 2026-11-23. Status: approved by the product owner in chat the same day. He reviewed a mockup of a link email and a notice email.
+Date: 2026-11-23. Status: approved by the product owner in chat the same day. He reviewed a mockup of a link email and a notice email: `2026-11-23-portal-email-mockup.html`, beside this file.
 
 ## 1. Purpose
 
