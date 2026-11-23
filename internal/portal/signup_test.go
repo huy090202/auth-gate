@@ -42,7 +42,7 @@ func newSignupEnv(t *testing.T) *signupEnv {
 	t.Helper()
 	e := newEnv(t)
 	dir := t.TempDir()
-	box, err := mail.NewDir(dir)
+	box, err := mail.NewDir(dir, mail.Site{BaseURL: "https://portal.test"})
 	if err != nil {
 		t.Fatal(err)
 	}

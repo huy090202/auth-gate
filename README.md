@@ -474,7 +474,8 @@ pnpm --filter portal-web dev                    # the web app on :5174
 Locally, mail is written as files in `.portal-mailbox/` (open the newest to find the link),
 avatars go to `.portal-avatars/`, and Turnstile uses Cloudflare's public test keys, which only work
 against the real siteverify endpoint (so a sign-up makes one outbound call to Cloudflare and one
-to HIBP). The Portal client's origin is `http://localhost:5174`, so passkeys need that port. The
+to HIBP). The HTML previews in the mailbox directory show no logo, and their Sign-in button leads
+nowhere, because `PUBLIC_BASE_URL` points at the API in dev. The Portal client's origin is `http://localhost:5174`, so passkeys need that port. The
 Bruno collection for the API is in `bruno-portal/`; `01-boundary` needs no credential:
 
 ```bash
@@ -511,8 +512,10 @@ policies must carry the Portal's rights first ([Rollout of P2](#rollout-of-p2-th
 CI runs `deploy.sh` and `smoke.sh` after the Console's ([Continuous deploy](#continuous-deploy)),
 with `EMAIL_FROM` and `TURNSTILE_SITE_KEY` from the repository variables `PORTAL_EMAIL_FROM` and
 `PORTAL_TURNSTILE_SITE_KEY`. They are variables, not secrets: the sender address and the site key
-are both public. The Lambda has no reserved concurrency (the account quota is small), so the
-per-IP and per-account limiters are the guard. While SES is in its sandbox it sends only to
+are both public. `SUPPORT_EMAIL` (optional) is the Reply-To address and the support line of every
+email. It is not an input you export: `deploy.sh` sets it to `support@<domain>` when a domain is configured
+([Mail to the domain](#mail-to-the-domain)). The Lambda has no reserved concurrency (the account
+quota is small), so the per-IP and per-account limiters are the guard. While SES is in its sandbox it sends only to
 verified addresses.
 
 ### Known limits
@@ -785,7 +788,7 @@ scripts/domain/dns-records.sh
 
 Expect `Created SES identity authgatehq.com in ap-southeast-1` and `VerifiedForSendingStatus:
 False`. The table lists the certificate record, the three `<token>._domainkey` CNAMEs
-to `<token>.dkim.amazonses.com`, and `_dmarc` TXT `v=DMARC1; p=none`. The `api`, `admin`, `portal`
+to `<token>.dkim.amazonses.com`, and `_dmarc` TXT `v=DMARC1; p=none; rua=mailto:dmarc@authgatehq.com`. The `api`, `admin`, `portal`
 and `@` rows read `pending (stack ... not deployed)` or show the CloudFront names of stacks that
 exist: those come later. Add the three DKIM records and the `_dmarc` record in Cloudflare, wait a
 few minutes, then rerun:
@@ -1021,8 +1024,9 @@ Volume: under 100 emails a day, in the low tens in practice.
 Bounces and complaints: the account-level suppression list is on for BOUNCE and COMPLAINT, so SES
 stops mailing any address that bounced or complained. Every sign-up and email route is also
 protected by Cloudflare Turnstile and per-address and per-IP rate limits, so the service cannot be
-used to send mail to people who did not ask for it. Mail goes out from a no-reply address with no inbox, no email asks for a
-reply, and the Portal has no way to send to an address that has not signed up.
+used to send mail to people who did not ask for it. Mail is sent from a no-reply address. Replies go to
+support@authgatehq.com, which a person reads. The Portal has no way to send to an address that has
+not signed up.
 ```
 
 Until approval, verified addresses keep working. Check it with
@@ -1052,7 +1056,7 @@ aws sesv2 delete-email-identity --email-identity "$addr"
 ```
 
 5. After a few weeks of clean sending, change the `_dmarc` TXT record in Cloudflare from `p=none`
-   to `v=DMARC1; p=quarantine`.
+   to `v=DMARC1; p=quarantine; rua=mailto:dmarc@authgatehq.com`.
 
 **The proofs**, read-only, under the admin profile in a subshell. Expect: `301` and the new
 hostname with the path and query kept, for the Console's and the Portal's old address (for
@@ -1071,6 +1075,86 @@ aws sesv2 get-email-identity --email-identity authgatehq.com \
   --query '[VerifiedForSendingStatus,DkimAttributes.Status]' --output text
 )
 ```
+
+### Mail to the domain
+
+Until now no address at `authgatehq.com` received mail. The Portal's emails now carry
+`Reply-To: support@authgatehq.com`, and Cloudflare Email Routing (free) forwards four addresses to
+your own inbox. The design:
+[`docs/superpowers/specs/2026-11-23-portal-email-design.md`](docs/superpowers/specs/2026-11-23-portal-email-design.md).
+
+**Email Routing, once, in the Cloudflare dashboard.**
+
+1. Cloudflare dashboard, the zone `authgatehq.com`, Email, Email Routing, Enable. Accept the
+   records it offers to add (MX, an SPF TXT at the apex, and its own DKIM TXT).
+2. Destination addresses, add your inbox, then open the verification mail Cloudflare sends there
+   and confirm it.
+3. Routing rules, Create address, Custom address: one rule each for `support`, `dmarc`,
+   `postmaster` and `abuse`. Action Send to an email, destination the verified inbox. Save.
+4. Leave the catch-all disabled.
+
+**SES is unaffected.** SES mail has the envelope sender `amazonses.com`, so the apex SPF that
+Cloudflare adds does not apply to it, and DMARC keeps passing on DKIM. Cloudflare manages the MX,
+SPF and DKIM records it adds, so `dns-records.sh` does not print them.
+
+**`_dmarc` gets a report address.** `dns-records.sh` now prints
+`v=DMARC1; p=none; rua=mailto:dmarc@authgatehq.com`. In Cloudflare, edit the existing `_dmarc` TXT
+record to that value (still DNS only). It is an edit of a name that already resolves, so no wait
+is needed. `dmarc@` is one of the four routed addresses, so the reports reach your inbox.
+
+**`SUPPORT_EMAIL`.** The Portal's configuration is `SUPPORT_EMAIL` (template parameter
+`SupportEmail`), optional. `scripts/portal/deploy.sh` sets it to `support@<domain>` when a domain
+is configured and passes nothing otherwise, so a stage without a domain sends no Reply-To and the
+notice footer says "contact the operator who runs this service". CI needs no new variable: the
+domain already comes from SSM.
+
+**Rollout.**
+
+1. Email Routing, as above. Send a test mail from another address to `support@authgatehq.com`:
+   it reaches your inbox.
+2. Edit `_dmarc` in Cloudflare, then print what the zone should hold and compare:
+
+```bash
+(
+set -euo pipefail
+export AWS_PROFILE=default AWS_REGION=ap-southeast-1 STAGE=stg
+cd /home/work/auth-gate/feat-portal-email
+ADMIN_PROFILE=default scripts/domain/dns-records.sh | grep '^_dmarc'
+)
+```
+
+   Expect one row, its columns space-padded: `_dmarc`, `TXT`,
+   `v=DMARC1; p=none; rua=mailto:dmarc@authgatehq.com`, `DNS only`.
+3. Deploy the Portal from the branch. The site key is read from the stack, as in step 6 of the
+   move above:
+
+```bash
+cd /home/work/auth-gate/feat-portal-email && pnpm install --frozen-lockfile && (
+set -euo pipefail
+export AWS_PROFILE=default AWS_REGION=ap-southeast-1 STAGE=stg
+export EMAIL_FROM=no-reply@authgatehq.com
+TURNSTILE_SITE_KEY="$(aws cloudformation describe-stacks --stack-name auth-gate-portal-stg \
+  --query "Stacks[0].Parameters[?ParameterKey=='TurnstileSiteKey'].ParameterValue" --output text)"
+[[ -n "$TURNSTILE_SITE_KEY" && "$TURNSTILE_SITE_KEY" != None ]] || { echo "no TurnstileSiteKey on the stack" >&2; exit 1; }
+echo "site key: $TURNSTILE_SITE_KEY"
+export TURNSTILE_SITE_KEY
+scripts/portal/deploy.sh
+)
+```
+
+   Then smoke it:
+
+```bash
+cd /home/work/auth-gate/feat-portal-email && pnpm install --frozen-lockfile && (
+AWS_PROFILE=default scripts/portal/smoke.sh
+)
+```
+
+4. At `https://portal.authgatehq.com`, trigger each email the browser can: sign up, reset a
+   password, add a factor. Open each in Gmail and in one other client. Check the layout, the
+   button and the fallback link, then "Show original": SPF, DKIM and DMARC are `PASS`. Reply to
+   one: the reply reaches your inbox through `support@`.
+5. Merge. CI redeploys the Portal with `SupportEmail` from the SSM domain.
 
 ## Local development
 

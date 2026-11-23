@@ -92,10 +92,11 @@ needs no new variable.
   CNAMEs. Once they resolve, SES verifies the domain and any `@authgatehq.com` sender works.
 - The Portal sends as `AuthGate <no-reply@authgatehq.com>`: the display name is added in code; the
   IAM condition `ses:FromAddress` keeps matching the bare address.
-- No custom MAIL FROM: DKIM on the domain makes DMARC pass. DMARC starts at `p=none` without `rua`
-  (there is no mailbox to receive reports) and moves to `p=quarantine` after a few weeks of clean
-  sending.
-- No inbox: mail goes out from a no-reply address and no email asks for a reply.
+- No custom MAIL FROM: DKIM on the domain makes DMARC pass. DMARC starts at `p=none` and moves to
+  `p=quarantine` after a few weeks of clean sending. Its `rua` address was added later; see
+  `2026-11-23-portal-email-design.md`.
+- Mail is sent from a no-reply address, and replies go to `support@authgatehq.com`, which a person
+  reads (Email Routing, see `2026-11-23-portal-email-design.md`).
 - SES production access: the owner submits Request production access in the SES console, region
   `ap-southeast-1`. The README gives the text: transactional mail only (account verification,
   password reset, security notices) to people who signed up and verified themselves; website
@@ -170,7 +171,10 @@ production-access text.
 ## 8. Non-goals
 
 A production stage; keeping PINs across an rpId change (an operator-only rpId change in AuthGate
-would need its own design); custom MAIL FROM; inbound email; DMARC reports; Cloudflare proxy or
+would need its own design); custom MAIL FROM; Cloudflare proxy or
 WAF; HSTS preload; Route 53.
+
+Inbound email and DMARC reports were non-goals here; `2026-11-23-portal-email-design.md` now covers
+them.
 
 Cost: no fixed monthly cost; the domain renews at $15.98 a year.

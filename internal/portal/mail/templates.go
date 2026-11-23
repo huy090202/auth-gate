@@ -12,11 +12,49 @@ var Kinds = []string{
 // linkKinds are the kinds whose whole point is a link.
 var linkKinds = map[string]bool{"verify": true, "reset": true, "factor-reset-confirm": true, "email-change-confirm": true}
 
-var untilLabel = map[string]string{"en": "Until: ", "vi": "Đến: "}
+var untilLabel = map[string]string{"en": "Until: ", "vi": "Cho đến: "}
 
-var notYou = map[string]string{
-	"en": "If this was not you, do not open the link above and change your password now; if you cannot sign in, contact the operator who runs this service.",
-	"vi": "Nếu đây không phải là bạn, đừng mở liên kết ở trên và hãy đổi mật khẩu ngay; nếu không đăng nhập được, hãy liên hệ người vận hành dịch vụ này.",
+// buttons are the primary button labels of the link kinds.
+var buttons = map[string]map[string]string{
+	"verify":               {"en": "Confirm email address", "vi": "Xác nhận email"},
+	"reset":                {"en": "Choose a new password", "vi": "Chọn mật khẩu mới"},
+	"factor-reset-confirm": {"en": "Confirm the reset", "vi": "Xác nhận đặt lại"},
+	"email-change-confirm": {"en": "Confirm new address", "vi": "Xác nhận địa chỉ mới"},
+}
+
+var signInLabel = map[string]string{"en": "Sign in", "vi": "Đăng nhập"}
+
+var fallbackLine = map[string]string{
+	"en": "Button not working? Paste this link into your browser:",
+	"vi": "Nút không bấm được? Dán liên kết này vào trình duyệt:",
+}
+
+var linkFooter = map[string]string{
+	"en": "If you did not ask for this, ignore this email; nothing changes until the link is opened.",
+	"vi": "Nếu bạn không yêu cầu, hãy bỏ qua thư này; không có gì thay đổi cho tới khi liên kết được mở.",
+}
+
+// noticeFooter has one %s for the support address; noticeFooterBare is used without one.
+var noticeFooter = map[string]string{
+	"en": "If this was not you, change your password now. If you cannot sign in, write to %s.",
+	"vi": "Nếu không phải bạn, hãy đổi mật khẩu ngay. Nếu không đăng nhập được, hãy viết cho %s.",
+}
+
+var noticeFooterBare = map[string]string{
+	"en": "If this was not you, change your password now. If you cannot sign in, contact the operator who runs this service.",
+	"vi": "Nếu không phải bạn, hãy đổi mật khẩu ngay. Nếu không đăng nhập được, hãy liên hệ người vận hành dịch vụ này.",
+}
+
+// supportLine has one %s for the support address.
+var supportLine = map[string]string{
+	"en": "Questions? Write to %s.",
+	"vi": "Cần hỗ trợ? Viết cho %s.",
+}
+
+// whyLine has one %s for the host of the Portal.
+var whyLine = map[string]string{
+	"en": "AuthGate · %s · Sent because this address was used on the AuthGate Portal.",
+	"vi": "AuthGate · %s · Thư này gửi đến bạn vì địa chỉ này được dùng trên AuthGate Portal.",
 }
 
 var templates = map[string]map[string]tpl{

@@ -10,7 +10,8 @@
 # The custom domain comes from SSM (scripts/domain/lib.sh): with /credo/auth-gate/$STAGE/domain
 # set, the Portal serves on portal.<domain>, PublicBaseUrl is https://portal.<domain> on every
 # deploy (no second pass for it), and the deploy stops before sam unless the certificate is
-# ISSUED. DNS is never written here.
+# ISSUED. DNS is never written here. With a domain, SupportEmail=support@<domain> is passed (the
+# Reply-To of every email); without one nothing is passed and a previous value is kept.
 # Needs EMAIL_FROM (a verified SES identity address) and TURNSTILE_SITE_KEY (public).
 # The Turnstile secret lives in SSM $PARAM_PREFIX/turnstile-secret: it is never overwritten;
 # when absent, it is written once from TURNSTILE_SECRET (through a 0600 file, never argv).
@@ -97,7 +98,7 @@ pnpm --filter portal-web run build
 params=("Stage=$STAGE" "AuthGateBaseUrl=${authgate_url%/}" "EmailFrom=$email_from" "TurnstileSiteKey=$site_key")
 [[ -z "$client_id" ]] || params+=("AuthGateClientId=$client_id")
 [[ -z "$public_url" ]] || params+=("PublicBaseUrl=${public_url%/}")
-[[ -z "$DOMAIN" ]] || params+=("DomainName=$(app_host portal)" "CertificateArn=$CERT_ARN")
+[[ -z "$DOMAIN" ]] || params+=("DomainName=$(app_host portal)" "CertificateArn=$CERT_ARN" "SupportEmail=support@$DOMAIN")
 # The SAM bucket is shared by every project in the account; the deployer may write only
 # under auth-gate-* in it (infra/deployer-policy.json).
 sam deploy --template-file "$ROOT/infra/portal.yaml" \

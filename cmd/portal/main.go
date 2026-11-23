@@ -54,12 +54,13 @@ func main() {
 		Passwords: hibp.NewClient(),
 		Now:       time.Now,
 	}
+	site := mail.Site{BaseURL: cfg.PublicBaseURL, Support: cfg.SupportEmail}
 	var awsCfg aws.Config
 	var devAvatars *avatar.Dir
 	if cfg.Dev {
 		deps.AuthGate = &authgate.Client{BaseURL: cfg.AuthGateBaseURL, ClientKey: cfg.ClientKey, PortalKey: cfg.PortalKey, HTTP: httpc}
 		deps.Turnstile = turnstile.NewClient(cfg.TurnstileSecret)
-		if deps.Mail, err = mail.NewDir(cfg.MailboxDir); err != nil {
+		if deps.Mail, err = mail.NewDir(cfg.MailboxDir, site); err != nil {
 			log.Fatal(err)
 		}
 		if devAvatars, err = avatar.NewDir(cfg.AvatarDir, cfg.PublicBaseURL+portal.DevAvatarUploadPath); err != nil {
@@ -76,7 +77,7 @@ func main() {
 			PortalKey: mustSecret(ctx, awsCfg, cfg.PortalKeyParam), HTTP: httpc,
 		}
 		deps.Turnstile = turnstile.NewClient(mustSecret(ctx, awsCfg, cfg.TurnstileSecretParam))
-		deps.Mail = mail.NewSES(sesv2.NewFromConfig(awsCfg), cfg.EmailFrom)
+		deps.Mail = mail.NewSES(sesv2.NewFromConfig(awsCfg), cfg.EmailFrom, site)
 		s3c := s3.NewFromConfig(awsCfg)
 		deps.Avatars = avatar.NewS3(s3c, s3.NewPresignClient(s3c), cfg.AvatarBucket)
 	}

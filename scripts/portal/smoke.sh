@@ -12,6 +12,7 @@
 #                           fails at init and answers 502.
 #   4. $BaseUrl/api/config  200 with a non-empty turnstileSiteKey: the function is up,
 #                           which needs the second deploy pass
+#   4b. $BaseUrl/email-logo.png  200 image/png: the logo the emails link to
 #   5. Bruno 01-boundary    the refusals that need no credential
 # It needs no credentials and prints no secret. Exit is non-zero on any failure.
 set -euo pipefail
@@ -102,6 +103,12 @@ if jq -e '.turnstileSiteKey | length > 0' "$tmp/body" >/dev/null 2>&1; then
 else
   fail "/api/config has no turnstileSiteKey"
 fi
+
+# 4b. the email logo is served by the CDN as a PNG
+fetch "$base_url/email-logo.png"
+if [[ "$code" == 200 ]]; then pass "GET /email-logo.png is 200"; else fail "GET /email-logo.png is $code, want 200"; fi
+ctype="$(header content-type)"
+if [[ "$ctype" == image/png* ]]; then pass "email-logo.png content-type is $ctype"; else fail "email-logo.png content-type is '$ctype', want image/png"; fi
 
 # 5. Bruno, the folder that needs no credential. baseUrl is not a secret, so it
 # goes on argv. Each request fails on purpose and none needs a credential.
