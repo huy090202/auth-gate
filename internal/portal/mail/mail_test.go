@@ -112,14 +112,14 @@ func (f *fakeSES) SendEmail(_ context.Context, in *sesv2.SendEmailInput, _ ...fu
 	return &sesv2.SendEmailOutput{}, nil
 }
 
-func TestSESSendUsesConfiguredFromAndMessageTo(t *testing.T) {
+func TestSESSendNamesTheSenderAndUsesMessageTo(t *testing.T) {
 	f := &fakeSES{}
-	s := NewSES(f, "Auth Gate <no-reply@example.com>")
+	s := NewSES(f, "no-reply@example.com")
 	err := s.Send(context.Background(), Message{To: "u@example.com", Lang: "en", Kind: "verify", Vars: map[string]string{"link": "https://p/x"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *f.in.FromEmailAddress != "Auth Gate <no-reply@example.com>" || len(f.in.Destination.ToAddresses) != 1 || f.in.Destination.ToAddresses[0] != "u@example.com" {
+	if *f.in.FromEmailAddress != "AuthGate <no-reply@example.com>" || len(f.in.Destination.ToAddresses) != 1 || f.in.Destination.ToAddresses[0] != "u@example.com" {
 		t.Errorf("wrong addresses: %+v", f.in)
 	}
 	if f.in.Content.Simple == nil || f.in.Content.Simple.Body.Text == nil || f.in.Content.Simple.Body.Html != nil {
