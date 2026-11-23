@@ -16,6 +16,15 @@ Parameters:
     Type: String
     Default: ""
     Description: Empty on the first deploy; set after scripts/portal/register-client.sh stg.
+  DomainName:
+    Type: String
+    Default: ""
+    Description: Optional custom domain of this app (set by the deploy script from SSM). Needs CertificateArn.
+  CertificateArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:aws[a-zA-Z-]*:acm:us-east-1:\\d{12}:certificate/.+$"
+    Description: ACM certificate in us-east-1 for DomainName (set by the deploy script from SSM).
   PublicBaseUrl:
     Type: String
     Default: ""
@@ -34,6 +43,7 @@ Parameters:
     Description: The Cloudflare Turnstile site key (public).
 
 Conditions:
+  HasDomain: !Not [!Equals [!Ref DomainName, ""]]
   HasClientId: !Not [!Equals [!Ref AuthGateClientId, ""]]
   HasPublicBaseUrl: !Not [!Equals [!Ref PublicBaseUrl, ""]]
 
@@ -246,13 +256,39 @@ Resources:
       FunctionConfig:
         Comment: Serve index.html for SPA routes
         Runtime: cloudfront-js-2.0
-      FunctionCode: |
-        function handler(event) {
-          var req = event.request;
-          var last = req.uri.substring(req.uri.lastIndexOf('/') + 1);
-          if (last.indexOf('.') === -1) req.uri = '/index.html';
-          return req;
-        }
+      FunctionCode: !Sub
+        - |
+          function tryDecode(v) {
+            try { return decodeURIComponent(v); } catch (e) { return v; }
+          }
+          function handler(event) {
+            var host = '${Hostname}';
+            var req = event.request;
+            // Any other Host (the CloudFront address) gets a permanent redirect to the app's
+            // hostname, keeping the path and every query value. With no domain host is empty.
+            var got = req.headers.host ? req.headers.host.value.toLowerCase() : '';
+            if (host !== '' && got !== host) {
+              var pairs = [];
+              var qs = req.querystring || {};
+              for (var name in qs) {
+                var vals = qs[name].multiValue
+                  ? qs[name].multiValue.map(function (m) { return m.value; })
+                  : [qs[name].value];
+                for (var i = 0; i < vals.length; i++) {
+                  pairs.push(encodeURIComponent(name) + '=' + encodeURIComponent(tryDecode(vals[i])));
+                }
+              }
+              return {
+                statusCode: 301,
+                statusDescription: 'Moved Permanently',
+                headers: { location: { value: 'https://' + host + req.uri + (pairs.length ? '?' + pairs.join('&') : '') } }
+              };
+            }
+            var last = req.uri.substring(req.uri.lastIndexOf('/') + 1);
+            if (last.indexOf('.') === -1) req.uri = '/index.html';
+            return req;
+          }
+        - Hostname: !If [HasDomain, !Ref DomainName, ""]
 
   # Must equal cspFor('<the avatar bucket regional domain>') in portal-web/src/csp.ts
   # (portal-web/test/csp-header.test.ts pins it): no inline script or style, Turnstile's
@@ -331,6 +367,12 @@ Resources:
 
   Distribution:
     Type: AWS::CloudFront::Distribution
+    Metadata:
+      cfn-lint:
+        config:
+          # CertificateArn defaults to "" but is only read under HasDomain;
+          # the linter resolves the default regardless.
+          ignore_checks: [W1030]
     Properties:
       # The deployer may change only distributions with this tag (infra/deployer-policy-edge.json).
       Tags:
@@ -340,6 +382,13 @@ Resources:
         Comment: !Sub auth-gate portal ${Stage}
         HttpVersion: http2and3
         PriceClass: PriceClass_200
+        Aliases: !If [HasDomain, [!Ref DomainName], !Ref AWS::NoValue]
+        ViewerCertificate: !If
+          - HasDomain
+          - AcmCertificateArn: !Ref CertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
         DefaultRootObject: index.html
         # One viewer must not rotate through a /64 to dodge the per-IP limiters.
         IPV6Enabled: false
@@ -394,7 +443,10 @@ Resources:
 Outputs:
   BaseUrl:
     Description: The one URL of the Portal (site, /api and /avatars).
-    Value: !Sub "https://${Distribution.DomainName}"
+    Value: !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${Distribution.DomainName}"]
+  DistributionDomain:
+    Description: Read by scripts/domain/dns-records.sh (the CNAME target).
+    Value: !GetAtt Distribution.DomainName
   RawPortalUrl:
     Description: Direct Function URL (must answer 401 without CloudFront).
     Value: !GetAtt PortalUrl.FunctionUrl

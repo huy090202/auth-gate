@@ -37,7 +37,7 @@ type SESAPI interface {
 	SendEmail(ctx context.Context, in *sesv2.SendEmailInput, optFns ...func(*sesv2.Options)) (*sesv2.SendEmailOutput, error)
 }
 
-// SES sends through SES v2 from one configured address.
+// SES sends through SES v2 from one configured bare address, shown as "AuthGate <address>".
 type SES struct {
 	api  SESAPI
 	from string
@@ -52,7 +52,7 @@ func (s *SES) Send(ctx context.Context, m Message) error {
 		return err
 	}
 	_, err = s.api.SendEmail(ctx, &sesv2.SendEmailInput{
-		FromEmailAddress: aws.String(s.from),
+		FromEmailAddress: aws.String("AuthGate <" + s.from + ">"),
 		Destination:      &types.Destination{ToAddresses: []string{m.To}},
 		Content: &types.EmailContent{Simple: &types.Message{
 			Subject: &types.Content{Data: aws.String(subject), Charset: aws.String("UTF-8")},

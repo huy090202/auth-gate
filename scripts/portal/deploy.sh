@@ -7,6 +7,10 @@
 #   between: scripts/portal/register-client.sh stg (needs this stack's BaseUrl).
 #   pass 2: AUTHGATE_CLIENT_ID=<printed id> scripts/portal/deploy.sh. PublicBaseUrl is read
 #           from this stack's own BaseUrl output, so a later redeploy keeps it.
+# The custom domain comes from SSM (scripts/domain/lib.sh): with /credo/auth-gate/$STAGE/domain
+# set, the Portal serves on portal.<domain>, PublicBaseUrl is https://portal.<domain> on every
+# deploy (no second pass for it), and the deploy stops before sam unless the certificate is
+# ISSUED. DNS is never written here.
 # Needs EMAIL_FROM (a verified SES identity address) and TURNSTILE_SITE_KEY (public).
 # The Turnstile secret lives in SSM $PARAM_PREFIX/turnstile-secret: it is never overwritten;
 # when absent, it is written once from TURNSTILE_SECRET (through a 0600 file, never argv).
@@ -14,13 +18,18 @@ set -euo pipefail
 # shellcheck source=lib.sh
 # shellcheck source-path=SCRIPTDIR
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=../domain/lib.sh
+# shellcheck source-path=SCRIPTDIR
+. "$(dirname "${BASH_SOURCE[0]}")/../domain/lib.sh"
 
+domain_config
 command -v jq >/dev/null || die "jq is required"
 command -v openssl >/dev/null || die "openssl is required"
 client_id="${AUTHGATE_CLIENT_ID:-}"
 email_from="${EMAIL_FROM:-}"
 site_key="${TURNSTILE_SITE_KEY:-}"
 [[ -n "$email_from" ]] || die "EMAIL_FROM is required (the SES identity address emails are sent from)"
+[[ "$email_from" != *[\<\ ]* ]] || die "EMAIL_FROM must be a bare address (no display name, no '<' or space): the display name is added in code"
 [[ -n "$site_key" ]] || die "TURNSTILE_SITE_KEY is required (the Cloudflare Turnstile site key)"
 
 tmp="$(mktemp -d)"
@@ -69,7 +78,9 @@ authgate_url="$(output "$AUTHGATE_STACK" BaseUrl)"
 
 # The Portal's own origin: empty while the stack does not exist (pass 1), then its BaseUrl.
 public_url=""
-if aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" >/dev/null 2>"$tmp/err"; then
+if [[ -n "$DOMAIN" ]]; then
+  public_url="https://$(app_host portal)"
+elif aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" >/dev/null 2>"$tmp/err"; then
   public_url="$(output "$STACK" BaseUrl)"
 elif ! grep -q 'does not exist' "$tmp/err"; then
   die "cannot read $STACK: $(<"$tmp/err")"
@@ -86,6 +97,7 @@ pnpm --filter portal-web run build
 params=("Stage=$STAGE" "AuthGateBaseUrl=${authgate_url%/}" "EmailFrom=$email_from" "TurnstileSiteKey=$site_key")
 [[ -z "$client_id" ]] || params+=("AuthGateClientId=$client_id")
 [[ -z "$public_url" ]] || params+=("PublicBaseUrl=${public_url%/}")
+[[ -z "$DOMAIN" ]] || params+=("DomainName=$(app_host portal)" "CertificateArn=$CERT_ARN")
 # The SAM bucket is shared by every project in the account; the deployer may write only
 # under auth-gate-* in it (infra/deployer-policy.json).
 sam deploy --template-file "$ROOT/infra/portal.yaml" \

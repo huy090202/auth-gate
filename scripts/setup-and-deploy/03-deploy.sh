@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Deploy stack auth-gate-$STAGE and print its one BaseUrl.
-# Optional env: DOMAIN_NAME, CERTIFICATE_ARN, HOSTED_ZONE_ID.
+#
+# The custom domain comes from SSM (scripts/domain/lib.sh): with /credo/auth-gate/$STAGE/domain
+# set, AuthGate serves on api.<domain> with the certificate-arn parameter, and the deploy stops
+# before sam unless that certificate is ISSUED. DNS is never written here.
 #
 # Without a custom domain, BASE_URL on verify must be the distribution's own
 # domain, but the distribution depends on the Function URLs, which depend on the
@@ -12,10 +15,11 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-domain="${DOMAIN_NAME:-}"
-cert="${CERTIFICATE_ARN:-}"
-zone="${HOSTED_ZONE_ID:-}"
-[ -z "$domain" ] || [ -n "$cert" ] || die "DOMAIN_NAME needs CERTIFICATE_ARN (00-cert.sh)"
+# shellcheck source=../domain/lib.sh
+# shellcheck source-path=SCRIPTDIR
+. "$(dirname "${BASH_SOURCE[0]}")/../domain/lib.sh"
+
+domain_config
 [ -f "$ROOT/bin/bootstrap.zip" ] || die "bin/bootstrap.zip missing; run 02-build.sh"
 
 # Prints one stack output. A stack that does not exist yet (first deploy) yields
@@ -36,9 +40,7 @@ deploy() {
   # sam rejects empty overrides ("DomainName="), so pass only the set ones;
   # the template defaults every optional parameter to "".
   local params=("Stage=$STAGE")
-  [ -z "$domain" ] || params+=("DomainName=$domain")
-  [ -z "$cert" ] || params+=("CertificateArn=$cert")
-  [ -z "$zone" ] || params+=("HostedZoneId=$zone")
+  [ -z "$DOMAIN" ] || params+=("DomainName=$(app_host api)" "CertificateArn=$CERT_ARN")
   [ -z "$1" ] || params+=("DistributionBaseUrl=$1")
   # The SAM bucket is shared by every project in the account; the deployer may write only
   # under auth-gate-* in it (infra/deployer-policy.json).
@@ -50,14 +52,14 @@ deploy() {
 }
 
 dist_url=""
-if [ -z "$domain" ]; then
+if [ -z "$DOMAIN" ]; then
   d="$(output DistributionDomain)"
   [ -z "$d" ] || [ "$d" = "None" ] || dist_url="https://$d"
 fi
 
 deploy "$dist_url"
 
-if [ -z "$domain" ]; then
+if [ -z "$DOMAIN" ]; then
   d="$(output DistributionDomain)"
   if [ "https://$d" != "$dist_url" ]; then
     echo "second pass: setting BASE_URL to https://$d"
