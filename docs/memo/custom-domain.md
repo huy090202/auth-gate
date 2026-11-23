@@ -10,7 +10,7 @@ Every app of auth-gate has a name on `authgatehq.com`: AuthGate `api.`, the Cons
 - AuthGate refuses an rpId change, so each app registers a new client instead.
 - Email is signed by the domain: Easy DKIM, and a DMARC record at `p=none`.
 
-The deploy scripts read the domain and the certificate ARN from SSM (`/credo/auth-gate/<stage>/domain` and `/certificate-arn`). A stack that was never deployed with a domain is unchanged and stays on its CloudFront address. The move is forward-only per stack: once a stack has been deployed with `DomainName` and `CertificateArn`, deleting the SSM parameter does not move it back, because `sam deploy` reuses the previous values. The way back is an admin `update-stack` that empties the two parameters (README, "If a step fails"), and for the Console and the Portal it ends at `--replace`, since their new clients carry the new rpId.
+The deploy scripts read the domain and the certificate ARN from SSM (`/credo/auth-gate/<stage>/domain` and `/certificate-arn`). A stack that was never deployed with a domain is unchanged and stays on its CloudFront address. The move is forward-only per stack: once a stack has been deployed with `DomainName` and `CertificateArn`, deleting the SSM parameter does not move it back, because `sam deploy` reuses the previous values. The way back is an admin `update-stack` that empties the two parameters ([rollout runbook](../runbooks/rollout-custom-domain.md), "If a step fails"), and for the Console and the Portal it ends at `--replace`, since their new clients carry the new rpId.
 
 ## Context
 

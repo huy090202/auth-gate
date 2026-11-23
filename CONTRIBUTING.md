@@ -60,7 +60,7 @@ CI runs the same command on every push to `main` and on every pull request.
 ## The Console web app
 
 `console-web/` is React, Vite and Mantine, with EN and VI strings in `src/strings.ts` (a missing key fails
-typecheck). `pnpm --filter console-web dev` serves it on :5173 against `make console-dev`; see the README.
+typecheck). `pnpm --filter console-web dev` serves it on :5173 against `make console-dev`; see [docs/reference/console.md](docs/reference/console.md#run-it-locally).
 
 - Do not add a `<style>` element or an inline `style` or `on*` attribute. The site's CSP is `style-src 'self'` with
   no `unsafe-inline`, and a nonce cannot work because CloudFront serves a static header. Mantine features that inject
