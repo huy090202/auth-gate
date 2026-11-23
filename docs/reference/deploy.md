@@ -280,8 +280,8 @@ Afterwards:
    `scripts/console/smoke.sh` is in
    [step 5](../runbooks/rollout-custom-domain.md); the Portal's `scripts/portal/smoke.sh` is in
    [step 6](../runbooks/rollout-custom-domain.md). auth-app's smoke is run with
-   `scripts/setup-and-deploy/04-smoke.sh` from the auth-app worktree, as in step 8 of the "Custom
-   domain" section of auth-app's README.
+   `scripts/setup-and-deploy/04-smoke.sh` from the auth-app worktree, step 7 of the "Deploy"
+   section of auth-app's README.
 2. Sign in to the Console again. The apply deleted the admins' sessions (their accounts and
    factors stay), so every operator must sign in once more.
 3. Sign up again on the Portal and in the auth-app demo: their users are gone.
