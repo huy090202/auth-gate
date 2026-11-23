@@ -474,7 +474,8 @@ pnpm --filter portal-web dev                    # the web app on :5174
 Locally, mail is written as files in `.portal-mailbox/` (open the newest to find the link),
 avatars go to `.portal-avatars/`, and Turnstile uses Cloudflare's public test keys, which only work
 against the real siteverify endpoint (so a sign-up makes one outbound call to Cloudflare and one
-to HIBP). The Portal client's origin is `http://localhost:5174`, so passkeys need that port. The
+to HIBP). The HTML previews in the mailbox directory show no logo, and their Sign-in button leads
+nowhere, because `PUBLIC_BASE_URL` points at the API in dev. The Portal client's origin is `http://localhost:5174`, so passkeys need that port. The
 Bruno collection for the API is in `bruno-portal/`; `01-boundary` needs no credential:
 
 ```bash
@@ -512,7 +513,7 @@ CI runs `deploy.sh` and `smoke.sh` after the Console's ([Continuous deploy](#con
 with `EMAIL_FROM` and `TURNSTILE_SITE_KEY` from the repository variables `PORTAL_EMAIL_FROM` and
 `PORTAL_TURNSTILE_SITE_KEY`. They are variables, not secrets: the sender address and the site key
 are both public. `SUPPORT_EMAIL` (optional) is the Reply-To address and the support line of every
-email; `deploy.sh` sets it to `support@<domain>` when a domain is configured
+email. It is not an input you export: `deploy.sh` sets it to `support@<domain>` when a domain is configured
 ([Mail to the domain](#mail-to-the-domain)). The Lambda has no reserved concurrency (the account
 quota is small), so the per-IP and per-account limiters are the guard. While SES is in its sandbox it sends only to
 verified addresses.

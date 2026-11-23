@@ -66,6 +66,22 @@ func TestRenderEveryKindInBothLanguages(t *testing.T) {
 					t.Errorf("%s %s: still points at a link above", id, name)
 				}
 			}
+			for name, part := range map[string]string{"html": r.HTML, "text": r.Text} {
+				if wantLink[kind] {
+					if strings.Contains(part, "/sign-in") {
+						t.Errorf("%s %s: a link kind must not offer sign in", id, name)
+					}
+					continue
+				}
+				for _, bad := range []string{fallbackLine[lang], link, linkFooter[lang]} {
+					if strings.Contains(part, bad) {
+						t.Errorf("%s %s: notice carries %q", id, name, bad)
+					}
+				}
+			}
+			if !wantLink[kind] && strings.Contains(r.HTML, "word-break:break-all") {
+				t.Errorf("%s: notice carries the link block", id)
+			}
 			switch {
 			case wantLink[kind]:
 				label := wantButton[kind][lang]

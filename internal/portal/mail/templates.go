@@ -12,7 +12,7 @@ var Kinds = []string{
 // linkKinds are the kinds whose whole point is a link.
 var linkKinds = map[string]bool{"verify": true, "reset": true, "factor-reset-confirm": true, "email-change-confirm": true}
 
-var untilLabel = map[string]string{"en": "Until: ", "vi": "Đến: "}
+var untilLabel = map[string]string{"en": "Until: ", "vi": "Cho đến: "}
 
 // buttons are the primary button labels of the link kinds.
 var buttons = map[string]map[string]string{
