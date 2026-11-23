@@ -60,6 +60,31 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 	}
 }
 
+// Why: the support address is optional, but a malformed one would become a broken Reply-To and
+// mailto link in every email, so it is refused at start.
+func TestLoadConfigSupportEmail(t *testing.T) {
+	base := map[string]string{"PORTAL_DEV": "1", "TABLE_NAME": "t", "AUTHGATE_BASE_URL": "http://a", "AUTHGATE_CLIENT_ID": "c", "CLIENT_KEY": "k"}
+	load := func(support string) (Config, error) {
+		return LoadConfig(func(k string) string {
+			if k == "SUPPORT_EMAIL" {
+				return support
+			}
+			return base[k]
+		})
+	}
+	if c, err := load("support@example.com"); err != nil || c.SupportEmail != "support@example.com" {
+		t.Fatalf("valid: %+v, %v", c, err)
+	}
+	if c, err := load(""); err != nil || c.SupportEmail != "" {
+		t.Fatalf("unset: %+v, %v", c, err)
+	}
+	for _, bad := range []string{"Name <a@b.c>", "a b@c.d", "nodomain"} {
+		if _, err := load(bad); err == nil {
+			t.Errorf("SUPPORT_EMAIL=%q accepted", bad)
+		}
+	}
+}
+
 type env struct {
 	h     http.Handler
 	a     *App

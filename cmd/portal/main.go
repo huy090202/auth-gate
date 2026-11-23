@@ -54,7 +54,7 @@ func main() {
 		Passwords: hibp.NewClient(),
 		Now:       time.Now,
 	}
-	site := mail.Site{BaseURL: cfg.PublicBaseURL}
+	site := mail.Site{BaseURL: cfg.PublicBaseURL, Support: cfg.SupportEmail}
 	var awsCfg aws.Config
 	var devAvatars *avatar.Dir
 	if cfg.Dev {

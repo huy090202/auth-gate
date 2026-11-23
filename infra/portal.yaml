@@ -37,6 +37,13 @@ Parameters:
     Type: String
     MinLength: 3
     Description: The SES identity address every email is sent from.
+  SupportEmail:
+    Type: String
+    Default: ""
+    AllowedPattern: ^([^@\s<>]+@[^@\s<>]+\.[^@\s<>]+)?$
+    Description: >-
+      Optional support address: emails set it as Reply-To and link it. Empty means none. The
+      deploy sets support@<domain> when a domain is configured.
   TurnstileSiteKey:
     Type: String
     MinLength: 1
@@ -106,6 +113,7 @@ Resources:
           AUTHGATE_CLIENT_ID: !Ref AuthGateClientId
           PUBLIC_BASE_URL: !Ref PublicBaseUrl
           EMAIL_FROM: !Ref EmailFrom
+          SUPPORT_EMAIL: !Ref SupportEmail
           AVATAR_BUCKET: !Ref AvatarBucket
           TURNSTILE_SITE_KEY: !Ref TurnstileSiteKey
           CLIENT_KEY_PARAM: !Sub /credo/auth-gate-portal/${Stage}/authgate-client-key

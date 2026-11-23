@@ -6,6 +6,7 @@ package portal
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 )
 
@@ -15,11 +16,15 @@ const (
 	TurnstileTestSecretKey = "1x0000000000000000000000000000000AA"
 )
 
+// supportRe is a bare address: no display name, no spaces, one @, a dot in the domain.
+var supportRe = regexp.MustCompile(`^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$`)
+
 // Config is the environment of the Portal binary.
 type Config struct {
 	Stage, Table, Region                                 string
 	AuthGateBaseURL, AuthGateClientID                    string
 	PublicBaseURL, EmailFrom, AvatarBucket               string
+	SupportEmail                                         string // optional: Reply-To and mailto in emails
 	TurnstileSiteKey                                     string
 	ClientKeyParam, PortalKeyParam, TurnstileSecretParam string
 	OriginVerifyParam                                    string
@@ -45,6 +50,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		AuthGateClientID:     getenv("AUTHGATE_CLIENT_ID"),
 		PublicBaseURL:        strings.TrimRight(getenv("PUBLIC_BASE_URL"), "/"),
 		EmailFrom:            getenv("EMAIL_FROM"),
+		SupportEmail:         getenv("SUPPORT_EMAIL"),
 		AvatarBucket:         getenv("AVATAR_BUCKET"),
 		TurnstileSiteKey:     getenv("TURNSTILE_SITE_KEY"),
 		ClientKeyParam:       getenv("CLIENT_KEY_PARAM"),
@@ -87,6 +93,9 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	}
 	if len(missing) > 0 {
 		return Config{}, errors.New("config: portal requires " + strings.Join(missing, ", "))
+	}
+	if c.SupportEmail != "" && !supportRe.MatchString(c.SupportEmail) {
+		return Config{}, errors.New("config: SUPPORT_EMAIL must be a bare address like support@example.com")
 	}
 	return c, nil
 }
