@@ -238,7 +238,47 @@ running a fresh deploy.
 ### What stays manual
 
 `00-deployer.sh`, `00-cert.sh`, `scripts/domain/ses-identity.sh`, a stage's first deploy (and the Console's and the Portal's second pass), purges,
-`register-client.sh` (the Console's and the Portal's, with `--replace` for a new rpId), `05-backfill-clients.sh`, `06-prune-clients.sh` and `07-prune-factors.sh`.
+`register-client.sh` (the Console's and the Portal's, with `--replace` for a new rpId), `05-backfill-clients.sh`, `06-prune-clients.sh`, `07-prune-factors.sh` and `08-reset-data.sh`.
+
+### Reset stg's user data
+
+`08-reset-data.sh` empties stg of user data while keeping it deployed and working. It keeps the
+three app clients (the Console's, the Portal's and auth-app's, each read from its stack) with their
+factors, rate state and list items, plus the Console admins' accounts and their PINs and passkeys.
+It deletes every other client, every Portal and auth-app user, the Console's sessions, used tokens,
+rate buckets and audit trail, and the Portal's avatar objects under `avatars/` and `pending/`.
+Anything of an unknown shape is kept and reported. The full rules are in
+[the design](../superpowers/specs/2026-11-23-stg-reset-design.md#3-what-goes-and-what-stays).
+It stops before deleting anything if a keep-set client is missing, soft-deleted or disabled.
+
+Run the dry run first. It prints what would go and deletes nothing, in DynamoDB or S3:
+
+```bash
+(
+ADMIN_PROFILE=default scripts/setup-and-deploy/08-reset-data.sh
+)
+```
+
+Then apply. It prints the same report, then asks you to type `reset stg`; any other answer deletes
+nothing:
+
+```bash
+(
+ADMIN_PROFILE=default scripts/setup-and-deploy/08-reset-data.sh --apply
+)
+```
+
+Afterwards:
+
+1. Run the four smokes. The AuthGate smoke is `04-smoke.sh` in
+   [the rollout runbook, step 4](../runbooks/rollout-custom-domain.md); the Console's
+   `scripts/console/smoke.sh` is in
+   [step 5](../runbooks/rollout-custom-domain.md); the Portal's `scripts/portal/smoke.sh` is in
+   [step 6](../runbooks/rollout-custom-domain.md). auth-app's `04-smoke.sh`, in its own repository,
+   is in [step 4b](../runbooks/rollout-custom-domain.md).
+2. Sign in to the Console again. The apply deleted the admins' sessions (their accounts and
+   factors stay), so every operator must sign in once more.
+3. Sign up again on the Portal and in the auth-app demo: their users are gone.
 
 ### When a PR changes rights
 
