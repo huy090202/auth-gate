@@ -244,10 +244,11 @@ running a fresh deploy.
 
 `08-reset-data.sh` empties stg of user data while keeping it deployed and working. It keeps the
 three app clients (the Console's, the Portal's and auth-app's, each read from its stack) with their
-factors, rate state and list items, plus the Console admins' accounts and their PINs and passkeys.
+keys, rate state and list items, plus the Console admins' accounts and their PINs and passkeys.
+The factors of Portal and auth-app users go with those users.
 It deletes every other client, every Portal and auth-app user, the Console's sessions, used tokens,
 rate buckets and audit trail, and the Portal's avatar objects under `avatars/` and `pending/`.
-Anything of an unknown shape is kept and reported. The full rules are in
+Anything of an unknown shape is kept and listed by table and key (the first 20). The full rules are in
 [the design](../superpowers/specs/2026-11-23-stg-reset-design.md#3-what-goes-and-what-stays).
 It stops before deleting anything if a keep-set client is missing, soft-deleted or disabled.
 
@@ -268,14 +269,19 @@ ADMIN_PROFILE=default scripts/setup-and-deploy/08-reset-data.sh --apply
 )
 ```
 
+`--apply` scans again after the dry run, so anything written in between also goes. The tables are
+cleared Portal, auth-app, Console, then AuthGate; if one fails, the tool prints the tables
+finished so far, and you rerun it to finish (it is safe to run again).
+
 Afterwards:
 
 1. Run the four smokes. The AuthGate smoke is `04-smoke.sh` in
    [the rollout runbook, step 4](../runbooks/rollout-custom-domain.md); the Console's
    `scripts/console/smoke.sh` is in
    [step 5](../runbooks/rollout-custom-domain.md); the Portal's `scripts/portal/smoke.sh` is in
-   [step 6](../runbooks/rollout-custom-domain.md). auth-app's `04-smoke.sh`, in its own repository,
-   is in [step 4b](../runbooks/rollout-custom-domain.md).
+   [step 6](../runbooks/rollout-custom-domain.md). auth-app's smoke is run with
+   `scripts/setup-and-deploy/04-smoke.sh` from the auth-app worktree, as in step 8 of the "Custom
+   domain" section of auth-app's README.
 2. Sign in to the Console again. The apply deleted the admins' sessions (their accounts and
    factors stay), so every operator must sign in once more.
 3. Sign up again on the Portal and in the auth-app demo: their users are gone.

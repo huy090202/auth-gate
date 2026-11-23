@@ -25,6 +25,11 @@ var errUnprocessed = errors.New("unprocessed deletes after retries")
 // tableOrder is the order of the report lines.
 var tableOrder = []Table{AuthGate, Console, Portal, AuthApp}
 
+// processOrder is the order the tables are cleared in: the user tables before
+// the factors in AuthGate, so a failure in between leaves orphan factors
+// rather than accounts with no factor.
+var processOrder = []Table{Portal, AuthApp, Console, AuthGate}
+
 // Tables maps each Table to its DynamoDB table name.
 type Tables map[Table]string
 
@@ -37,6 +42,8 @@ type Count struct {
 	Table         Table
 	Label         string
 	Kept, Deleted int
+	// Unknown lists "pk sk" of the items labelled "unknown" (kept).
+	Unknown []string
 }
 
 // CheckKeep reads C#<id>/META in the AuthGate table for every id. It errors if
@@ -84,20 +91,23 @@ func strAttr(it map[string]types.AttributeValue, k string) string {
 // Run scans every table, decides each item with Decide and, when apply is set,
 // deletes the doomed ones. Without apply nothing is written and Deleted means
 // "would delete". It refuses an empty keep set or one without the Console client.
+// Tables are cleared in processOrder; the counts come back in tableOrder. On an
+// error it returns the counts of the tables finished before it.
 func Run(ctx context.Context, db *dynamodb.Client, tables Tables, k Keep, apply bool) ([]Count, error) {
+	return run(ctx, db, db, tables, k, apply)
+}
+
+func run(ctx context.Context, db *dynamodb.Client, bw batchWriter, tables Tables, k Keep, apply bool) ([]Count, error) {
 	if len(k.Clients) == 0 || k.Console == "" || !k.Clients[k.Console] {
 		return nil, errors.New("keep set must name the Console client")
 	}
-	type key struct {
-		t     Table
-		label string
-	}
-	tally := map[key]*Count{}
-	for _, t := range tableOrder {
+	var counts []Count
+	for _, t := range processOrder {
 		name, ok := tables[t]
 		if !ok {
-			return nil, fmt.Errorf("no table name for %s", t)
+			return sortCounts(counts), fmt.Errorf("no table name for %s", t)
 		}
+		tally := map[string]*Count{}
 		var doomed []map[string]types.AttributeValue
 		p := dynamodb.NewScanPaginator(db, &dynamodb.ScanInput{
 			TableName:            aws.String(name),
@@ -107,14 +117,15 @@ func Run(ctx context.Context, db *dynamodb.Client, tables Tables, k Keep, apply 
 		for p.HasMorePages() {
 			page, err := p.NextPage(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("scan %s: %w", name, err)
+				return sortCounts(counts), fmt.Errorf("scan %s: %w", name, err)
 			}
 			for _, it := range page.Items {
-				label, del := Decide(t, strAttr(it, "pk"), strAttr(it, "sk"), strAttr(it, "clientId"), k)
-				c := tally[key{t, label}]
+				pk, sk := strAttr(it, "pk"), strAttr(it, "sk")
+				label, del := Decide(t, pk, sk, strAttr(it, "clientId"), k)
+				c := tally[label]
 				if c == nil {
 					c = &Count{Table: t, Label: label}
-					tally[key{t, label}] = c
+					tally[label] = c
 				}
 				if del {
 					c.Deleted++
@@ -122,18 +133,24 @@ func Run(ctx context.Context, db *dynamodb.Client, tables Tables, k Keep, apply 
 				} else {
 					c.Kept++
 				}
+				if label == "unknown" {
+					c.Unknown = append(c.Unknown, pk+" "+sk)
+				}
 			}
 		}
 		if apply {
-			if err := deleteKeys(ctx, db, name, doomed, baseBackoff); err != nil {
-				return nil, err
+			if err := deleteKeys(ctx, bw, name, doomed, baseBackoff); err != nil {
+				return sortCounts(counts), err
 			}
 		}
+		for _, c := range tally {
+			counts = append(counts, *c)
+		}
 	}
-	counts := make([]Count, 0, len(tally))
-	for _, c := range tally {
-		counts = append(counts, *c)
-	}
+	return sortCounts(counts), nil
+}
+
+func sortCounts(counts []Count) []Count {
 	rank := map[Table]int{}
 	for i, t := range tableOrder {
 		rank[t] = i
@@ -144,7 +161,7 @@ func Run(ctx context.Context, db *dynamodb.Client, tables Tables, k Keep, apply 
 		}
 		return counts[i].Label < counts[j].Label
 	})
-	return counts, nil
+	return counts
 }
 
 // batchWriter is the part of the DynamoDB client deleteKeys needs.

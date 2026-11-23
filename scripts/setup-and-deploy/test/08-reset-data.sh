@@ -43,6 +43,8 @@ STUB
 cat >"$tmp/bin/go" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$GO_CALLS"
+echo "env profile=${AWS_PROFILE-unset} region=${AWS_REGION-unset} key=${AWS_ACCESS_KEY_ID+set} endpoint=${DYNAMO_ENDPOINT+set}" >>"$GO_CALLS"
+[ -z "${GO_FAIL_DRY:-}" ] || case " $* " in *" -apply "*) ;; *) exit 1 ;; esac
 echo "keeping clients: console-id portal-id app-id"
 echo "total 0 to delete"
 case " $* " in *" -apply "*) ;; *) echo "rerun with --apply to delete them" ;; esac
@@ -89,7 +91,7 @@ done
 reset_calls
 run ''
 check "dry run exits 0" test "$rc" -eq 0
-check "dry run: go runs once" test "$(count . "$GO_CALLS")" -eq 1
+check "dry run: go runs once" test "$(count '-stage' "$GO_CALLS")" -eq 1
 check "dry run: go gets no -apply" test "$(go_apply_calls)" -eq 0
 check "dry run: go gets the keep set" grep -q -- '-stage stg -console console-id -portal portal-id -authapp app-id' "$GO_CALLS"
 check "dry run: two s3 rm --dryrun" test "$(s3_dry)" -eq 2
@@ -111,8 +113,34 @@ reset_calls
 run $'reset stg\n' --apply
 check "apply exits 0" test "$rc" -eq 0
 check "apply: exactly one go -apply" test "$(go_apply_calls)" -eq 1
-check "apply: dry run came first" test "$(count . "$GO_CALLS")" -eq 2
+check "apply: dry run came first" test "$(count '-stage' "$GO_CALLS")" -eq 2
 check "apply: two live s3 rm" test "$(s3_live)" -eq 2
 check "apply: prints the follow-up" grep -q 'done; run the four smokes' <<<"$out"
+
+# 6. The Go half gets the admin profile and region, without inherited keys or a local endpoint.
+reset_calls
+rc=0
+out="$(printf '' | AWS_ACCESS_KEY_ID=leak AWS_SECRET_ACCESS_KEY=leak AWS_SESSION_TOKEN=leak \
+  DYNAMO_ENDPOINT=http://localhost:8000 ADMIN_PROFILE=admin-stub bash "$script" 2>&1)" || rc=$?
+check "env: dry run exits 0" test "$rc" -eq 0
+check "env: go sees the admin profile" grep -q 'env profile=admin-stub ' "$GO_CALLS"
+check "env: go sees the region" grep -q "region=${REGION:-ap-southeast-1} " "$GO_CALLS"
+check "env: go sees no AWS_ACCESS_KEY_ID" grep -q 'key= ' "$GO_CALLS"
+check "env: go sees no DYNAMO_ENDPOINT" grep -q 'endpoint=$' "$GO_CALLS"
+
+# 7. A failing dry run stops before the prompt, even with --apply and the right answer.
+reset_calls
+rc=0
+out="$(printf 'reset stg\n' | GO_FAIL_DRY=1 bash "$script" --apply 2>&1)" || rc=$?
+check "failing dry run exits non-zero" test "$rc" -ne 0
+check "failing dry run: no go -apply" test "$(go_apply_calls)" -eq 0
+check "failing dry run: no live s3 rm" test "$(s3_live)" -eq 0
+
+# 8. An extra argument is a usage error with no call.
+reset_calls
+run '' --apply x
+check "extra argument exits non-zero" test "$rc" -ne 0
+check "extra argument prints usage" grep -q 'usage' <<<"$out"
+check "extra argument makes no call" test ! -s "$AWS_CALLS" -a ! -s "$GO_CALLS"
 
 exit "$fail"

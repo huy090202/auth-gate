@@ -45,7 +45,10 @@ bucket="$value"
 
 cd "$ROOT"
 reset_tables() { # reset_tables [-apply]
-  AWS_PROFILE="$ADMIN_PROFILE" AWS_REGION="$REGION" go run ./cmd/stg-reset -stage "$STAGE" \
+  # Same target as awsa: drop inherited keys (the SDK would prefer them to the profile) and a
+  # DynamoDB Local endpoint.
+  env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u DYNAMO_ENDPOINT \
+    AWS_PROFILE="$ADMIN_PROFILE" AWS_REGION="$REGION" go run ./cmd/stg-reset -stage "$STAGE" \
     -console "$console_id" -portal "$portal_id" -authapp "$app_id" "$@"
 }
 reset_avatars() { # reset_avatars [--dryrun]

@@ -18,6 +18,9 @@ import (
 	"github.com/huy090202/auth-gate/internal/reset"
 )
 
+// maxUnknownLines caps the unknown items listed.
+const maxUnknownLines = 20
+
 func main() {
 	stage := flag.String("stage", "", "stage to reset; only stg is allowed")
 	consoleID := flag.String("console", "", "client id the Console uses")
@@ -61,20 +64,35 @@ func run(stage, consoleID, portalID, appID string, apply bool) error {
 		fmt.Printf("  %s name=%q rpId=%q\n", c.ID, c.Name, c.RPID)
 	}
 	counts, err := reset.Run(ctx, db, tables, k, apply)
-	if err != nil {
-		return err
-	}
 	verb := "would delete"
 	if apply {
 		verb = "deleted"
 	}
 	var keptN, delN int
+	var unknown []string
 	for _, c := range counts {
 		fmt.Printf("%s %s kept=%d %s=%d\n", c.Table, c.Label, c.Kept, verb, c.Deleted)
 		keptN += c.Kept
 		delN += c.Deleted
+		for _, u := range c.Unknown {
+			unknown = append(unknown, fmt.Sprintf("%s %s", c.Table, u))
+		}
+	}
+	if err != nil {
+		fmt.Printf("stopped early; the lines above are the tables finished before the failure\n")
+		return fmt.Errorf("%w\nrerun to finish; it is safe to run again", err)
 	}
 	fmt.Printf("total kept=%d %s=%d\n", keptN, verb, delN)
+	if len(unknown) > 0 {
+		fmt.Println("unknown items (kept):")
+		for i, u := range unknown {
+			if i == maxUnknownLines {
+				fmt.Printf("… and %d more\n", len(unknown)-maxUnknownLines)
+				break
+			}
+			fmt.Println(" ", u)
+		}
+	}
 	if !apply && delN > 0 {
 		fmt.Println("rerun with --apply to delete them")
 	}

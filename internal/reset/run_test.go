@@ -270,3 +270,67 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// failOn delegates to the real client except for one table, whose writes fail.
+type failOn struct {
+	db    *dynamodb.Client
+	table string
+}
+
+func (f failOn) BatchWriteItem(ctx context.Context, in *dynamodb.BatchWriteItemInput, o ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error) {
+	if _, bad := in.RequestItems[f.table]; bad {
+		return nil, errors.New("boom")
+	}
+	return f.db.BatchWriteItem(ctx, in, o...)
+}
+
+// A failure on the third table (Console) returns the counts of the first two
+// (Portal, AuthApp), which were cleared before it, and not the failing one.
+func TestRunErrorKeepsCountsSoFar(t *testing.T) {
+	db, tables := setup(t)
+	counts, err := run(context.Background(), db, failOn{db, tables[Console]}, tables, testKeep, true)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	seen := map[Table]bool{}
+	for _, c := range counts {
+		seen[c.Table] = true
+	}
+	if len(seen) != 2 || !seen[Portal] || !seen[AuthApp] {
+		t.Fatalf("counts tables = %v, want Portal and AuthApp only", seen)
+	}
+	// The user tables are already empty of doomed items, AuthGate untouched.
+	if left := remaining(t, db, Tables{Portal: tables[Portal]}); len(left) != 0 {
+		t.Fatalf("portal not cleared: %v", left)
+	}
+	if left := remaining(t, db, Tables{AuthGate: tables[AuthGate]}); len(left) != len(seeds[AuthGate]) {
+		t.Fatalf("AuthGate changed: %v", left)
+	}
+}
+
+func TestRunListsUnknownItems(t *testing.T) {
+	db, tables := setup(t)
+	counts, err := Run(context.Background(), db, tables, testKeep, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, c := range counts {
+		for _, u := range c.Unknown {
+			got = append(got, fmt.Sprintf("%s %s", c.Table, u))
+		}
+	}
+	sort.Strings(got)
+	// WEIRD#1 and S#nohash in AuthGate, ODD#1 in Console are the seeded unknown shapes.
+	want := map[string]bool{"authgate WEIRD#1 X": false, "authgate S#nohash PIN": false, "console ODD#1 X": false}
+	for _, g := range got {
+		if _, ok := want[g]; ok {
+			want[g] = true
+		}
+	}
+	for k, ok := range want {
+		if !ok {
+			t.Fatalf("missing %q in %v", k, got)
+		}
+	}
+}
