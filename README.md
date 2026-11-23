@@ -513,8 +513,8 @@ with `EMAIL_FROM` and `TURNSTILE_SITE_KEY` from the repository variables `PORTAL
 `PORTAL_TURNSTILE_SITE_KEY`. They are variables, not secrets: the sender address and the site key
 are both public. `SUPPORT_EMAIL` (optional) is the Reply-To address and the support line of every
 email; `deploy.sh` sets it to `support@<domain>` when a domain is configured
-([Mail to the domain](#mail-to-the-domain)). The Lambda has no reserved concurrency (the account quota is small), so the
-per-IP and per-account limiters are the guard. While SES is in its sandbox it sends only to
+([Mail to the domain](#mail-to-the-domain)). The Lambda has no reserved concurrency (the account
+quota is small), so the per-IP and per-account limiters are the guard. While SES is in its sandbox it sends only to
 verified addresses.
 
 ### Known limits
@@ -787,7 +787,7 @@ scripts/domain/dns-records.sh
 
 Expect `Created SES identity authgatehq.com in ap-southeast-1` and `VerifiedForSendingStatus:
 False`. The table lists the certificate record, the three `<token>._domainkey` CNAMEs
-to `<token>.dkim.amazonses.com`, and `_dmarc` TXT `v=DMARC1; p=none`. The `api`, `admin`, `portal`
+to `<token>.dkim.amazonses.com`, and `_dmarc` TXT `v=DMARC1; p=none; rua=mailto:dmarc@authgatehq.com`. The `api`, `admin`, `portal`
 and `@` rows read `pending (stack ... not deployed)` or show the CloudFront names of stacks that
 exist: those come later. Add the three DKIM records and the `_dmarc` record in Cloudflare, wait a
 few minutes, then rerun:
@@ -1122,7 +1122,8 @@ ADMIN_PROFILE=default scripts/domain/dns-records.sh | grep '^_dmarc'
 )
 ```
 
-   Expect `_dmarc  TXT  v=DMARC1; p=none; rua=mailto:dmarc@authgatehq.com  DNS only`.
+   Expect one row, its columns space-padded: `_dmarc`, `TXT`,
+   `v=DMARC1; p=none; rua=mailto:dmarc@authgatehq.com`, `DNS only`.
 3. Deploy the Portal from the branch. The site key is read from the stack, as in step 6 of the
    move above:
 
@@ -1137,6 +1138,14 @@ TURNSTILE_SITE_KEY="$(aws cloudformation describe-stacks --stack-name auth-gate-
 echo "site key: $TURNSTILE_SITE_KEY"
 export TURNSTILE_SITE_KEY
 scripts/portal/deploy.sh
+)
+```
+
+   Then smoke it:
+
+```bash
+cd /home/work/auth-gate/feat-portal-email && pnpm install --frozen-lockfile && (
+AWS_PROFILE=default scripts/portal/smoke.sh
 )
 ```
 
