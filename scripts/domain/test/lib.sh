@@ -25,7 +25,11 @@ case "$args" in
       *"/credo/auth-gate/t/certificate-arn "*) [ "$SCENARIO" = no-arn ] && notfound; echo arn:cert ;;
       *) echo "stub: unexpected parameter: $args" >&2; exit 255 ;;
     esac ;;
-  *" --region us-east-1 "*" acm describe-certificate "* | *" acm describe-certificate "*--region\ us-east-1*)
+  *" acm describe-certificate "*)
+    case "$args" in
+      *" --region us-east-1 "*) ;;
+      *) echo "stub: acm call without --region us-east-1: $args" >&2; exit 255 ;;
+    esac
     [ "$SCENARIO" = pending ] && echo PENDING_VALIDATION || echo ISSUED ;;
   *) echo "stub: unexpected call: $args" >&2; exit 255 ;;
 esac
@@ -47,6 +51,20 @@ probe() {
     '"$2"'
   ' _ "$root" >"$tmp/out" 2>&1
 }
+
+# The caller's options must not matter: no set -e, and domain_config under if.
+probe_noe() {
+  export SCENARIO="$1"
+  bash -c '
+    . "$1/scripts/setup-and-deploy/lib.sh"
+    . "$1/scripts/domain/lib.sh"
+    if domain_config; then echo "continued: [$DOMAIN]"; fi
+    echo "continued after domain_config"
+  ' _ "$root" >"$tmp/out" 2>&1
+}
+for sc in denied no-arn pending; do
+  if probe_noe "$sc"; then nok "no set -e, under if, $sc: stops the script"; elif grep -q continued "$tmp/out"; then nok "no set -e, under if, $sc: stops the script"; else ok "no set -e, under if, $sc: stops the script"; fi
+done
 
 if probe absent 'domain_config; echo "[$DOMAIN][$CERT_ARN]"' && [ "$(cat "$tmp/out")" = "[][]" ]; then ok "domain absent: both empty, exit 0"; else nok "domain absent: both empty, exit 0"; fi
 

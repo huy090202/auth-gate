@@ -32,12 +32,12 @@ _domain_param() {
 }
 
 domain_config() {
-  DOMAIN="$(_domain_param domain)"
+  DOMAIN="$(_domain_param domain)" || exit 1
   CERT_ARN=""
   if [ -z "$DOMAIN" ]; then
     return 0
   fi
-  CERT_ARN="$(_domain_param certificate-arn)"
+  CERT_ARN="$(_domain_param certificate-arn)" || exit 1
   [ -n "$CERT_ARN" ] || die "domain $DOMAIN is configured but /credo/auth-gate/$STAGE/certificate-arn is not: run scripts/setup-and-deploy/00-cert.sh $DOMAIN"
   local status
   status="$(aws acm describe-certificate --region us-east-1 --certificate-arn "$CERT_ARN" \

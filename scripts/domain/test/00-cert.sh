@@ -20,6 +20,13 @@ cat >"$tmp/bin/aws" <<'STUB'
 echo "$*" >>"$CALLS"
 args=" $* "
 case "$args" in
+  *" acm "*)
+    case "$args" in
+      *" --region us-east-1 "*) ;;
+      *) echo "stub: acm call without --region us-east-1: $args" >&2; exit 255 ;;
+    esac ;;
+esac
+case "$args" in
   *" acm list-certificates "*)
     case "$SCENARIO" in
       issued) printf 'arn:old-pending\tPENDING_VALIDATION\narn:issued\tISSUED\n' ;;
