@@ -1,6 +1,6 @@
 # Reset stg's user data
 
-Date: 2026-11-23. Status: draft for the owner's review.
+Date: 2026-11-23. Status: approved by the owner in chat the same day.
 
 ## 1. Purpose
 
@@ -76,8 +76,8 @@ lists the rules.
 **Console, `auth-gate-console-stg`:**
 - Kept: `ADMINS/A#…`, the admin accounts.
 - Deleted: `SES#…` (sessions), `JTI#…` (used tokens), `RL#…` (rate buckets).
-- `AUDIT#…`, the operator's audit trail, has no TTL. **Open question for the owner:** keep it, or
-  delete it for a clean slate? It records actions on clients that the reset deletes.
+- Deleted: `AUDIT#…`, the operator's audit trail. Decided by the owner: "xoá audit luôn"
+  (delete the audit too). It records actions on clients that the reset deletes.
 
 **Portal, `auth-gate-portal-stg`:**
 - Deleted: every item. The table holds only user data, its indexes, and ephemeral items:
