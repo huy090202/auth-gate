@@ -37,6 +37,8 @@ jobs:
       - run: pnpm run check
         env:
           DYNAMO_ENDPOINT: http://localhost:8000
+          # The shellcheck npm wrapper downloads its binary; a token lifts GitHub's per-IP limit.
+          GITHUB_TOKEN: ${{ github.token }}
 
   deploy:
     needs: check
