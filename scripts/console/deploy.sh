@@ -5,11 +5,18 @@
 # may be empty on the first pass: deploy, run register-client.sh stg (it needs this
 # stack's BaseUrl), deploy again with AUTHGATE_CLIENT_ID set. CONSOLE_RESERVED_CONCURRENCY,
 # when set, reserves that many concurrent executions for the Console.
+# The custom domain comes from SSM (scripts/domain/lib.sh): with /credo/auth-gate/$STAGE/domain
+# set, the Console serves on admin.<domain>, and the deploy stops before sam unless the
+# certificate is ISSUED. DNS is never written here.
 set -euo pipefail
 # shellcheck source=lib.sh
 # shellcheck source-path=SCRIPTDIR
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=../domain/lib.sh
+# shellcheck source-path=SCRIPTDIR
+. "$(dirname "${BASH_SOURCE[0]}")/../domain/lib.sh"
 
+domain_config
 command -v jq >/dev/null || die "jq is required"
 command -v openssl >/dev/null || die "openssl is required"
 client_id="${AUTHGATE_CLIENT_ID:-}"
@@ -46,6 +53,7 @@ pnpm --filter console-web run build
 # so a plain redeploy of a healthy stack keeps its client id.
 params=("Stage=$STAGE" "AuthGateBaseUrl=${authgate_url%/}")
 [[ -z "$client_id" ]] || params+=("AuthGateClientId=$client_id")
+[[ -z "$DOMAIN" ]] || params+=("DomainName=$(app_host admin)" "CertificateArn=$CERT_ARN")
 # The same for CONSOLE_RESERVED_CONCURRENCY (0 reserves none): unset, a create gets the
 # template default 0 and an update keeps the previous value.
 if [[ -n "${CONSOLE_RESERVED_CONCURRENCY:-}" ]]; then

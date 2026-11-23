@@ -7,7 +7,7 @@
   },
   "scripts": {
     "lint": "shellcheck -x scripts/setup-and-deploy/*.sh scripts/setup-and-deploy/test/*.sh scripts/ci/*.sh scripts/ci/test/*.sh scripts/console/*.sh scripts/portal/*.sh scripts/domain/*.sh scripts/domain/test/*.sh tools/wt/*.sh tools/wt/test/*.sh .claude/statusline.sh .claude/hooks/*.sh && go tool actionlint && pnpm -r lint",
-    "test": "bash tools/wt/test/hooks.sh && bash tools/wt/test/e2e.sh && bash scripts/setup-and-deploy/test/06-prune-clients.sh && bash scripts/setup-and-deploy/test/99-purge.sh && bash scripts/ci/test/00-sam-lifecycle.sh && bash scripts/domain/test/00-cert.sh && bash scripts/domain/test/lib.sh && bash scripts/domain/test/03-deploy.sh && pnpm -r test",
+    "test": "node --test infra/functions/test/*.test.mjs && bash tools/wt/test/hooks.sh && bash tools/wt/test/e2e.sh && bash scripts/setup-and-deploy/test/06-prune-clients.sh && bash scripts/setup-and-deploy/test/99-purge.sh && bash scripts/ci/test/00-sam-lifecycle.sh && bash scripts/domain/test/00-cert.sh && bash scripts/domain/test/lib.sh && bash scripts/domain/test/03-deploy.sh && pnpm -r test",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && make check",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build"
