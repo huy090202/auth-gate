@@ -734,6 +734,14 @@ To add a record in Cloudflare (every record in this rollout):
 2. Choose the Type, type the Name and the Target (or Content) exactly as printed.
 3. Set Proxy status to DNS only (grey cloud). Save.
 
+Never query a name before its record exists: a resolver that answered "no such name" keeps that
+answer for the zone's negative TTL (1800 s), and a smoke run too early fails with `ENOTFOUND` for
+up to 30 minutes. After adding `api`, `admin` or `portal`, check it resolves before its smoke:
+
+```bash
+for i in $(seq 10); do getent ahostsv4 api.authgatehq.com >/dev/null && printf 'ok ' || printf 'FAIL '; sleep 1; done; echo
+```
+
 **1. The certificate.** Request it, then add the validation CNAME it prints (the apex and the
 wildcard share one record) and wait for `ISSUED`. Validation usually takes a few minutes after the
 record resolves. Keep this CNAME forever: ACM renews the certificate through it, and without it
@@ -823,7 +831,7 @@ ADMIN_PROFILE=default scripts/domain/dns-records.sh
 
 Expect `BaseUrl: https://api.authgatehq.com` and `RawVerifyUrl: ...`. A CloudFront update takes
 several minutes. Add the `api` CNAME in Cloudflare (Target: the distribution name from the `api`
-row), then:
+row), check it resolves (the loop above), then:
 
 ```bash
 cd /home/work/auth-gate/feat-custom-domain && pnpm install --frozen-lockfile && (
@@ -875,7 +883,7 @@ Expect `BaseUrl: https://admin.authgatehq.com`; from `register-client.sh`,
 `registered auth-gate-console-stg; wrote /credo/auth-gate-console/stg/authgate-client-key
 (SecureString)`, `disable the old client <old id> in the Console once the new one works` (note the
 old id) and `AUTHGATE_CLIENT_ID=<new id>`. Add the `admin` CNAME in Cloudflare (Target: the
-`admin` row), then:
+`admin` row), check it resolves (the loop above, with `admin`), then:
 
 ```bash
 cd /home/work/auth-gate/feat-custom-domain && pnpm install --frozen-lockfile && (
@@ -901,7 +909,10 @@ cd /home/work/auth-gate/feat-custom-domain && pnpm install --frozen-lockfile && 
 set -euo pipefail
 export AWS_PROFILE=default AWS_REGION=ap-southeast-1 STAGE=stg
 export EMAIL_FROM=no-reply@authgatehq.com
-TURNSTILE_SITE_KEY="$(gh variable get PORTAL_TURNSTILE_SITE_KEY)"
+TURNSTILE_SITE_KEY="$(aws cloudformation describe-stacks --stack-name auth-gate-portal-stg \
+  --query "Stacks[0].Parameters[?ParameterKey=='TurnstileSiteKey'].ParameterValue" --output text)"
+[[ -n "$TURNSTILE_SITE_KEY" && "$TURNSTILE_SITE_KEY" != None ]] || { echo "no TurnstileSiteKey on the stack" >&2; exit 1; }
+echo "site key: $TURNSTILE_SITE_KEY"
 export TURNSTILE_SITE_KEY
 scripts/portal/deploy.sh                           # alias, PublicBaseUrl on portal.; old id kept
 scripts/portal/register-client.sh stg --replace    # asks: Type 'replace auth-gate-portal-stg' ...
@@ -912,18 +923,21 @@ ADMIN_PROFILE=default scripts/domain/dns-records.sh
 )
 ```
 
-The site key is read from the repository variable `PORTAL_TURNSTILE_SITE_KEY` (the one CI uses),
-so there is no prompt. Expect
+The site key (public) is read from the deployed stack's `TurnstileSiteKey` parameter, so there
+is no prompt and no `gh` is needed. Expect `site key: 0x...`, then
 `BaseUrl: https://portal.authgatehq.com` and `AUTHGATE_CLIENT_ID=<new id>`; write down the old id
-the register step printed. Add the `portal` CNAME in Cloudflare, then smoke. The variable is set only if the smoke passes. Then sign up in a browser:
+the register step printed. Add the `portal` CNAME in Cloudflare, check it resolves, then smoke:
 
 ```bash
 cd /home/work/auth-gate/feat-custom-domain && pnpm install --frozen-lockfile && (
-set -euo pipefail
 AWS_PROFILE=default scripts/portal/smoke.sh
-gh variable set PORTAL_EMAIL_FROM --body no-reply@authgatehq.com
 )
 ```
+
+Once the smoke passes, change the repository variable `PORTAL_EMAIL_FROM` to
+`no-reply@authgatehq.com`: GitHub, the repository, Settings, Secrets and variables, Actions,
+Variables, `PORTAL_EMAIL_FROM`, edit, Update. (With the `gh` CLI:
+`gh variable set PORTAL_EMAIL_FROM --body no-reply@authgatehq.com`.) Then sign up in a browser:
 
 1. Open `https://portal.authgatehq.com` and sign up. While SES is in its sandbox the address must
    be one SES has verified (the old sender address will do); a stranger's address works only after
