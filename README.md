@@ -20,8 +20,8 @@ To integrate, start with the [docs and live demo](https://d3d49hg6rb8ylx.cloudfr
 
 One Go binary runs as three Lambda functions behind one CloudFront distribution, which
 routes by path. Integrators see a single base URL, the distribution's `*.cloudfront.net`
-name or an optional custom domain (parameters `DomainName`, `CertificateArn`,
-`HostedZoneId`).
+name or an optional custom domain, `api.<domain>` (parameters `DomainName` and
+`CertificateArn`, set by `03-deploy.sh` from SSM; DNS is yours to create).
 
 | Path | Role | Credential |
 | --- | --- | --- |
@@ -368,8 +368,8 @@ deployer key cannot mint a role more powerful than the boundary. Its KMS, CloudF
 rights reach only auth-gate's own resources ([Deployer scope](#deployer-scope)). It can still
 change Lambda code and the Console's site (so it can swap the JavaScript the admin loads), read
 `admin-key` and `portal-key` from SSM, edit any CloudFront cache, origin request, response headers or origin
-access control policy in the account (CloudFront cannot scope those), and it holds wide rights on
-Route 53 and ACM until the custom domain work settles them. CI does not use the key: it assumes the
+access control policy in the account (CloudFront cannot scope those), and it holds rights on ACM
+certificates. CI does not use the key: it assumes the
 role `ci-auth-gate-deploy` ([Continuous deploy](#continuous-deploy)). Keep the key out of shells
 you do not control.
 
@@ -696,10 +696,10 @@ other stages, with AWS access. They live in `scripts/setup-and-deploy/` and read
    holds at most 6144 characters: `auth-gate-deployer-policy` from `infra/deployer-policy.json`
    (CloudFormation, S3, Lambda, the IAM roles under the boundary, DynamoDB, KMS, SSM and logs)
    and `auth-gate-deployer-edge-policy` from `infra/deployer-policy-edge.json` (CloudFront
-   distributions and policies, edge functions, the optional ACM and Route 53 rights). Both are
+   distributions and policies, edge functions, the ACM certificate rights). Both are
    attached to the user and to the CI role, and together they are the deployer's rights. The deployer cannot create the stacks: a stage's first deploy runs under the
    admin profile ([First deploy of a stage](#first-deploy-of-a-stage)).
-1. `00-cert.sh DOMAIN` (optional): request an ACM certificate in `us-east-1`.
+1. `00-cert.sh DOMAIN [--wait]` (optional): request the ACM certificate for `DOMAIN` and `*.DOMAIN` in `us-east-1`, record `domain` and `certificate-arn` in SSM, and print the DNS validation record. `03-deploy.sh` then deploys AuthGate on `api.DOMAIN` once the certificate is issued.
 2. `01-ssm.sh`: write the random `admin-key` and `portal-key` (SecureStrings) and
    `origin-verify` (plain String; CloudFront cannot resolve a SecureString). A parameter that
    exists is kept, and no value ever goes on an argv.

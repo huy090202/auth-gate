@@ -76,16 +76,12 @@
       "Resource": "arn:aws:cloudfront::826113468815:function/auth-gate-*"
     },
     {
-      "Sid": "OptionalCustomDomain",
+      "Sid": "TheCertificate",
       "Effect": "Allow",
       "Action": [
         "acm:RequestCertificate",
         "acm:DescribeCertificate",
-        "acm:ListCertificates",
-        "route53:ChangeResourceRecordSets",
-        "route53:GetChange",
-        "route53:GetHostedZone",
-        "route53:ListResourceRecordSets"
+        "acm:ListCertificates"
       ],
       "Resource": "*"
     }
