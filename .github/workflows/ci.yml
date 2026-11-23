@@ -37,7 +37,9 @@ jobs:
       - run: pnpm run check
         env:
           DYNAMO_ENDPOINT: http://localhost:8000
-          # The shellcheck npm wrapper downloads its binary; a token lifts GitHub's per-IP limit.
+          # The shellcheck npm wrapper asks GitHub's API for its latest release on every fresh
+          # runner (it cannot be pinned: 4.1.0 ignores SHELLCHECKJS_RELEASE on download); a token
+          # lifts the per-IP limit that failed CI with 403.
           GITHUB_TOKEN: ${{ github.token }}
 
   deploy:

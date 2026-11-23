@@ -283,7 +283,7 @@ and its own client. Step 4b already keeps the demo working until then. The apex 
 production access in the AWS console:
 
 1. AWS console, region Asia Pacific (Singapore) `ap-southeast-1`, Amazon SES.
-2. Account dashboard, Request production access.
+2. Get set up (the Account dashboard's sandbox banner links to it), Request production access.
 3. Mail type: Transactional. Website URL: `https://portal.authgatehq.com`.
 4. Paste the text below into "Use case description". Acknowledge the terms and submit.
 
@@ -293,21 +293,22 @@ https://portal.authgatehq.com, lets developers sign up and manage the clients th
 service. We use SES only for transactional email sent from no-reply@authgatehq.com, a verified
 domain with DKIM and a DMARC record: the account verification link, the password reset link, and
 security notices (confirming a reset of sign-in factors or a change of email address, and a notice
-to an address that already has an account). We send only to
-people who signed up for an account on the Portal themselves and must prove they own the address
-before anything else is sent. We send no marketing, newsletters or purchased lists.
+to an address that already has an account). We send only to people who signed up for an account
+on the Portal themselves and must prove they own the address before anything else is sent. We send
+no marketing, newsletters or purchased lists.
 
 Volume: under 100 emails a day, in the low tens in practice.
 
 Bounces and complaints: the account-level suppression list is on for BOUNCE and COMPLAINT, so SES
-stops mailing any address that bounced or complained. Every sign-up and email route is also
-protected by Cloudflare Turnstile and per-address and per-IP rate limits, so the service cannot be
-used to send mail to people who did not ask for it. Mail is sent from a no-reply address. Replies go to
-support@authgatehq.com, which a person reads. The Portal has no way to send to an address that has
-not signed up.
+stops mailing any address that bounced or complained. Sign-up, resending the verification link, and
+the password and factor reset requests are protected by Cloudflare Turnstile and by per-address and
+per-IP rate limits, so the service cannot be used to send mail to people who did not ask for it.
+Moving an account to a new email address requires the account's second factor first. Mail is sent
+from a no-reply address; replies go to support@authgatehq.com, which a person reads.
 ```
 
-Until approval, verified addresses keep working. Check it with
+This is the text sent on 2026-11-23; AWS granted production access the same day. Until approval,
+verified addresses keep working. Check it with
 `aws sesv2 get-account --profile default --region ap-southeast-1 --query ProductionAccessEnabled`
 (`True` once approved).
 

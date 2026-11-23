@@ -12,7 +12,7 @@ It runs on AWS Lambda behind CloudFront:
 | --- | --- |
 | The API | `https://api.authgatehq.com` |
 | Portal: sign up and manage your own clients | [portal.authgatehq.com](https://portal.authgatehq.com) |
-| Docs, and a demo app that uses AuthGate (EN/VI) | [Docs and live demo](https://d3d49hg6rb8ylx.cloudfront.net) |
+| Docs, and a demo app that uses AuthGate (EN/VI) | [authgatehq.com](https://authgatehq.com) |
 | Console: the operator's app, no sign-up | `https://admin.authgatehq.com` |
 
 To integrate, sign up on the Portal, create a client, and follow the docs.
