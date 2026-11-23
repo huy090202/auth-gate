@@ -112,8 +112,12 @@ func (d *Dir) Send(_ context.Context, m Message) error {
 		return err
 	}
 	base := fmt.Sprintf("%s-%s-%s", time.Now().UTC().Format(time.RFC3339Nano), m.Kind, hex.EncodeToString(rnd[:]))
-	for ext, data := range map[string][]byte{".json": body, ".html": []byte(r.HTML), ".txt": []byte(r.Text)} {
-		if err := d.write(base+ext, data); err != nil {
+	// The json goes last, so a reader that sees it also finds the other two.
+	for _, f := range []struct {
+		ext  string
+		data []byte
+	}{{".html", []byte(r.HTML)}, {".txt", []byte(r.Text)}, {".json", body}} {
+		if err := d.write(base+f.ext, f.data); err != nil {
 			return err
 		}
 	}

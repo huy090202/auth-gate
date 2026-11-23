@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Subject}}</title>
 </head>
-<body style="margin:0;padding:0;background:#eef4f0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-<div style="display:none;max-height:0;overflow:hidden;">{{.Preheader}}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef4f0;padding:32px 16px;">
+<body bgcolor="#eef4f0" style="margin:0;padding:0;background:#eef4f0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;opacity:0;">{{.Preheader}}&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;</div>
+<table role="presentation" width="100%" bgcolor="#eef4f0" cellpadding="0" cellspacing="0" style="background:#eef4f0;padding:32px 16px;">
 <tr><td align="center">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+  <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="width:100%;max-width:560px;">
     <tr><td style="padding:0 4px 16px;">
       <table role="presentation" cellpadding="0" cellspacing="0"><tr>
         <td style="vertical-align:middle;"><img src="{{.Logo}}" width="32" height="32" alt="AuthGate" style="display:block;border:0;"></td>
@@ -23,8 +23,8 @@
       <p style="margin:0 0 {{.UntilGap}};font-size:13px;line-height:1.5;color:#4b5d54;">{{.Until}}</p>
 {{- end}}
 {{- with .Button}}
-      <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border-radius:8px;{{if .Primary}}background:#0b7041;{{else}}border:1px solid #0b7041;{{end}}">
-        <a href="{{.URL}}" style="display:inline-block;padding:{{if .Primary}}13px 26px{{else}}12px 24px{{end}};font-size:16px;font-weight:600;color:{{if .Primary}}#ffffff{{else}}#0b7041{{end}};text-decoration:none;border-radius:8px;">{{.Label}}</a>
+      <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border-radius:8px;padding:{{if .Primary}}13px 26px;background:#0b7041{{else}}12px 24px;border:1px solid #0b7041{{end}};">
+        <a href="{{.URL}}" style="display:block;font-size:16px;font-weight:600;color:{{if .Primary}}#ffffff{{else}}#0b7041{{end}};text-decoration:none;">{{.Label}}</a>
       </td></tr></table>
 {{- end}}
 {{- if .Fallback}}
