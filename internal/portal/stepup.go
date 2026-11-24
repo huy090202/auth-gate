@@ -23,6 +23,7 @@ var stepUpActions = func() map[string]string {
 	for _, a := range []string{
 		"rotate-key", "revoke-previous-keys", "disable-client", "purge-subject", "delete-client",
 		"change-password", "change-email", "add-factor", "remove-factor", "regenerate-recovery-codes", "delete-account",
+		"change-role", "remove-member", "delete-org",
 	} {
 		m[a] = "portal-" + a
 	}
@@ -36,6 +37,8 @@ const (
 	clientTarget  targetKind = iota // a client id
 	subjectTarget                   // <clientId>/<subjectId>
 	accountTarget                   // the user's own id
+	memberTarget                    // <tenantId>/<userId>
+	tenantTarget                    // a tenant id
 )
 
 // stepUpTargets says what each action is bound to. Every action takes a target.
@@ -44,6 +47,7 @@ var stepUpTargets = map[string]targetKind{
 	"purge-subject":   subjectTarget,
 	"change-password": accountTarget, "change-email": accountTarget, "add-factor": accountTarget,
 	"remove-factor": accountTarget, "regenerate-recovery-codes": accountTarget, "delete-account": accountTarget,
+	"change-role": memberTarget, "remove-member": memberTarget, "delete-org": tenantTarget,
 }
 
 var errInvalidTarget = apiErr(http.StatusBadRequest, "invalid_target")
@@ -66,8 +70,11 @@ func stepUpPurpose(action, target string) (purpose string, err error) {
 
 func validTarget(kind targetKind, target string) bool {
 	switch kind {
-	case clientTarget, accountTarget:
+	case clientTarget, accountTarget, tenantTarget:
 		return id.ValidateULID(target) == nil
+	case memberTarget:
+		tenant, user, ok := strings.Cut(target, "/")
+		return ok && id.ValidateULID(tenant) == nil && id.ValidateULID(user) == nil
 	case subjectTarget:
 		client, subject, ok := strings.Cut(target, "/")
 		return ok && id.ValidateULID(client) == nil && webapi.ValidSubject(subject)
