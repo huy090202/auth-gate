@@ -647,9 +647,16 @@ func (a *App) deleteAccount(w http.ResponseWriter, r *http.Request) error {
 		return errAuthGateDown
 	}
 	for _, t := range orgs.remove {
-		marked, err := a.Store.MarkDeleting(ctx, t.ID, a.now())
+		marked, err := a.Store.MarkDeletingIfAlone(ctx, t.ID, a.now())
 		if errors.Is(err, ErrTenantNotFound) {
 			continue
+		}
+		if errors.Is(err, ErrNotAlone) {
+			// Someone joined since classifyOrgs: the person is now its sole owner with members.
+			return &webapi.Error{Status: http.StatusConflict, Code: "sole_owner", Extra: map[string]any{"organisations": []string{t.Name}}}
+		}
+		if errors.Is(err, ErrConflict) {
+			return apiErr(http.StatusConflict, "conflict")
 		}
 		if err != nil {
 			return err

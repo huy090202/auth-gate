@@ -306,10 +306,25 @@ func (st *Store) orgWrites(tenantID string, actor Membership, userID string, own
 // stay before DynamoDB's TTL removes them.
 const orgDeletedTTL = 30 * 24 * time.Hour
 
+// ErrNotAlone means the organisation has members besides the one deleting it.
+var ErrNotAlone = errors.New("portal: organisation has other members")
+
 // MarkDeleting starts an organisation's deletion: it sets deletingAt unless it
 // is set already, and returns the tenant as it then is either way. A personal
 // workspace gives ErrPersonal.
 func (st *Store) MarkDeleting(ctx context.Context, tenantID string, now time.Time) (Tenant, error) {
+	return st.markDeleting(ctx, tenantID, now, false)
+}
+
+// MarkDeletingIfAlone is MarkDeleting for account deletion: it sets deletingAt
+// only while the organisation has exactly one member, else ErrNotAlone, so an
+// invite accepted since the caller looked stops it. A tenant already marked is
+// returned as it is.
+func (st *Store) MarkDeletingIfAlone(ctx context.Context, tenantID string, now time.Time) (Tenant, error) {
+	return st.markDeleting(ctx, tenantID, now, true)
+}
+
+func (st *Store) markDeleting(ctx context.Context, tenantID string, now time.Time, alone bool) (Tenant, error) {
 	t, err := st.GetTenant(ctx, tenantID)
 	if err != nil {
 		return Tenant{}, err
@@ -320,17 +335,35 @@ func (st *Store) MarkDeleting(ctx context.Context, tenantID string, now time.Tim
 	if t.DeletingAt != nil {
 		return t, nil
 	}
+	if alone && t.Counts.Members != 1 {
+		return Tenant{}, ErrNotAlone
+	}
+	cond, vals := "kind = :org AND attribute_not_exists(deletingAt)", item{":d": s(ts(now)), ":org": s(KindOrg)}
+	if alone {
+		cond += " AND memberCount = :one"
+		vals[":one"] = n(1)
+	}
 	_, err = st.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(st.Table), Key: tenantKey(tenantID),
 		UpdateExpression:          aws.String("SET deletingAt = :d"),
-		ConditionExpression:       aws.String("kind = :org AND attribute_not_exists(deletingAt)"),
-		ExpressionAttributeValues: item{":d": s(ts(now)), ":org": s(KindOrg)},
+		ConditionExpression:       aws.String(cond),
+		ExpressionAttributeValues: vals,
 	})
 	if err != nil && !dynamo.IsConditionFailed(err) {
 		return Tenant{}, fmt.Errorf("mark deleting: %w", err)
 	}
-	// A failed condition is another run that marked it first, or a tenant now gone.
-	return st.GetTenant(ctx, tenantID)
+	// A failed condition is another run that marked it first, a member who
+	// joined since the read, or a tenant now gone.
+	if t, err = st.GetTenant(ctx, tenantID); err != nil {
+		return Tenant{}, err
+	}
+	if t.DeletingAt == nil {
+		if alone && t.Counts.Members != 1 {
+			return Tenant{}, ErrNotAlone
+		}
+		return Tenant{}, ErrConflict
+	}
+	return t, nil
 }
 
 // tenantMemberships returns every membership of a tenant, from the tenant's side

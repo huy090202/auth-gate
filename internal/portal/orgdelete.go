@@ -100,10 +100,8 @@ func (a *App) finishOrgDeletion(ctx context.Context, t Tenant, actorID string) e
 		a.mailUser(ctx, userID, "org-deleted", map[string]string{"org": t.Name})
 		return nil
 	}
-	actorIsMember := false
 	for _, m := range members {
 		if m.UserID == actorID {
-			actorIsMember = true
 			continue
 		}
 		if err := drop(m.UserID); err != nil {
@@ -113,10 +111,9 @@ func (a *App) finishOrgDeletion(ctx context.Context, t Tenant, actorID string) e
 	if err := a.Store.FinishDeletion(ctx, t, a.now()); err != nil {
 		return err
 	}
-	if actorIsMember {
-		return drop(actorID)
-	}
-	return nil
+	// Always, even when the tenant's side was not listed: a user side left
+	// behind would make every workspace list run this again.
+	return drop(actorID)
 }
 
 // deleteClients deletes the workspace's clients at AuthGate. One already gone

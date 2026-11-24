@@ -297,3 +297,56 @@ func TestDeleteAccountOnlyMember(t *testing.T) {
 		t.Fatal("the account is still there")
 	}
 }
+
+// Why: an invite accepted while account deletion talks to AuthGate would otherwise have the organisation deleted
+// with a member in it, which sole_owner exists to prevent.
+func TestDeleteAccountOrgGainsMemberBeforeMark(t *testing.T) {
+	e := newAuthEnv(t)
+	rt := withPortalAPI(e)
+	o, ob := e.owner(t, "o@x.com", "203.0.113.1")
+	m, _ := e.owner(t, "m@x.com", "203.0.113.2")
+	tid := e.orgWith(t, ob, o)
+	// The person's own client is deleted after classifyOrgs saw the org alone; m joins during that call.
+	var joinErr error
+	joined := false
+	rt.script(func(c agCall) (int, string) {
+		switch {
+		case c.Method == "GET" && c.Tenant == o.PersonalTenantID:
+			return 200, `{"clients":[{"clientId":"` + id.New() + `"}]}`
+		case c.Method == "GET":
+			return 200, `{"clients":[]}`
+		case c.Method == "DELETE" && c.Tenant == o.PersonalTenantID && !joined:
+			joined = true
+			ctx := context.Background()
+			sum := sha256.Sum256([]byte("late"))
+			inv := Invite{ID: id.New(), TenantID: tid, Email: m.Email, Role: RoleMember, InvitedBy: o.ID, TokenHash: hex.EncodeToString(sum[:])}
+			if joinErr = e.a.Store.CreateInvite(ctx, inv, e.a.now()); joinErr != nil {
+				break
+			}
+			got, err := e.a.Store.PeekInvite(ctx, tid, inv.TokenHash, e.a.now())
+			if joinErr = err; err == nil {
+				joinErr = e.a.Store.AcceptInvite(ctx, got, m, e.a.now())
+			}
+		}
+		return 0, ""
+	})
+	r := ob.do("DELETE", "/api/me", nil, stepHeader, ob.stepUp("delete-account", ""))
+	if joinErr != nil || !joined {
+		t.Fatalf("join during the call: %v (joined %v)", joinErr, joined)
+	}
+	want(t, r, 409, "sole_owner")
+	var out struct{ Organisations []string }
+	if err := json.Unmarshal(r.Body, &out); err != nil || !slices.Equal(out.Organisations, []string{"Acme"}) {
+		t.Fatalf("body = %s", r.Body)
+	}
+	tn, err := e.a.Store.GetTenant(context.Background(), tid)
+	if err != nil || tn.DeletingAt != nil || tn.Counts.Members != 2 {
+		t.Fatalf("tenant = %+v %v", tn, err)
+	}
+	if len(clientDeletes(rt, tid)) != 0 {
+		t.Fatal("the org's clients were deleted")
+	}
+	if _, err := e.a.Store.GetUser(context.Background(), o.ID); err != nil {
+		t.Fatalf("account: %v", err)
+	}
+}
