@@ -379,3 +379,31 @@ func TestCreateDuringDeletionDeletesItsClient(t *testing.T) {
 		t.Fatalf("deletes = %v, want one for %s", got, newID)
 	}
 }
+
+// Why: if the re-read after a create fails, the caller never gets the key, so the client must not stay live.
+func TestCreateRereadFailureDeletesItsClient(t *testing.T) {
+	e := newAuthEnv(t)
+	rt := withPortalAPI(e)
+	o, ob := e.owner(t, "o@x.com", "203.0.113.1")
+	tid := e.orgWith(t, ob, o)
+	newID := id.New()
+	rt.script(func(c agCall) (int, string) {
+		if c.Method == "POST" && c.Tenant == tid {
+			// With its tenant item gone, the re-read fails.
+			_, err := e.a.Store.DB.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+				TableName: aws.String(e.a.Store.Table), Key: tenantKey(tid)})
+			if err != nil {
+				t.Error(err)
+			}
+			return 201, `{"clientId":"` + newID + `","accessKey":"secret-key-value"}`
+		}
+		return 0, ""
+	})
+	r := ob.do("POST", "/api/t/"+tid+"/clients", map[string]string{"name": "n"})
+	if r.Status < 500 || strings.Contains(string(r.Body), "accessKey") || strings.Contains(string(r.Body), "secret-key-value") {
+		t.Fatalf("got %d %s, want a 5xx without the key", r.Status, r.Body)
+	}
+	if got := clientDeletes(rt, tid); len(got) != 1 || !strings.HasSuffix(got[0], "/"+newID) {
+		t.Fatalf("deletes = %v, want one for %s", got, newID)
+	}
+}

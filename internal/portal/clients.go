@@ -147,7 +147,11 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) error {
 	// A deletion that set deletingAt after the check above lists the workspace's clients
 	// after that mark. Either this read sees the mark and the client is deleted here, or the
 	// mark came later and the deletion's list sees the client (spec section 4).
-	if t, err = a.Store.GetTenant(ctx, t.ID); err != nil {
+	tid := t.ID
+	if t, err = a.Store.GetTenant(ctx, tid); err != nil {
+		// The caller never gets the key, so the client must not survive.
+		deleted := a.deleteOrphan(ctx, tid, out.ClientID)
+		slog.Warn("portal: tenant re-read failed after a client create", "tenant", tid, "client", out.ClientID, "deleted", deleted, "err", err)
 		return err
 	}
 	if t.DeletingAt != nil {
@@ -166,19 +170,25 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// deleteOrphan deletes a client created in a workspace that began deleting meanwhile.
-// 404 counts as done. A failure is logged (never the key): the client then stays live
-// at AuthGate until an operator disables or deletes it.
-func (a *App) deleteOrphan(ctx context.Context, tenantID, clientID string) {
+// deleteOrphan deletes a client that must not survive: one created in a workspace that
+// began deleting meanwhile, or whose key the caller never got. It reports whether the
+// client is gone (404 counts). It runs on its own context, so a caller that went away
+// cannot cancel it. A failure is logged (never the key): the client then stays live at
+// AuthGate until an operator disables or deletes it.
+func (a *App) deleteOrphan(ctx context.Context, tenantID, clientID string) bool {
 	if clientID == "" {
-		slog.Error("portal: client created in a deleting workspace, id unreadable", "tenant", tenantID)
-		return
+		slog.Error("portal: client created, id unreadable", "tenant", tenantID)
+		return false
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sideEffectLimit)
+	defer cancel()
 	var ae *authgate.Error
 	err := a.AuthGate.Tenant(tenantID).Delete(ctx, clientID)
 	if err != nil && (!errors.As(err, &ae) || ae.Status != http.StatusNotFound) {
-		slog.Error("portal: client created in a deleting workspace was not deleted", "tenant", tenantID, "client", clientID, "err", err)
+		slog.Error("portal: orphaned client was not deleted", "tenant", tenantID, "client", clientID, "err", err)
+		return false
 	}
+	return true
 }
 
 // updateClient patches a client's name, origins, PIN policy and token lifetime.
