@@ -252,8 +252,7 @@ or passkey: control of the email alone is not enough.
 | Change email | step-up and a link sent to the new address; the old address is told; the email index moves in one transaction |
 | Add or remove a PIN or passkey | step-up; the last factor cannot be removed |
 | Delete account | step-up. Refused while the person is the only owner of an organisation that has other members. Deletes the personal workspace and its clients. |
-| Avatar | PNG, JPEG or WebP, at most 1 MB, uploaded with a presigned S3 POST to `pending/` first (a bucket lifecycle rule expires that prefix
-after 1 day), confirmed by the server, then copied to `avatars/`, which is served at `/avatars/*`. The Console's admins get the same mechanism. |
+| Avatar | PNG, JPEG or WebP, at most 1 MB, uploaded with a presigned S3 POST to `pending/` first (a bucket lifecycle rule expires that prefix after 1 day), confirmed by the server, then copied to `avatars/`, which is served at `/avatars/*`. The Console's admins get the same mechanism. |
 
 Security emails are sent for: password changed, email changed, factor added or removed, recovery
 code used, factor reset requested, account locked after failed sign-ins.

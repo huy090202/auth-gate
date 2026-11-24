@@ -125,10 +125,21 @@ There is no scheduler and no queue, so this adds no infrastructure and no fixed 
 A deleting organisation answers 404 through the member guard on every route but its own `DELETE`. A
 deleting personal workspace keeps P2's `409 tenant_deleting`.
 
-**Known residual.** A client create that passed the guard just before `deletingAt` was set can
-reach AuthGate after step 2 listed the clients. That client is then left behind at AuthGate, in a
-tenant nobody can reach through the Portal. It is accepted: the window is the length of one request, and
-the orphan holds no access the Portal can grant.
+**A create racing the deletion.** A client create that passed the guard just before `deletingAt`
+was set can reach AuthGate after step 2 listed the clients. Its key would stay live, because
+AuthGate refuses a key only for an unknown, expired, disabled or deleted client or a suspended
+owner, and deleting the organisation touches none of these. So `createClient` reads the tenant
+again (a consistent read) after AuthGate accepts the create. If `deletingAt` is set, it deletes
+the new client through the same tenant client (404 counts as done), and answers what a deleting
+tenant answers: `404 not_found` for an organisation, `409 tenant_deleting` for a personal
+workspace. The answer carries no key. This closes the race because step 1 comes before step 2's
+list: either the create's re-read sees the mark and the create deletes its own client, or the
+mark came after that read, and then the list sees the client. A resume lists the clients again,
+after the mark too.
+
+**Remaining residual.** If that compensating delete itself fails (it is logged, without the key),
+the client stays live. An operator removes it by disabling or deleting the client in the Console,
+or by suspending owner `T#<tenantId>`.
 
 **Account deletion** (P2's `DELETE /api/me`) now considers each organisation the person belongs to,
 before the step-up is spent:

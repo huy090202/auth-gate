@@ -101,11 +101,11 @@ All under `/api`, JSON, errors `{"error": "<snake_case>"}`.
 | `DELETE /t/{tenantId}` `{name}` | owner | Step-up. `name` must equal the current name (`400 name_mismatch`). `204`. |
 | `GET /t/{tenantId}/members` | any member | `{members: [{userId, displayName, email, role, joinedAt}]}`. |
 | `PATCH /t/{tenantId}/members/{userId}` `{role}` | owner, admin | Step-up. `200 {role}`. An admin moves only between `admin` and `member`. `409 last_owner` if it would leave none. |
-| `DELETE /t/{tenantId}/members/{userId}` | owner, admin | Step-up. `204`. An admin cannot remove an owner (`403 forbidden`). |
+| `DELETE /t/{tenantId}/members/{userId}` | owner, admin | Step-up. `204`. An admin cannot remove an owner (`403 forbidden`). An owner cannot remove themselves: they use `/leave`. |
 | `POST /t/{tenantId}/leave` | any member | No step-up. `204`. `409 last_owner` for the last owner. |
 | `GET /t/{tenantId}/invites` | owner, admin | `{invites: [{inviteId, email, role, invitedBy, expiresAt}]}`. Expired ones are pruned. |
 | `POST /t/{tenantId}/invites` `{email, role}` | owner, admin | `201 {inviteId, email, role, expiresAt}` and an email. Only an owner invites `owner`. |
-| `POST /t/{tenantId}/invites/{inviteId}/resend` | owner, admin | `200`. A new token replaces the old one. |
+| `POST /t/{tenantId}/invites/{inviteId}/resend` | owner, admin | `200 {inviteId, email, role, expiresAt}`. A new token replaces the old one. |
 | `DELETE /t/{tenantId}/invites/{inviteId}` | owner, admin | `204`. |
 | `POST /invites/{tenantId}/lookup` `{token}` | none | `{orgName, inviterName, role, email}`, plus `emailMatches` with a full session. Per-IP limit. |
 | `POST /invites/{tenantId}/accept` `{token}` | full | `200 {tenantId}`. The session's email must be the invited one. |

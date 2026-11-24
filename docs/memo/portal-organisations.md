@@ -54,7 +54,9 @@ The actor's membership is dropped after the store finish, not before. Dropped fi
 
 Account deletion uses the same function for each organisation the person is alone in. It sets `deletingAt` only while the organisation has exactly one member (`MarkDeletingIfAlone`). If someone accepted an invite in the meantime, the answer is `409 sole_owner` with that organisation's name, and nothing is lost.
 
-A known residual: a client create that passed the guard just before `deletingAt` was set can reach AuthGate after the run listed the clients. That client is left behind at AuthGate, in a tenant the Portal can no longer reach. Closing it would need a fence AuthGate does not have. The window is the length of one request, and the orphan gets no access from the Portal.
+A create can race the deletion: one that passed the guard just before `deletingAt` was set can reach AuthGate after the run listed the clients. AuthGate refuses a key only for an unknown or expired key, a deleted or disabled client or a suspended owner, and deleting the organisation touches none of them, so the orphan's key would stay live and nobody in the Portal could revoke it. AuthGate has no fence, so the create checks after the fact: once AuthGate accepts it, `createClient` re-reads the tenant (a consistent read). If `deletingAt` is set it deletes the new client through the same tenant client (404 counts as done) and answers as a deleting tenant does (`404 not_found` for an organisation, `409 tenant_deleting` for a personal workspace), with no key in the body.
+
+This closes the race because the deletion lists the clients only after it sets the mark, on a resume too. Either the create's re-read sees the mark and the create deletes its own client, or the mark came after that read, and then the deletion's list sees the client. What remains is a compensating delete that itself fails: it is logged without the key and the client stays live. An operator then disables or deletes it in the Console, or suspends owner `T#<tenantId>`.
 
 ## Why the oracle fix
 

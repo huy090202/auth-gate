@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -348,5 +349,33 @@ func TestDeleteAccountOrgGainsMemberBeforeMark(t *testing.T) {
 	}
 	if _, err := e.a.Store.GetUser(context.Background(), o.ID); err != nil {
 		t.Fatalf("account: %v", err)
+	}
+}
+
+// Why: a create that passed the guard just before deletingAt was set lands at AuthGate after the deletion listed
+// the clients. Its key would stay live and nobody could revoke it, so the create deletes its own client again.
+func TestCreateDuringDeletionDeletesItsClient(t *testing.T) {
+	e := newAuthEnv(t)
+	rt := withPortalAPI(e)
+	o, ob := e.owner(t, "o@x.com", "203.0.113.1")
+	tid := e.orgWith(t, ob, o)
+	newID := id.New()
+	rt.script(func(c agCall) (int, string) {
+		if c.Method == "POST" && c.Tenant == tid {
+			_, err := e.a.Store.MarkDeleting(context.Background(), tid, e.a.now())
+			if err != nil {
+				t.Error(err)
+			}
+			return 201, `{"clientId":"` + newID + `","accessKey":"secret-key-value"}`
+		}
+		return 0, ""
+	})
+	r := ob.do("POST", "/api/t/"+tid+"/clients", map[string]string{"name": "n"})
+	want(t, r, 404, "not_found")
+	if strings.Contains(string(r.Body), "accessKey") || strings.Contains(string(r.Body), "secret-key-value") {
+		t.Fatalf("the answer carries the key: %s", string(r.Body))
+	}
+	if got := clientDeletes(rt, tid); len(got) != 1 || !strings.HasSuffix(got[0], "/"+newID) {
+		t.Fatalf("deletes = %v, want one for %s", got, newID)
 	}
 }
