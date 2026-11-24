@@ -108,7 +108,7 @@ export function FactorForm<T>({ factors, start, verify, onDone }: {
       )}
       {factors.pin && factors.webauthn && <Text c="dimmed" fz="sm">{t.factor.or}</Text>}
       {factors.webauthn && (
-        <Group>
+        <Group className="factor-passkey">
           {/* A passkey-only user has no field: the button takes the focus (it only focuses, the prompt still needs a press). */}
           <Button data-autofocus={factors.pin ? undefined : true} autoFocus={!factors.pin} variant={factors.pin ? 'default' : 'filled'} loading={busy === 'webauthn'} disabled={busy === 'pin'}
             onClick={() => void run('webauthn')}>
