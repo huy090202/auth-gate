@@ -95,7 +95,7 @@ const button = (scope: ParentNode, label: string) => [...scope.querySelectorAll(
 // Why: the role table decides which controls a screen shows; a wrong row would offer an admin a
 // way to demote an owner, or hide a control the backend would allow.
 test('can and roleChoices follow the role table', () => {
-  for (const a of ['invite', 'change-role', 'remove', 'rename', 'delete'] as const) expect(can('member', a, 'member')).toBe(false);
+  for (const a of ['invite', 'change-role', 'remove', 'rename', 'delete', 'manage-client'] as const) expect(can('member', a, 'member')).toBe(false);
   expect(roleChoices('member', 'member')).toEqual([]);
   expect(roleChoices('admin', 'owner')).toEqual([]);
   expect(roleChoices('admin', 'member')).toEqual(['admin', 'member']);
@@ -103,6 +103,9 @@ test('can and roleChoices follow the role table', () => {
   expect(can('admin', 'remove', 'owner')).toBe(false);
   expect(can('admin', 'remove', 'member')).toBe(true);
   expect(can('admin', 'invite')).toBe(true);
+  expect(can('admin', 'invite', 'owner')).toBe(false);
+  expect(can('owner', 'invite', 'owner')).toBe(true);
+  expect(can('admin', 'manage-client')).toBe(true);
   expect(can('admin', 'rename')).toBe(false);
   expect(can('admin', 'delete')).toBe(false);
   expect(can('owner', 'delete')).toBe(true);

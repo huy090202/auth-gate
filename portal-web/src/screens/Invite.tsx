@@ -71,7 +71,8 @@ export function Invite() {
     if (wrongAddress) forgetInvite();
   }, [invite, halfOrEnroll, wrongAddress, tenantId, token]);
 
-  if (!valid) return <Card title={t.screens.invite}><Text fz="sm" role="alert">{t.invite.gone}</Text></Card>;
+  // No token: a reload stripped the fragment and nothing is stored, so only the mail's link can help.
+  if (!valid) return <Card title={t.screens.invite}><Text fz="sm" role="alert">{token === '' ? t.invite.reopen : t.invite.gone}</Text></Card>;
   if (lookupError) {
     return (
       <Card title={t.screens.invite}>

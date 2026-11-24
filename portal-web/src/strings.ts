@@ -293,6 +293,7 @@ const enStrings = {
   },
   invite: {
     gone: 'This invite is no longer valid.',
+    reopen: 'Open the link from your invite email again.',
     summary: '{who} invited you to join {org} as {role}.',
     someone: 'A member of {org}',
     sentTo: 'The invitation was sent to {email}.',
@@ -869,6 +870,7 @@ export const vi: Strings = {
   },
   invite: {
     gone: 'Lời mời này không còn hiệu lực.',
+    reopen: 'Hãy mở lại liên kết trong email mời.',
     summary: '{who} đã mời bạn tham gia {org} với vai trò {role}.',
     someone: 'Một thành viên của {org}',
     sentTo: 'Lời mời được gửi tới {email}.',

@@ -10,16 +10,20 @@ export const roles: Role[] = ['owner', 'admin', 'member'];
 
 export const MAX_INVITES = 20;
 
-export type OrgAction = 'invite' | 'change-role' | 'remove' | 'rename' | 'delete';
+export type OrgAction = 'invite' | 'change-role' | 'remove' | 'rename' | 'delete' | 'manage-client';
 
 /**
  * What a role may do in an organisation (spec sections 3 and 8), so the screens show only controls
- * the backend would accept. `target` is the role of the member acted on. The backend stays the
- * authority; leaving is for everyone and not in this table.
+ * the backend would accept. `target` is the role of the member acted on. `manage-client` is
+ * disabling, enabling, purging and deleting a client (parent spec section 6); renaming, origins and
+ * keys are for every role. The backend stays the authority; leaving is for everyone and not in this table.
  */
 export function can(role: Role, action: OrgAction, target?: Role): boolean {
   switch (action) {
     case 'invite':
+      // `target` is the invite's role: only an owner invites, or re-sends to, an owner.
+      return role !== 'member' && (target !== 'owner' || role === 'owner');
+    case 'manage-client':
       return role !== 'member';
     case 'change-role':
       return target === undefined ? role !== 'member' : roleChoices(role, target).length > 0;

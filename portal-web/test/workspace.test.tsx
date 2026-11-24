@@ -7,6 +7,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { MAX_PAGES, fetchAllClients, type ClientView } from '../src/lib/clients';
 import { auditUrl } from '../src/lib/audit';
+import { WorkspacesContext, type Role, type Tenant } from '../src/lib/tenants';
 import { ClientDetail } from '../src/screens/ClientDetail';
 import { ClientList } from '../src/screens/Clients';
 import { SessionProvider } from '../src/session';
@@ -100,14 +101,18 @@ const view = (over: Partial<ClientView> = {}): ClientView => ({
   pinPolicy: { length: 6, maxAttempts: 5, lockoutSec: 900 }, tokenTtlSec: 300, createdAt: '2026-11-01T10:00:00Z', ...over,
 });
 
-async function mountDetail(c: ClientView) {
+/** The viewer's role in TENANT, an organisation, comes from the shell's workspace list. */
+async function mountDetail(c: ClientView, role: Role = 'owner') {
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
     calls.push({ url, method: init?.method ?? 'GET' });
     if (url === `/api/t/${TENANT}/clients/${CLIENT}` && (init?.method ?? 'GET') === 'GET') return json(c);
     return json({ error: 'internal' }, 500);
   });
+  const tenants: Tenant[] = [{ tenantId: TENANT, kind: 'org', name: 'Acme', role }];
   await mount(
-    <Routes><Route path="/t/:tenantId/clients/:id" element={<ClientDetail />} /></Routes>,
+    <WorkspacesContext.Provider value={{ tenants, reload: async () => {}, userId: 'u-me', loading: false }}>
+      <Routes><Route path="/t/:tenantId/clients/:id" element={<ClientDetail />} /></Routes>
+    </WorkspacesContext.Provider>,
     `/t/${TENANT}/clients/${CLIENT}`,
   );
 }
@@ -153,6 +158,20 @@ test('a client an administrator disabled shows the lock and no Enable action', a
   expect(button('Enable client')).toBeUndefined();
   expect(button('Disable client')).toBeUndefined();
   expect(document.querySelectorAll('style').length).toBe(0);
+});
+
+// Why: a member who is shown Disable, Purge or Delete goes through type-to-confirm and a step-up only
+// to be refused with 403 (parent spec section 6); an admin must still have them.
+test('a member sees no Disable, Purge or Delete; an admin does', async () => {
+  const manage = ['Disable client', 'Clear factors', 'Delete client'];
+  await mountDetail(view(), 'member');
+  for (const label of manage) expect(button(label), label).toBeUndefined();
+  expect(button('Rotate key')).toBeDefined();
+  await act(async () => root!.unmount());
+  host!.remove();
+
+  await mountDetail(view(), 'admin');
+  for (const label of manage) expect(button(label), label).toBeDefined();
 });
 
 test('a client the tenant disabled can be enabled', async () => {

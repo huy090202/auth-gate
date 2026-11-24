@@ -173,12 +173,14 @@ function Roster({ tenantId, actor, userId }: { tenantId: string; actor: Role; us
                       <Table.Td className="cell-muted">{formatDate(i.expiresAt, t)}</Table.Td>
                       <Table.Td>
                         <Group gap="xs" wrap="nowrap">
-                          <Button size="xs" variant="light" disabled={invite.busy || invite.waiting}
-                            onClick={() => void invite.run(async () => {
-                              await api(orgApi.resend(tenantId, i.inviteId), { method: 'POST' });
-                              await loadInvites();
-                              return fmt(t.members.resent, { email: i.email });
-                            })}>{t.members.resend}</Button>
+                          {can(actor, 'invite', i.role) && (
+                            <Button size="xs" variant="light" disabled={invite.busy || invite.waiting}
+                              onClick={() => void invite.run(async () => {
+                                await api(orgApi.resend(tenantId, i.inviteId), { method: 'POST' });
+                                await loadInvites();
+                                return fmt(t.members.resent, { email: i.email });
+                              })}>{t.members.resend}</Button>
+                          )}
                           <Button size="xs" color="red" variant="light" disabled={invite.busy || invite.waiting}
                             onClick={() => void invite.run(async () => {
                               await api(orgApi.invite(tenantId, i.inviteId), { method: 'DELETE' });
