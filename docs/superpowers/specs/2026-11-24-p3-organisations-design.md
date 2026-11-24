@@ -27,7 +27,8 @@ Decided by the owner (not re-askable):
   3. the owner changes the other's role, then removes them, and the removed person's next request is
      refused;
   4. the owner deletes the organisation.
-- The race, invite and role tests of section 9 pass. The Portal smoke covers the organisation round.
+- The race, invite and role tests of section 9 pass, including the full organisation round over HTTP
+  against DynamoDB Local. The Portal smoke covers the new routes' anonymous refusals.
 - `pnpm run check` is green.
 
 ## 2. Data
@@ -47,10 +48,11 @@ Notes:
   writes therefore cannot pass a limit.
 - TTL deletes expired invites without touching `inviteCount`. Listing or creating invites therefore
   first removes the expired ones it finds and decrements the counter in the same transaction.
-- The invite link is `<site>/invite/<tenantId>/<token>`. The token is 32 random bytes, and only its
-  SHA-256 is stored, as with every emailed token.
-- A personal workspace keeps `memberCount` 1 and `ownerCount` 1. It takes no invites (parent section
-  6).
+- The invite link is `<site>/invite/<tenantId>#token=<token>`. Like every emailed link in P2, the
+  token sits in the fragment, so it never reaches CloudFront or a log, and the API takes it in a
+  POST body. The token is 32 random bytes, and only its SHA-256 is stored.
+- A personal workspace has no counters. Every organisation-only route below (rename, delete, members,
+  leave, invites) answers `400 personal_workspace` on it (parent section 6).
 
 ## 3. API
 
@@ -71,9 +73,9 @@ except its own `DELETE`.
 | `POST /api/t/{id}/invites` `{email, role}` | owner, admin | An admin invites `admin` or `member`. Only an owner invites `owner`. `409 already_member` if the address belongs to a member. `409 already_invited` if one is pending; use resend instead. Rate limit 20 per day per organisation. |
 | `POST /api/t/{id}/invites/{inviteId}/resend` | owner, admin | A new token replaces the old one and the expiry restarts. The old link stops working. |
 | `DELETE /api/t/{id}/invites/{inviteId}` | owner, admin | Revoke. |
-| `GET /api/invites/{tenantId}/{token}` | the invitee | Organisation name, inviter's name, role, and whether the session's email matches. An unknown, expired or used token answers `404 invite_not_found`. |
-| `POST /api/invites/{tenantId}/{token}/accept` | the invitee | The session's email must equal the invited address, else `403 invite_wrong_email`. Writes the membership pair, deletes the invite and its index item, and increments `memberCount` under `memberCount < 20` and no `deletingAt`, in one transaction. |
-| `POST /api/invites/{tenantId}/{token}/decline` | the invitee | Same email rule. Deletes the invite. |
+| `POST /api/invites/{tenantId}/lookup` `{token}` | the invitee | Organisation name, inviter's name, role, and whether the session's email matches. An unknown, expired or used token answers `404 invite_not_found`. |
+| `POST /api/invites/{tenantId}/accept` `{token}` | the invitee | The session's email must equal the invited address, else `403 invite_wrong_email`. Writes the membership pair, deletes the invite and its index item, and increments `memberCount` under `memberCount < 20` and no `deletingAt`, in one transaction. |
+| `POST /api/invites/{tenantId}/decline` `{token}` | the invitee | Same email rule. Deletes the invite. |
 
 `inviteId` is an opaque id stored on the invite, not the token hash, so the invite list never holds
 anything that opens the link.
@@ -125,7 +127,7 @@ before the step-up is spent:
 
 ## 5. Accepting an invite
 
-- `/invite/<tenantId>/<token>` needs a `full` session. A visitor who is not signed in sees two
+- `/invite/<tenantId>#token=<token>` needs a `full` session. A visitor who is not signed in sees two
   buttons:
   - "Sign in";
   - "Sign up", with the invited email prefilled (the person may change it, but then the invite will
@@ -233,8 +235,9 @@ Also:
 - web tests for the invite page states (signed out, wrong email, accept) and for which Members and
   Settings controls each role sees;
 - `bruno-portal` gains the organisation boundary cases;
-- `scripts/portal/smoke.sh` gains the organisation round with two smoke accounts, cleaned up at the
-  end.
+- `scripts/portal/smoke.sh` stays credential-free (it cannot sign up: Turnstile and email stand in
+  the way). Through `bruno-portal`, it proves that every new route refuses an anonymous caller. The
+  organisation round itself is proven by the Go HTTP tests and by the owner's two-account browser run.
 
 ## 10. Docs
 
