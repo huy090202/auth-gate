@@ -20,6 +20,7 @@
 | fix-post-domain-docs | fix/post-domain-docs | Drop the dead shellcheck pin; SES production-access text as sent; README demo link to the apex | merged | | PR #15 merged (7f8c8c4, 2026-11-23); worktree still present |
 | feat-stg-reset | feat/stg-reset | Script to reset stg user data (dry run, --apply, typed confirmation); keeps Console admins, app clients, stacks | merged | | PR #16 merged 2026-11-23; Huy runs the reset on stg from main; worktree still present |
 | fix-noindex-apps | fix/noindex-apps | robots noindex in the Portal and Console SPA shells (SEO spec §7) | merged | | PR #17 merged 2026-11-23; live check: noindex on portal. and admin.; worktree still present |
-| fix-auth-app-runbook-link | fix/auth-app-runbook-link | reset docs: point auth-app's smoke at its README Deploy section | review | | pushed 15a2cac 2026-11-23; PR to open |
+| fix-auth-app-runbook-link | fix/auth-app-runbook-link | reset docs: point auth-app's smoke at its README Deploy section | merged | | PR #18 merged (8c61d56, 2026-11-24); worktree still present |
+| feat-organisations | feat/organisations | Self-service P3: organisations, members, roles, email invites, resumable org deletion; sign-in oracle closed | review | | spec docs/superpowers/specs/2026-11-24-p3-organisations-design.md, plan docs/superpowers/plans/2026-11-24-p3-organisations.md; 10 tasks + final review, subagent-driven; PR to open; no new infra |
 
 Status values: planned, active, review, merged, abandoned.
