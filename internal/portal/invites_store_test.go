@@ -99,9 +99,13 @@ func TestInviteOnlyForInvitedAddress(t *testing.T) {
 	o := mkUser(t, st, "o@x.com")
 	tn := mkOrg(t, st, o)
 	now := time.Now().UTC()
-	inv := mkInvite(tn.ID, " ann@x.com ", "h1", now)
-	inv.Role = RoleAdmin
-	if err := st.CreateInvite(ctx, inv, now); err != nil {
+	raw := mkInvite(tn.ID, "", "h1", now)
+	raw.Email, raw.Role = " ann@x.com ", RoleAdmin // not normalised here: CreateInvite must do it
+	if err := st.CreateInvite(ctx, raw, now); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := st.PeekInvite(ctx, tn.ID, "h1", now)
+	if err != nil {
 		t.Fatal(err)
 	}
 	other := mkUser(t, st, "bob@x.com")

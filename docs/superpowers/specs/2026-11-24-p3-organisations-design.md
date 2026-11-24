@@ -38,16 +38,17 @@ These items are added to the parent's section 5, in the same table, `auth-gate-p
 | Item | Key | Holds |
 |---|---|---|
 | Tenant (org) | `TENANT#<id>` / `META` | as today, plus `memberCount`, `ownerCount`, `inviteCount`, `deletingAt` |
-| Invite | `TENANT#<id>` / `INVITE#<tokenHash>` | email, role, invitedBy, createdAt, expiresAt (TTL, 7 days) |
-| Invitee index | `TENANT#<id>` / `INVITEE#<normalised email>` | the invite's token hash and expiresAt (TTL). One pending invite per address per organisation. |
+| Invite | `TENANT#<id>` / `INVITE#<tokenHash>` | email, role, invitedBy, createdAt, expiresAt (7 days) |
+| Invitee index | `TENANT#<id>` / `INVITEE#<normalised email>` | the invite's token hash and expiresAt. One pending invite per address per organisation. |
 
 Notes:
 
 - Every limit is a condition on the tenant item's counters, in the same transaction as the write it
   guards. There are three: 20 members, 20 pending invites, and at least one owner. Two concurrent
   writes therefore cannot pass a limit.
-- TTL deletes expired invites without touching `inviteCount`. Listing or creating invites therefore
-  first removes the expired ones it finds and decrements the counter in the same transaction.
+- Expired invites have no TTL, because TTL would delete them without decrementing `inviteCount`.
+  Listing or creating invites removes the expired ones it finds and decrements the counter in the
+  same transaction.
 - The invite link is `<site>/invite/<tenantId>#token=<token>`. Like every emailed link in P2, the
   token sits in the fragment, so it never reaches CloudFront or a log, and the API takes it in a
   POST body. The token is 32 random bytes, and only its SHA-256 is stored.

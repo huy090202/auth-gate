@@ -51,7 +51,7 @@ func inviteeKey(tenantID, email string) item {
 func inviteItem(inv Invite) item {
 	it := inviteKey(inv.TenantID, inv.TokenHash)
 	it["inviteId"], it["email"], it["role"], it["invitedBy"] = s(inv.ID), s(inv.Email), s(inv.Role), s(inv.InvitedBy)
-	it["createdAt"], it["expiresAt"], it["ttl"] = s(ts(inv.CreatedAt)), s(ts(inv.ExpiresAt)), n(inv.ExpiresAt.Unix())
+	it["createdAt"], it["expiresAt"] = s(ts(inv.CreatedAt)), s(ts(inv.ExpiresAt))
 	return it
 }
 
@@ -112,8 +112,9 @@ func (st *Store) findInvite(ctx context.Context, tenantID, inviteID string) (Inv
 	return Invite{}, ErrInviteNotFound
 }
 
-// pruneInvites frees the slots of expired invites that DynamoDB's TTL has not
-// removed yet. Each goes in its own transaction: delete the invite, delete its
+// pruneInvites frees the slots of expired invites. They carry no DynamoDB ttl:
+// TTL would delete them without counting inviteCount down, so this is the only
+// remover (DeleteAllInvites covers an abandoned tenant). Each goes in its own transaction: delete the invite, delete its
 // invitee item (only while that item still holds this invite's hash, so a
 // newer invite to the address is left alone) and count one down. An invite
 // someone else pruned first is skipped, so the count is never taken down twice.
@@ -196,11 +197,12 @@ func (st *Store) getRaw(ctx context.Context, key item) (item, error) {
 // failure says why: ErrTenantDeleting, ErrPersonal, ErrInvitesFull or ErrAlreadyInvited.
 func (st *Store) CreateInvite(ctx context.Context, inv Invite, now time.Time) error {
 	inv.Email = NormalizeEmail(inv.Email)
+	inv.CreatedAt, inv.ExpiresAt = now, now.Add(inviteTTL)
 	if err := st.pruneInvites(ctx, inv.TenantID, now); err != nil {
 		return err
 	}
 	invitee := inviteeKey(inv.TenantID, inv.Email)
-	invitee["tokenHash"], invitee["expiresAt"], invitee["ttl"] = s(inv.TokenHash), s(ts(inv.ExpiresAt)), n(inv.ExpiresAt.Unix())
+	invitee["tokenHash"], invitee["expiresAt"] = s(inv.TokenHash), s(ts(inv.ExpiresAt))
 	err := txWrite(ctx, st,
 		types.TransactWriteItem{Put: &types.Put{TableName: aws.String(st.Table), Item: inviteItem(inv)}},
 		types.TransactWriteItem{Put: &types.Put{
@@ -280,10 +282,9 @@ func (st *Store) ResendInvite(ctx context.Context, tenantID, inviteID, newHash s
 		types.TransactWriteItem{Put: &types.Put{TableName: aws.String(st.Table), Item: inviteItem(next)}},
 		types.TransactWriteItem{Update: &types.Update{
 			TableName: aws.String(st.Table), Key: inviteeKey(tenantID, old.Email),
-			UpdateExpression:          aws.String("SET tokenHash = :new, expiresAt = :exp, #ttl = :ttl"),
+			UpdateExpression:          aws.String("SET tokenHash = :new, expiresAt = :exp"),
 			ConditionExpression:       aws.String("tokenHash = :old"),
-			ExpressionAttributeNames:  map[string]string{"#ttl": "ttl"},
-			ExpressionAttributeValues: item{":new": s(newHash), ":exp": s(ts(next.ExpiresAt)), ":ttl": n(next.ExpiresAt.Unix()), ":old": s(old.TokenHash)},
+			ExpressionAttributeValues: item{":new": s(newHash), ":exp": s(ts(next.ExpiresAt)), ":old": s(old.TokenHash)},
 		}})
 	if dynamo.IsConditionFailed(err) {
 		if _, ferr := st.findInvite(ctx, tenantID, inviteID); ferr != nil {
@@ -355,8 +356,9 @@ func (st *Store) AcceptInvite(ctx context.Context, inv Invite, u User, now time.
 	err := txWrite(ctx, st,
 		types.TransactWriteItem{Delete: &types.Delete{
 			TableName: aws.String(st.Table), Key: inviteKey(inv.TenantID, inv.TokenHash),
-			ConditionExpression:       aws.String(exists + " AND expiresAt > :now"),
-			ExpressionAttributeValues: item{":now": s(ts(now))},
+			ConditionExpression:       aws.String(exists + " AND expiresAt > :now AND email = :e AND #role = :r"),
+			ExpressionAttributeNames:  map[string]string{"#role": "role"},
+			ExpressionAttributeValues: item{":now": s(ts(now)), ":e": s(inv.Email), ":r": s(inv.Role)},
 		}},
 		types.TransactWriteItem{Delete: &types.Delete{TableName: aws.String(st.Table), Key: inviteeKey(inv.TenantID, inv.Email)}},
 		types.TransactWriteItem{Update: &types.Update{
@@ -378,8 +380,12 @@ func (st *Store) AcceptInvite(ctx context.Context, inv Invite, u User, now time.
 
 // explainAcceptFailure re-reads after a failed accept to say which condition failed.
 func (st *Store) explainAcceptFailure(ctx context.Context, inv Invite, u User, now time.Time) error {
-	if _, err := st.PeekInvite(ctx, inv.TenantID, inv.TokenHash, now); err != nil {
+	stored, err := st.PeekInvite(ctx, inv.TenantID, inv.TokenHash, now)
+	if err != nil {
 		return err
+	}
+	if stored.Email != inv.Email || stored.Role != inv.Role {
+		return ErrInviteNotFound
 	}
 	t, err := st.orgTenant(ctx, inv.TenantID)
 	if err != nil {
