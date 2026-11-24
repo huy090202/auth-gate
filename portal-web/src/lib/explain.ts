@@ -12,6 +12,11 @@ export function explain(e: unknown, t: Strings): string {
   if (typeof extras.attemptsRemaining === 'number') parts.push(fmt(t.common.attemptsLeft, { n: extras.attemptsRemaining }));
   if (typeof extras.lockedUntil === 'string') parts.push(fmt(t.common.lockedUntil, { time: formatDate(extras.lockedUntil, t) }));
   if (typeof extras.retryAfter === 'number') parts.push(fmt(t.common.retryIn, { n: extras.retryAfter }));
+  // sole_owner names the organisations the user would leave without an owner.
+  if (Array.isArray(extras.organisations)) {
+    const names = extras.organisations.filter((n): n is string => typeof n === 'string');
+    if (names.length > 0) parts.push(names.join(', '));
+  }
   return parts.join(' ');
 }
 

@@ -1,7 +1,7 @@
 import { Button, Group, Modal, Stack, TextInput } from '@mantine/core';
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { useStrings } from '../lib/i18n';
 import { membersPath, useWorkspaces } from '../lib/tenants';
 import { Feedback, useAction } from './forms';
@@ -17,7 +17,15 @@ export function NewOrg({ onClose }: { onClose: () => void }) {
   const submit = (ev: FormEvent) => {
     ev.preventDefault();
     void create.run(async () => {
-      const r = await api<{ tenantId: string }>('/api/tenants', { method: 'POST', body: { name: name.trim() } });
+      let r: { tenantId: string };
+      try {
+        r = await api<{ tenantId: string }>('/api/tenants', { method: 'POST', body: { name: name.trim() } });
+      } catch (e) {
+        // The generic invalid_name text is about display names.
+        if (!(e instanceof ApiError && e.code === 'invalid_name')) throw e;
+        create.setError(t.newOrg.invalidName);
+        return false;
+      }
       // The list first: the new page reads the user's role in it.
       await reload();
       onClose();

@@ -2,12 +2,12 @@ import { Button, Text, TextInput } from '@mantine/core';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
 import { portalTitle, useTitle } from '../brand';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { fmt, useStrings } from '../lib/i18n';
 import { can, orgApi } from '../lib/orgs';
 import { clientsPath, useWorkspaces } from '../lib/tenants';
 import { useStepUp } from '../stepup';
-import { ConfirmDialog, InlineLoading, PageHead, TypeToConfirm } from '../ui';
+import { ConfirmDialog, LoadFailedInline, PageHead, TypeToConfirm } from '../ui';
 import { Feedback, useAction } from './forms';
 
 function ActionRow({ title, body, children }: { title: string; body: string; children: ReactNode }) {
@@ -37,7 +37,7 @@ export function OrgSettings() {
   const remove = useAction();
 
   if (ws?.kind === 'personal') return <Navigate to={clientsPath(tenantId)} replace />;
-  if (!ws) return <InlineLoading />;
+  if (!ws) return <LoadFailedInline error={new ApiError(404, 'not_found', {})} onRetry={() => void reload()} />;
   const personal = tenants.find((x) => x.kind === 'personal')?.tenantId ?? '';
   const owner = can(ws.role, 'rename');
   const typed = name ?? ws.name;
@@ -45,7 +45,14 @@ export function OrgSettings() {
   const save = (ev: FormEvent) => {
     ev.preventDefault();
     void rename.run(async () => {
-      await api(orgApi.tenant(tenantId), { method: 'PATCH', body: { name: typed.trim() } });
+      try {
+        await api(orgApi.tenant(tenantId), { method: 'PATCH', body: { name: typed.trim() } });
+      } catch (e) {
+        // The generic invalid_name text is about display names.
+        if (!(e instanceof ApiError && e.code === 'invalid_name')) throw e;
+        rename.setError(t.newOrg.invalidName);
+        return false;
+      }
       await reload();
       setName(null);
     }, t.orgSettings.renamed);

@@ -48,6 +48,7 @@ function InviteDialog({ tenantId, actor, onClose, onSent }: { tenantId: string; 
 function Roster({ tenantId, actor, userId }: { tenantId: string; actor: Role; userId: string }) {
   const t = useStrings();
   const { stepUp, modal } = useStepUp();
+  const { reload } = useWorkspaces();
   const [members, setMembers] = useState<Member[] | null>(null);
   const [invites, setInvites] = useState<PendingInvite[]>([]);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -83,6 +84,8 @@ function Roster({ tenantId, actor, userId }: { tenantId: string; actor: Role; us
       const r = await stepUp('change-role', (token) =>
         api(orgApi.member(tenantId, m.userId), { method: 'PATCH', body: { role }, stepUpToken: token }), `${tenantId}/${m.userId}`);
       if (!r) return false;
+      // Your own role drives the controls and the nav: refresh the shell's list too.
+      if (m.userId === userId) await reload();
       await load();
     }, t.members.roleChanged);
   };
