@@ -10,6 +10,8 @@ func TestHasURL(t *testing.T) {
 	for v, want := range map[string]bool{
 		"Acme": false, "Mr. Smith": false, "J.R.R. Tolkien": false, "Nguyễn Văn A": false,
 		"acme.io": true, "see acme.io/x": true, "http://x": true, "WWW.EVIL": true, "evil.com?a": true,
+		"visit acme.io!": true, "acme.io,": true, "(acme.io)": true, "acme.io.": true,
+		"acme.io\u00a0x": true, "acme.io\u200bx": true, "dụ.com": true,
 	} {
 		if got := hasURL(v); got != want {
 			t.Errorf("hasURL(%q) = %v, want %v", v, got, want)

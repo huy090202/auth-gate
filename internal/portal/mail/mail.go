@@ -313,14 +313,14 @@ func noticeFooterSupport(lang, addr string) support {
 const maxTypedRunes = 64
 
 // HasURL reports whether s holds a URL: "://", "www.", or a host-like token
-// (name.tld) that ends the value or is followed by whitespace or one of / : ? #.
+// (name.tld) that ends the value or is followed by any character that cannot be part of a name.
 // It is the one check behind organisation names, display names and mail vars.
 func HasURL(s string) bool {
 	s = strings.ToLower(s)
 	return strings.Contains(s, "://") || strings.Contains(s, "www.") || hostLike.MatchString(s)
 }
 
-var hostLike = regexp.MustCompile(`[a-z0-9-]+\.[a-z]{2,63}($|[\s/:?#])`)
+var hostLike = regexp.MustCompile(`[\p{L}\p{N}-]+\.[a-z]{2,63}($|[^\p{L}\p{N}-])`)
 
 // checkTyped refuses a typed var that is too long, holds a control character or a URL,
 // or is a role other than owner, admin or member.
