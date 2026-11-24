@@ -104,6 +104,11 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
 
   const signOut = () => endSession(() => api('/api/auth/logout', { method: 'POST' }), () => {
     clear();
+    try {
+      sessionStorage.removeItem(LAST_WORKSPACE);
+    } catch {
+      // Storage can be blocked; the next user then only inherits what the browser would not let us clear.
+    }
     nav('/sign-in', { replace: true });
   });
   // Switching keeps the section when the next workspace has it (the audit log, Members and Settings are not everywhere), else opens Clients.
