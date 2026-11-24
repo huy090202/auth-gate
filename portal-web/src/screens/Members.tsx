@@ -101,7 +101,7 @@ function Roster({ tenantId, actor, userId }: { tenantId: string; actor: Role; us
     <div className="panel-stack">
       <section className="panel glass">
         {canInvite && (
-          <div className="toolbar">
+          <div className="toolbar toolbar-end">
             <Button onClick={() => setInviting(true)}>{t.members.invite}</Button>
           </div>
         )}
