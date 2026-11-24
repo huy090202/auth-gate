@@ -271,6 +271,8 @@
   .secret-box .mantine-Button-root, .secret-box button { width: 100%; }
   .shown-once-foot { flex-direction: column; align-items: stretch; }
   .shown-once-foot .mantine-Button-root { width: 100%; }
+  /* A panel header's button keeps its whole label; the title beside it wraps instead. */
+  .panel > .mantine-Group-root > .mantine-Button-root { flex: none; }
 }
 
 /* Select: Mantine's Combobox, in the glass language. The list is in a portal, so it is styled by its static class. */
