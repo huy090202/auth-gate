@@ -6,8 +6,9 @@ export type Role = 'owner' | 'admin' | 'member';
 export type Tenant = { tenantId: string; kind: 'personal' | 'org'; name: string; role: Role };
 
 /** The shell's workspace list, shared with the screens: they read the user's role and ask for a reload after a change. */
-export type Workspaces = { tenants: Tenant[]; reload: () => Promise<void>; userId: string };
-export const WorkspacesContext = createContext<Workspaces>({ tenants: [], reload: async () => {}, userId: '' });
+/** `loading` is true until the first fetch has answered; before that `tenants` is only the personal fallback. */
+export type Workspaces = { tenants: Tenant[]; reload: () => Promise<void>; userId: string; loading: boolean };
+export const WorkspacesContext = createContext<Workspaces>({ tenants: [], reload: async () => {}, userId: '', loading: false });
 export const useWorkspaces = (): Workspaces => useContext(WorkspacesContext);
 
 export async function fetchTenants(): Promise<Tenant[]> {

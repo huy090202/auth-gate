@@ -64,7 +64,7 @@ const tenants = (role: Role): Tenant[] => [
   { tenantId: ORG, kind: 'org', name: 'Acme', role },
 ];
 const withWorkspaces = (role: Role, ui: React.ReactNode) => (
-  <WorkspacesContext.Provider value={{ tenants: tenants(role), reload: async () => {}, userId: 'u-me' }}>{ui}</WorkspacesContext.Provider>
+  <WorkspacesContext.Provider value={{ tenants: tenants(role), reload: async () => {}, userId: 'u-me', loading: false }}>{ui}</WorkspacesContext.Provider>
 );
 
 const members = [
@@ -181,4 +181,33 @@ test('Delete organisation stays disabled until the exact name is typed', async (
   expect(confirm().disabled).toBe(true);
   await type('Acme');
   expect(confirm().disabled).toBe(false);
+});
+
+// Why: a hard reload of an organisation page runs before the workspace list arrives; it must wait,
+// not say "not found" about an organisation the user belongs to.
+test('Settings waits for the workspace list instead of reporting not found', async () => {
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  vi.stubGlobal('fetch', async (url: string) => {
+    if (url === '/api/tenants') {
+      await held;
+      return json({ tenants: tenants('owner') });
+    }
+    return json({}, 404);
+  });
+  const me = {
+    userId: 'u-me', email: 'a@x.com', displayName: 'Ann', lang: 'en' as const, stage: 'full' as const, personalTenantId: PERSONAL,
+    factors: { pin: true, webauthn: [] }, recoveryCodesLeft: 10,
+  };
+  await mount(
+    <SessionProvider>
+      <Routes><Route path="/t/:tenantId/settings" element={<Shell me={me}><OrgSettings /></Shell>} /></Routes>
+    </SessionProvider>,
+    `/t/${ORG}/settings`,
+  );
+  expect(host!.querySelector('[role="alert"]')).toBeNull();
+  expect(button(host!, 'Delete organisation')).toBeUndefined();
+  release();
+  await settle();
+  expect(button(host!, 'Delete organisation')).toBeDefined();
 });

@@ -7,7 +7,7 @@ import { fmt, useStrings } from '../lib/i18n';
 import { can, orgApi } from '../lib/orgs';
 import { clientsPath, useWorkspaces } from '../lib/tenants';
 import { useStepUp } from '../stepup';
-import { ConfirmDialog, LoadFailedInline, PageHead, TypeToConfirm } from '../ui';
+import { ConfirmDialog, InlineLoading, LoadFailedInline, PageHead, TypeToConfirm } from '../ui';
 import { Feedback, useAction } from './forms';
 
 function ActionRow({ title, body, children }: { title: string; body: string; children: ReactNode }) {
@@ -27,7 +27,7 @@ export function OrgSettings() {
   useTitle(portalTitle(t.screens.orgSettings));
   const { tenantId = '' } = useParams();
   const navigate = useNavigate();
-  const { tenants, reload } = useWorkspaces();
+  const { tenants, reload, loading } = useWorkspaces();
   const { stepUp, modal } = useStepUp();
   const ws = tenants.find((x) => x.tenantId === tenantId);
   const [name, setName] = useState<string | null>(null);
@@ -37,6 +37,7 @@ export function OrgSettings() {
   const remove = useAction();
 
   if (ws?.kind === 'personal') return <Navigate to={clientsPath(tenantId)} replace />;
+  if (!ws && loading) return <InlineLoading />;
   if (!ws) return <LoadFailedInline error={new ApiError(404, 'not_found', {})} onRetry={() => void reload()} />;
   const personal = tenants.find((x) => x.kind === 'personal')?.tenantId ?? '';
   const owner = can(ws.role, 'rename');

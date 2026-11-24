@@ -30,8 +30,9 @@ export function Avatar({ me, large }: { me: Me; large?: boolean }) {
  * personal workspace the session already names, so the frame never blocks a screen. `reload`
  * fetches it again, for the screens that create, leave or delete an organisation.
  */
-function useTenants(me: Me): { tenants: Tenant[]; reload: () => Promise<void> } {
+function useTenants(me: Me): { tenants: Tenant[]; reload: () => Promise<void>; loading: boolean } {
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
+  const [resolved, setResolved] = useState(false);
   const live = useRef(true);
   const reload = useCallback(async () => {
     try {
@@ -40,6 +41,7 @@ function useTenants(me: Me): { tenants: Tenant[]; reload: () => Promise<void> } 
     } catch {
       if (live.current) setTenants(null);
     }
+    if (live.current) setResolved(true);
   }, []);
   useEffect(() => {
     live.current = true;
@@ -53,6 +55,7 @@ function useTenants(me: Me): { tenants: Tenant[]; reload: () => Promise<void> } 
       ? tenants
       : [{ tenantId: me.personalTenantId, kind: 'personal', name: '', role: 'owner' }],
     reload,
+    loading: !resolved,
   };
 }
 
@@ -70,9 +73,9 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const { pathname } = useLocation();
   const { tenantId: urlTenant } = useParams();
   const { clear } = useMe();
-  const { tenants, reload } = useTenants(me);
+  const { tenants, reload, loading } = useTenants(me);
   const [creating, setCreating] = useState(false);
-  const workspaces = useMemo(() => ({ tenants, reload, userId: me.userId }), [tenants, reload, me.userId]);
+  const workspaces = useMemo(() => ({ tenants, reload, userId: me.userId, loading }), [tenants, reload, me.userId, loading]);
   const current = tenants.find((x) => x.tenantId === (urlTenant ?? me.personalTenantId)) ?? tenants[0]!;
   // The audit log is for owners and admins (spec section 6).
   const org = current.kind === 'org';

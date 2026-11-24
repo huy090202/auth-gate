@@ -205,10 +205,11 @@ export function Members() {
   const t = useStrings();
   useTitle(portalTitle(t.screens.members));
   const { tenantId = '' } = useParams();
-  const { tenants, userId } = useWorkspaces();
+  const { tenants, userId, loading } = useWorkspaces();
   const ws = tenants.find((x) => x.tenantId === tenantId);
   // A personal workspace has no members; the nav hides the link, and a typed URL goes back to the clients.
   if (ws?.kind === 'personal') return <Navigate to={clientsPath(tenantId)} replace />;
+  if (loading) return <InlineLoading />;
   return (
     <>
       <PageHead title={t.screens.members} intro={t.members.intro} />
