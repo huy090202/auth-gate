@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { NavLink, useLocation, useNavigate, useParams } from 'react-router';
 import { Brand } from './brand';
 import { LangSwitch, SchemeToggle } from './controls';
-import { AccountIcon, AuditIcon, ClientsIcon, MembersIcon, PanelLeftIcon, SettingsIcon, SignOutIcon } from './icons';
+import { AccountIcon, AuditIcon, ClientsIcon, MembersIcon, MenuIcon, PanelLeftIcon, SettingsIcon, SignOutIcon } from './icons';
 import { api } from './lib/api';
 import { fmt, useStrings } from './lib/i18n';
 import {
@@ -126,6 +126,8 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
       strings={t.common}
       brand={<Brand />}
       collapseIcon={<PanelLeftIcon />}
+      menuIcon={<MenuIcon />}
+      routeKey={pathname}
       switcher={
         <div className="tenant-switch">
           <Select aria-label={t.shell.workspace} value={current.tenantId} onChange={switchTo} allowDeselect={false}

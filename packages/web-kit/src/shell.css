@@ -52,6 +52,9 @@
 
 /* Wide screens: the width animates; icons keep one fixed column (the side padding is the same in both
    states), labels stay in the flow, clipped by the sidebar, and only fade. */
+/* The phone header's parts exist at every width; above 768 px only the old layout shows, and .header-start adds no box. */
+.header-menu, .header-brand { display: none; }
+.header-start { display: contents; }
 @media (min-width: 769px) {
   .sidebar { padding-inline: 10px; transition: width 200ms ease; }
   .sidebar-brand { padding: 0 8px; }
@@ -66,12 +69,20 @@
 
 @media (max-width: 768px) {
   .shell { display: block; }
-  .sidebar {
-    position: static; width: auto; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-    padding: 10px 16px; border-width: 0 0 1px; overflow: visible;
+  .sidebar, .header-start { display: none; }
+  .header-menu {
+    display: grid; place-items: center; flex: none; width: 44px; height: 44px; margin-left: -10px; border: 0; border-radius: 8px; cursor: pointer;
+    background: transparent; color: var(--mantine-color-text);
   }
-  .sidebar-nav { flex-direction: row; flex-wrap: wrap; order: 3; width: 100%; }
-  .sidebar-foot { display: none; }
+  .header-menu:hover { background: var(--nav-hover); }
+  .header-brand { display: block; margin-right: auto; min-width: 0; }
+  .drawer-body { display: flex; flex-direction: column; gap: 16px; }
+  .drawer-nav { display: flex; flex-direction: column; gap: 2px; }
+  .drawer-nav .nav-link { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 9px 12px; border-radius: 8px; color: var(--mantine-color-text); }
+  .drawer-nav .nav-link svg { flex: none; }
+  .drawer-nav .nav-link:hover, .drawer-nav .nav-link:focus-visible { background: var(--nav-hover); }
+  .drawer-nav .nav-link[aria-current='page'] { color: var(--accent-text); background: var(--accent-soft); font-weight: 650; box-shadow: inset 3px 0 0 var(--accent-text); }
+  .drawer-tools { display: flex; align-items: center; gap: 10px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--mantine-color-default-border); }
   .shell-content { padding: 24px 16px 64px; }
 }
 @media (max-width: 520px) { .avatar-name { display: none; } }
