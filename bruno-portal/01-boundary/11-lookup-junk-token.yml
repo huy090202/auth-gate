@@ -18,7 +18,7 @@ runtime:
   scripts:
     - type: tests
       code: |-
-        // The invite lookup shares the per-IP sign-in limiter, so an IP that spent its tokens gets 429.
+        // The invite lookup has its own per-IP bucket (invite-lookup#<ip>) with sign-in's settings, so an IP that spent it gets 429.
         test("404 invite_not_found, or 429 rate_limited once this IP spent its tokens", function() {
           const s = res.getStatus();
           expect([404, 429]).to.include(s);
@@ -34,5 +34,5 @@ settings:
 docs: |-
   **Expected: 404 `invite_not_found`.** The lookup needs no cookie, because the signed-out invite page
   uses it, so the token is the only gate. An unknown, expired or used token, and an unknown organisation,
-  all answer the same 404. It spends one token of the per-IP sign-in limiter; an IP that spent them
-  gets 429 `rate_limited`, also accepted.
+  all answer the same 404. It spends one token of its own per-IP bucket (`invite-lookup#<ip>`, with
+  sign-in's settings); an IP that spent them gets 429 `rate_limited`, also accepted.

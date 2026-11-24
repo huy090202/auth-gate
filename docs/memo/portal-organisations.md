@@ -44,15 +44,15 @@ The second one holds. `deletingAt` is set first, so the organisation is unusable
 
 1. list and delete each client at AuthGate (404 is skipped);
 2. delete the invites and their index items;
-3. drop every other member's membership pair and mail them `org-deleted`;
-4. the store finish: release `orgsCreated`, delete the `TENANTS` index item, set 30-day TTLs on the tenant item and its audit;
+3. the store finish: release `orgsCreated`, delete the `TENANTS` index item, set 30-day TTLs on the tenant item and its audit;
+4. drop every other member's membership pair and mail them `org-deleted`;
 5. drop the acting owner's membership last.
 
 A failure answers `502` and keeps `deletingAt`. The next `DELETE` by an owner runs it again, and so does the next `GET /api/tenants` by any member still holding a membership item, which finds the tenant with `deletingAt` and calls the same function. Nobody has to remember.
 
-The actor's membership is dropped after the store finish, not before. Dropped first, a failure in the finish could not be resumed by the actor, who would no longer be a member and so fail the guard. Held until the end, it is the handle a resume uses. Every other member's item serves the same purpose through the workspace list. The audit entry `org-delete` is written at once, before the 30-day TTL is set; written when the request ends, it would carry its own 180 days and outlive the organisation.
+The store finish comes before any membership is dropped. It needs none of them, and a membership is the handle a resume holds: the actor's for the next `DELETE`, every other member's for the workspace list. Two runs at once (the owner's `DELETE` and a member's list) could otherwise each drop the other's handle and then stop before the finish, leaving a tenant nobody can reach. With the finish first, a run that stops leaves only memberships, and each one still finds the tenant and runs the rest. The actor's membership goes last for the same reason: dropped earlier, a failure after it could not be resumed by the actor, who would no longer be a member and so fail the guard. The audit entry `org-delete` is written at once, before the 30-day TTL is set; written when the request ends, it would carry its own 180 days and outlive the organisation.
 
-Account deletion uses the same function for each organisation the person is alone in. It sets `deletingAt` only while the organisation has exactly one member (`MarkDeletingIfAlone`). If someone accepted an invite in the meantime, the answer is `409 sole_owner` with that organisation's name, and nothing is lost.
+Account deletion uses the same function for each organisation the person is alone in. It sets `deletingAt` only while the organisation has exactly one member (`MarkDeletingIfAlone`). If someone accepted an invite in the meantime, the answer is `409 sole_owner` with that organisation's name, and nothing is lost. The person can also accept an invite themselves after the organisations were sorted. The store's last step (`Store.DeleteAccount`) therefore refuses any membership but the personal workspace's with `409 conflict`, since only `RemoveMember` may drop one with its counters, and a retry sorts the organisations again. An accept between that check and the final transaction is caught too: `AcceptInvite` raises `membershipVersion` on the user item, and the user item's delete is conditioned on the value read before the check.
 
 A create can race the deletion: one that passed the guard just before `deletingAt` was set can reach AuthGate after the run listed the clients. AuthGate refuses a key only for an unknown or expired key, a deleted or disabled client or a suspended owner, and deleting the organisation touches none of them, so the orphan's key would stay live and nobody in the Portal could revoke it. AuthGate has no fence, so the create checks after the fact: once AuthGate accepts it, `createClient` re-reads the tenant (a consistent read). If `deletingAt` is set it deletes the new client through the same tenant client (404 counts as done) and answers as a deleting tenant does (`404 not_found` for an organisation, `409 tenant_deleting` for a personal workspace), with no key in the body.
 
@@ -73,7 +73,7 @@ The invite page (`/invite/<tenantId>#token=<token>`) must show a signed-out visi
 - It is 32 random bytes, only its SHA-256 is stored, and it travels in the link's fragment and in POST bodies, so it never reaches CloudFront or a log.
 - Whoever holds it received the email, and so already knows the invited address and the organisation. The lookup reveals nothing they do not have.
 - An unknown, expired or used token, a tenant that is gone, a tenant being deleted and a personal workspace all answer the same `404 invite_not_found`.
-- It has a per-IP limit shared with sign-in, so tokens cannot be guessed at speed.
+- It has its own per-IP bucket (`invite-lookup#<ip>`) with sign-in's settings, so tokens cannot be guessed at speed.
 - With a full session it adds `emailMatches`, so the page can say the invite is for another address and offer no button. Nothing on the page says whether the invited address has an account, which keeps sign-up enumeration-free.
 
 Accept and decline do need a full session, and the session's address must equal the invited one (`403 invite_wrong_email`). A leaked link alone makes no member.
@@ -83,5 +83,5 @@ The web keeps a pending invite in `localStorage` under `portal.invite`, for at m
 ## Other trade-offs
 
 - Roles and removals need step-up; leaving does not. A person can always walk away, and nothing is lost that the owner cannot reverse.
-- Invite items hold an opaque `inviteId`, not the token hash, so the invite list never holds anything that opens a link.
+- The invite list API exposes only `inviteId` for each invite, never the token hash its item is keyed on (`INVITE#<tokenHash>`), so nothing it returns opens a link.
 - Mail on removal, role change and deletion is best effort: a failed mail does not undo the change.

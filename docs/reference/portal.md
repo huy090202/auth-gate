@@ -105,7 +105,7 @@ All under `/api`, JSON, errors `{"error": "<snake_case>"}`.
 | `POST /t/{tenantId}/leave` | any member | No step-up. `204`. `409 last_owner` for the last owner. |
 | `GET /t/{tenantId}/invites` | owner, admin | `{invites: [{inviteId, email, role, invitedBy, expiresAt}]}`. Expired ones are pruned. |
 | `POST /t/{tenantId}/invites` `{email, role}` | owner, admin | `201 {inviteId, email, role, expiresAt}` and an email. Only an owner invites `owner`. |
-| `POST /t/{tenantId}/invites/{inviteId}/resend` | owner, admin | `200 {inviteId, email, role, expiresAt}`. A new token replaces the old one. |
+| `POST /t/{tenantId}/invites/{inviteId}/resend` | owner, admin | `200 {inviteId, email, role, expiresAt}`. A new token replaces the old one. An owner invite is an owner's to resend: `403 forbidden` for an admin. |
 | `DELETE /t/{tenantId}/invites/{inviteId}` | owner, admin | `204`. |
 | `POST /invites/{tenantId}/lookup` `{token}` | none | `{orgName, inviterName, role, email}`, plus `emailMatches` with a full session. Per-IP limit. |
 | `POST /invites/{tenantId}/accept` `{token}` | full | `200 {tenantId}`. The session's email must be the invited one. |

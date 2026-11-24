@@ -71,7 +71,7 @@ func (a *App) auditOrgDelete(r *http.Request, u User, tenantID string) {
 	})
 }
 
-// finishOrgDeletion runs steps 2 to 7 of spec section 4 on a tenant marked
+// finishOrgDeletion runs steps 2 to 6 of spec section 4 on a tenant marked
 // deletingAt. Every step skips what is already gone, so it may run any number
 // of times: the clients at AuthGate, the invites, the store's end of the tenant
 // (FinishDeletion), every other member's membership, and the actor's membership

@@ -28,7 +28,9 @@ Decided by the owner (not re-askable):
      refused;
   4. the owner deletes the organisation.
 - The race, invite and role tests of section 9 pass, including the full organisation round over HTTP
-  against DynamoDB Local. The Portal smoke covers the new routes' anonymous refusals.
+  against DynamoDB Local. The Portal smoke proves the anonymous refusal for each kind of guard the
+  new routes use (session routes, the signed-out lookup, the deletion route); every other new route
+  sits behind the same `session(StageFull)` guard, which the Go tests exercise.
 - `pnpm run check` is green.
 
 ## 2. Data
@@ -72,7 +74,7 @@ except its own `DELETE`.
 | `POST /api/t/{id}/leave` | any member | No step-up. The last owner cannot leave. A personal workspace cannot be left. |
 | `GET /api/t/{id}/invites` | owner, admin | Pending invites, with email, role, inviter and expiry. |
 | `POST /api/t/{id}/invites` `{email, role}` | owner, admin | An admin invites `admin` or `member`. Only an owner invites `owner`. `409 already_member` if the address belongs to a member. `409 already_invited` if one is pending; use resend instead. Rate limit 20 per day per organisation. |
-| `POST /api/t/{id}/invites/{inviteId}/resend` | owner, admin | A new token replaces the old one and the expiry restarts. The old link stops working. |
+| `POST /api/t/{id}/invites/{inviteId}/resend` | owner, admin | A new token replaces the old one and the expiry restarts. The old link stops working. An owner invite is resent by an owner only (`403 forbidden` for an admin, who may still revoke it). It commits only while the tenant has no `deletingAt`. |
 | `DELETE /api/t/{id}/invites/{inviteId}` | owner, admin | Revoke. |
 | `POST /api/invites/{tenantId}/lookup` `{token}` | whoever holds the token | No session needed, so the signed-out page can prefill sign-up. It returns the organisation name, the inviter's name, the role and the invited address. The holder received that address's email, so nothing new is revealed. With a full session it also returns `emailMatches`. Per-IP limit as for sign-in. An unknown, expired or used token answers `404 invite_not_found`. |
 | `POST /api/invites/{tenantId}/accept` `{token}` | the invitee | The session's email must equal the invited address, else `403 invite_wrong_email`. Writes the membership pair, deletes the invite and its index item, and increments `memberCount` under `memberCount < 20` and no `deletingAt`, in one transaction. |
@@ -104,14 +106,16 @@ on every request with a consistent read.
 2. Delete each of the tenant's clients through the portal key (`DELETE /api/portal/clients/{id}`).
    A client already gone (404) is skipped.
 3. Delete the invites and their index items.
-4. Delete the other members' memberships, mailing each one `org-deleted` as theirs is dropped.
-5. The store finish (`FinishDeletion`): decrement `orgsCreated` on the creator, if that account
+4. The store finish (`FinishDeletion`): decrement `orgsCreated` on the creator, if that account
    still exists, delete the tenant's index item in the `TENANTS` index, and set a 30-day TTL on the
-   tenant's remaining items (the tenant item and its audit).
-6. Delete the acting owner's membership last, and mail them `org-deleted`. It comes after step 5,
-   not before it: if it went first and step 5 then failed, the actor could no longer run the
-   deletion again, and no other member is guaranteed to exist. Kept until the end, it is the
-   handle a resume holds.
+   tenant's remaining items (the tenant item and its audit). It comes before any membership is
+   dropped: it needs none of them, and every membership is a handle a resume holds. Two runs at
+   once could otherwise drop each other's handles and stop before the finish; with it first, a run
+   that stops leaves only memberships, and each still finds the tenant and runs the rest.
+5. Delete the other members' memberships, mailing each one `org-deleted` as theirs is dropped.
+6. Delete the acting owner's membership last, and mail them `org-deleted`. If it went earlier and a
+   later step failed, the actor could no longer run the deletion again, and no other member is
+   guaranteed to exist. Kept until the end, it is the handle a resume holds.
 
 Every step can be run again safely. A run that stops part way, through a timeout or an AuthGate
 error, answers `502` and is resumed in either of two ways:
@@ -151,6 +155,13 @@ before the step-up is spent:
   while it still has that one member (`MarkDeletingIfAlone`). If someone joined in the meantime,
   the answer is `409 sole_owner` with that organisation's name. The `org-delete` audit entry is
   written in each organisation the account deletion deletes, as it is for a direct delete.
+
+The person may accept an invite after the organisations were sorted. The last step,
+`Store.DeleteAccount`, therefore refuses any membership but the personal workspace's with `409
+conflict` (only `RemoveMember` drops one with its counters), and a retry sorts them again.
+`AcceptInvite` raises `membershipVersion` on the user item, and the user item's delete is
+conditioned on the value read before that check, so an accept just after it is refused too. A
+membership left over from a tenant whose item has expired is dropped on the way.
 
 ## 5. Accepting an invite
 
@@ -263,7 +274,9 @@ Also:
   Settings controls each role sees;
 - `bruno-portal` gains the organisation boundary cases;
 - `scripts/portal/smoke.sh` stays credential-free (it cannot sign up: Turnstile and email stand in
-  the way). Through `bruno-portal`, it proves that every new route refuses an anonymous caller. The
+  the way). Through `bruno-portal` cases 07 to 12, it proves the anonymous refusal for each kind of
+  guard the new routes use: session routes, the signed-out lookup and the deletion route. Every other
+  new route sits behind the same `session(StageFull)` guard, which the Go tests exercise. The
   organisation round itself is proven by the Go HTTP tests and by the owner's two-account browser run.
 
 ## 10. Docs
