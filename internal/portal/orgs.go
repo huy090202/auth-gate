@@ -2,13 +2,11 @@ package portal
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/id"
 	"github.com/huy090202/auth-gate/internal/platform/webapi"
-	pmail "github.com/huy090202/auth-gate/internal/portal/mail"
 )
 
 // orgErr maps the store's organisation errors to the API's. Errors it does not
@@ -254,13 +252,7 @@ func (a *App) leaveOrg(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// mailMember sends an organisation notice to a member in their own language.
-// It is best effort: a user who cannot be read is logged, not answered.
+// mailMember sends an organisation notice to a member in their own language (see mailUser).
 func (a *App) mailMember(r *http.Request, userID, kind string, vars map[string]string) {
-	to, err := a.Store.GetUser(r.Context(), userID)
-	if err != nil {
-		slog.Warn("portal: org notice not sent", "kind", kind, "err", err)
-		return
-	}
-	a.mailBestEffort(r.Context(), pmail.Message{To: to.Email, Lang: to.Lang, Kind: kind, Vars: vars})
+	a.mailUser(r.Context(), userID, kind, vars)
 }

@@ -2,6 +2,7 @@ package portal
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -27,6 +28,8 @@ func (a *App) mountTenants(mux *http.ServeMux) {
 
 // listTenants returns the workspaces the user belongs to, the personal one first.
 // It reads the user's own membership items, so it lists no tenant they are not in.
+// An organisation being deleted is not listed: its deletion is run again here,
+// and a failure is logged, as the next visit tries again (spec section 4).
 func (a *App) listTenants(w http.ResponseWriter, r *http.Request) error {
 	_, u := sessionFrom(r.Context())
 	ms, err := a.Store.ListMemberships(r.Context(), u.ID)
@@ -41,6 +44,12 @@ func (a *App) listTenants(w http.ResponseWriter, r *http.Request) error {
 		}
 		if err != nil {
 			return err
+		}
+		if t.Kind == KindOrg && t.DeletingAt != nil {
+			if err := a.finishOrgDeletion(r.Context(), t, u.ID); err != nil {
+				slog.Warn("portal: organisation deletion not resumed", "tenant", t.ID, "err", err)
+			}
+			continue
 		}
 		out = append(out, tenantView{TenantID: t.ID, Kind: t.Kind, Name: t.Name, Role: m.Role})
 	}

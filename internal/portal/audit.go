@@ -38,19 +38,36 @@ func setAuditDetail(ctx context.Context, k, v string) { auditlog.SetDetail(ctx, 
 // names no workspace (sign-up, sign-in and the other routes without a session
 // or a tenant) has no log to go to and is written to the process log instead,
 // with the same facts. A failed audit write is logged and does not change the
-// answer.
+// answer. A handler that wrote its own entry (auditWritten) gets none from here.
 func (a *App) audited(action string, h http.Handler) http.Handler {
-	return auditlog.Wrap(action, h, func(r *http.Request, e auditlog.Entry) {
-		entry := AuditEntry{
-			TenantID: e.Note.Scope, ActorID: e.Note.ActorID, ActorName: e.Note.ActorName, Action: action,
-			Target: e.Note.Target, Result: e.Result, IP: a.auditIP(r), Detail: e.Note.Detail, At: a.now(),
-		}
-		if entry.TenantID != "" {
-			a.writeAudit(r, entry)
-		} else {
-			slog.Info("portal: action without a workspace", "action", action, "actor", entry.ActorID, "ip", entry.IP, "result", entry.Result)
-		}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		own := new(bool)
+		r = r.WithContext(context.WithValue(r.Context(), auditOwnKey{}, own))
+		auditlog.Wrap(action, h, func(r *http.Request, e auditlog.Entry) {
+			if *own {
+				return
+			}
+			entry := AuditEntry{
+				TenantID: e.Note.Scope, ActorID: e.Note.ActorID, ActorName: e.Note.ActorName, Action: action,
+				Target: e.Note.Target, Result: e.Result, IP: a.auditIP(r), Detail: e.Note.Detail, At: a.now(),
+			}
+			if entry.TenantID != "" {
+				a.writeAudit(r, entry)
+			} else {
+				slog.Info("portal: action without a workspace", "action", action, "actor", entry.ActorID, "ip", entry.IP, "result", entry.Result)
+			}
+		}).ServeHTTP(w, r)
 	})
+}
+
+type auditOwnKey struct{}
+
+// auditWritten tells audited that the handler has written the request's entry
+// itself, so audited writes none when the request ends.
+func auditWritten(ctx context.Context) {
+	if own, ok := ctx.Value(auditOwnKey{}).(*bool); ok {
+		*own = true
+	}
 }
 
 func (a *App) writeAudit(r *http.Request, e AuditEntry) {

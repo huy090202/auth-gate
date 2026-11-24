@@ -572,16 +572,65 @@ func (a *App) workspaceClients(ctx context.Context, tenantID string) ([]string, 
 
 var errAuthGateDown = apiErr(http.StatusBadGateway, "authgate_unavailable")
 
-// deleteAccount deletes the person's workspace clients at AuthGate, their own
-// factors, then everything of theirs in the Portal. A failed AuthGate call on
-// the way to the clients stops it with 502 and nothing of the Portal deleted,
-// so the person can run it again (with a new step-up).
+// accountOrgs is what account deletion does with each organisation the person
+// belongs to.
+type accountOrgs struct {
+	soleOwner []string     // names of those they alone own, with other members: deletion is refused
+	remove    []Tenant     // those they are the only member of, or already being deleted
+	leave     []Membership // the others: their membership is removed
+}
+
+// classifyOrgs sorts the person's organisations for account deletion (spec section 4).
+func (a *App) classifyOrgs(ctx context.Context, userID string) (accountOrgs, error) {
+	var out accountOrgs
+	ms, err := a.Store.ListMemberships(ctx, userID)
+	if err != nil {
+		return out, err
+	}
+	for _, m := range ms {
+		t, err := a.Store.GetTenant(ctx, m.TenantID)
+		if errors.Is(err, ErrTenantNotFound) {
+			continue
+		}
+		if err != nil {
+			return out, err
+		}
+		switch {
+		case t.Kind != KindOrg:
+		case t.DeletingAt != nil:
+			out.remove = append(out.remove, t) // finishing it drops this membership too
+		case m.Role == RoleOwner && t.Counts.Owners == 1 && t.Counts.Members > 1:
+			out.soleOwner = append(out.soleOwner, t.Name)
+		case m.Role == RoleOwner && t.Counts.Members == 1:
+			out.remove = append(out.remove, t)
+		default:
+			out.leave = append(out.leave, m)
+		}
+	}
+	return out, nil
+}
+
+// deleteAccount deletes the person's workspace clients at AuthGate, the
+// organisations they are the only member of, their place in the others, their
+// own factors, then everything of theirs in the Portal. Being the only owner of
+// an organisation that has other members refuses it with 409 sole_owner, before
+// the step-up is spent, so the person can transfer ownership and retry with the
+// same token. A failed AuthGate call on the way stops it with 502 and the
+// account whole, so the person can run it again (with a new step-up); an
+// organisation it had started to delete stays marked and is finished then.
 func (a *App) deleteAccount(w http.ResponseWriter, r *http.Request) error {
 	x, u := sessionFrom(r.Context())
 	ctx := r.Context()
 	tok, err := a.checkStepUp(r, x, "delete-account", "")
 	if err != nil {
 		return err
+	}
+	orgs, err := a.classifyOrgs(ctx, u.ID)
+	if err != nil {
+		return err
+	}
+	if len(orgs.soleOwner) > 0 {
+		return &webapi.Error{Status: http.StatusConflict, Code: "sole_owner", Extra: map[string]any{"organisations": orgs.soleOwner}}
 	}
 	var clients []string
 	if u.PersonalTenantID != "" {
@@ -593,15 +642,34 @@ func (a *App) deleteAccount(w http.ResponseWriter, r *http.Request) error {
 	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
-	for _, c := range clients {
-		var ae *authgate.Error
-		err := a.AuthGate.Tenant(u.PersonalTenantID).Delete(ctx, c)
-		if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
-			continue // already gone
+	if err := a.deleteClients(ctx, u.PersonalTenantID, clients); err != nil {
+		slog.Warn("portal: account deletion: client not deleted", "err", err)
+		return errAuthGateDown
+	}
+	for _, t := range orgs.remove {
+		marked, err := a.Store.MarkDeleting(ctx, t.ID, a.now())
+		if errors.Is(err, ErrTenantNotFound) {
+			continue
 		}
 		if err != nil {
-			slog.Warn("portal: account deletion: client not deleted", "err", err)
+			return err
+		}
+		if t.DeletingAt == nil {
+			a.auditOrgDelete(r, u, t.ID)
+		}
+		if err := a.finishOrgDeletion(ctx, marked, u.ID); err != nil {
+			slog.Warn("portal: account deletion: organisation not deleted", "tenant", t.ID, "err", err)
 			return errAuthGateDown
+		}
+	}
+	for _, m := range orgs.leave {
+		_, err := a.Store.RemoveMember(ctx, m.TenantID, m, m)
+		switch {
+		case err == nil, errors.Is(err, ErrTenantNotFound):
+		case errors.Is(err, ErrLastOwner), errors.Is(err, ErrConflict), errors.Is(err, ErrTenantDeleting):
+			return apiErr(http.StatusConflict, "conflict") // something moved since the check: the person may retry
+		default:
+			return err
 		}
 	}
 	a.deleteOwnFactors(ctx, u.ID)

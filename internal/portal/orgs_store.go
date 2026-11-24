@@ -170,37 +170,20 @@ func (st *Store) explainOrgConflict(ctx context.Context, tenantID string, losesO
 // admins, then members, each group by display name. A membership whose user is
 // gone is skipped.
 func (st *Store) ListMembers(ctx context.Context, tenantID string) ([]Member, error) {
-	var all []Member
-	var start item
-	for {
-		out, err := st.DB.Query(ctx, &dynamodb.QueryInput{
-			TableName: aws.String(st.Table), ConsistentRead: aws.Bool(true),
-			KeyConditionExpression:    aws.String("pk = :p AND begins_with(sk, :m)"),
-			ExpressionAttributeValues: item{":p": s("TENANT#" + tenantID), ":m": s("MEMBER#")},
-			ExclusiveStartKey:         start,
-		})
+	ms, err := st.tenantMemberships(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	all := make([]Member, 0, len(ms))
+	for _, m := range ms {
+		u, err := st.GetUser(ctx, m.UserID)
+		if errors.Is(err, ErrUserNotFound) {
+			continue
+		}
 		if err != nil {
-			return nil, fmt.Errorf("list members: %w", err)
+			return nil, err
 		}
-		for _, it := range out.Items {
-			uid := strings.TrimPrefix(getS(it, "sk"), "MEMBER#")
-			m, err := decodeMembership(tenantID, uid, it)
-			if err != nil {
-				return nil, err
-			}
-			u, err := st.GetUser(ctx, uid)
-			if errors.Is(err, ErrUserNotFound) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			all = append(all, Member{UserID: uid, DisplayName: u.DisplayName, Email: u.Email, Role: m.Role, JoinedAt: m.JoinedAt})
-		}
-		if len(out.LastEvaluatedKey) == 0 {
-			break
-		}
-		start = out.LastEvaluatedKey
+		all = append(all, Member{UserID: m.UserID, DisplayName: u.DisplayName, Email: u.Email, Role: m.Role, JoinedAt: m.JoinedAt})
 	}
 	rank := map[string]int{RoleOwner: 0, RoleAdmin: 1, RoleMember: 2}
 	sort.SliceStable(all, func(i, j int) bool {
@@ -315,4 +298,173 @@ func (st *Store) orgWrites(tenantID string, actor Membership, userID string, own
 		}})
 	}
 	return items
+}
+
+// ---- deletion ----
+
+// orgDeletedTTL is how long a deleted organisation's tenant item and audit log
+// stay before DynamoDB's TTL removes them.
+const orgDeletedTTL = 30 * 24 * time.Hour
+
+// MarkDeleting starts an organisation's deletion: it sets deletingAt unless it
+// is set already, and returns the tenant as it then is either way. A personal
+// workspace gives ErrPersonal.
+func (st *Store) MarkDeleting(ctx context.Context, tenantID string, now time.Time) (Tenant, error) {
+	t, err := st.GetTenant(ctx, tenantID)
+	if err != nil {
+		return Tenant{}, err
+	}
+	if t.Kind != KindOrg {
+		return Tenant{}, ErrPersonal
+	}
+	if t.DeletingAt != nil {
+		return t, nil
+	}
+	_, err = st.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(st.Table), Key: tenantKey(tenantID),
+		UpdateExpression:          aws.String("SET deletingAt = :d"),
+		ConditionExpression:       aws.String("kind = :org AND attribute_not_exists(deletingAt)"),
+		ExpressionAttributeValues: item{":d": s(ts(now)), ":org": s(KindOrg)},
+	})
+	if err != nil && !dynamo.IsConditionFailed(err) {
+		return Tenant{}, fmt.Errorf("mark deleting: %w", err)
+	}
+	// A failed condition is another run that marked it first, or a tenant now gone.
+	return st.GetTenant(ctx, tenantID)
+}
+
+// tenantMemberships returns every membership of a tenant, from the tenant's side
+// of the pair, including one whose user is gone.
+func (st *Store) tenantMemberships(ctx context.Context, tenantID string) ([]Membership, error) {
+	var all []Membership
+	var start item
+	for {
+		out, err := st.DB.Query(ctx, &dynamodb.QueryInput{
+			TableName: aws.String(st.Table), ConsistentRead: aws.Bool(true),
+			KeyConditionExpression:    aws.String("pk = :p AND begins_with(sk, :m)"),
+			ExpressionAttributeValues: item{":p": s("TENANT#" + tenantID), ":m": s("MEMBER#")},
+			ExclusiveStartKey:         start,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list members: %w", err)
+		}
+		for _, it := range out.Items {
+			m, err := decodeMembership(tenantID, strings.TrimPrefix(getS(it, "sk"), "MEMBER#"), it)
+			if err != nil {
+				return nil, err
+			}
+			all = append(all, m)
+		}
+		if len(out.LastEvaluatedKey) == 0 {
+			return all, nil
+		}
+		start = out.LastEvaluatedKey
+	}
+}
+
+// DropMembership deletes both sides of a membership, with no condition and no
+// counter change. Only organisation deletion uses it: the counters no longer
+// matter once deletingAt is set.
+func (st *Store) DropMembership(ctx context.Context, tenantID, userID string) error {
+	del := func(key item) types.TransactWriteItem {
+		return types.TransactWriteItem{Delete: &types.Delete{TableName: aws.String(st.Table), Key: key}}
+	}
+	if err := txWrite(ctx, st, del(memberKey(tenantID, userID)), del(userTenantKey(userID, tenantID))); err != nil {
+		return fmt.Errorf("drop membership: %w", err)
+	}
+	return nil
+}
+
+// FinishDeletion ends what is left of a deleted organisation in the store, and
+// may run again any number of times:
+//   - the creator's orgsCreated goes down by one, once: the tenant item's
+//     creatorReleased flag is set in the same transaction, and a creator whose
+//     account is gone only gets the flag set;
+//   - the TENANTS index item is deleted;
+//   - the tenant item and every AUDIT# item of the tenant get a ttl 30 days
+//     from now (an earlier ttl is kept).
+func (st *Store) FinishDeletion(ctx context.Context, t Tenant, now time.Time) error {
+	if err := st.releaseCreator(ctx, t); err != nil {
+		return err
+	}
+	if _, err := st.DB.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(st.Table), Key: tenantIndexKey(t.ID)}); err != nil {
+		return fmt.Errorf("finish deletion: index: %w", err)
+	}
+	until := now.Add(orgDeletedTTL).Unix()
+	if err := st.expireBy(ctx, tenantKey(t.ID), until); err != nil {
+		return err
+	}
+	// One UpdateItem per audit entry: the cost grows with the organisation's
+	// log, which its own 180-day ttl and the action rate limits keep bounded.
+	var start item
+	for {
+		out, err := st.DB.Query(ctx, &dynamodb.QueryInput{
+			TableName: aws.String(st.Table), ConsistentRead: aws.Bool(true), ProjectionExpression: aws.String("pk, sk"),
+			KeyConditionExpression:    aws.String("pk = :p AND begins_with(sk, :a)"),
+			ExpressionAttributeValues: item{":p": s("TENANT#" + t.ID), ":a": s("AUDIT#")},
+			ExclusiveStartKey:         start,
+		})
+		if err != nil {
+			return fmt.Errorf("finish deletion: audit: %w", err)
+		}
+		for _, it := range out.Items {
+			if err := st.expireBy(ctx, it, until); err != nil {
+				return err
+			}
+		}
+		if len(out.LastEvaluatedKey) == 0 {
+			return nil
+		}
+		start = out.LastEvaluatedKey
+	}
+}
+
+// releaseCreator gives the creator back the organisation they created, once.
+func (st *Store) releaseCreator(ctx context.Context, t Tenant) error {
+	flag := types.TransactWriteItem{Update: &types.Update{
+		TableName: aws.String(st.Table), Key: tenantKey(t.ID),
+		UpdateExpression:          aws.String("SET creatorReleased = :y"),
+		ConditionExpression:       aws.String(exists + " AND attribute_not_exists(creatorReleased)"),
+		ExpressionAttributeValues: item{":y": &types.AttributeValueMemberBOOL{Value: true}},
+	}}
+	if t.CreatedBy != "" {
+		err := txWrite(ctx, st, flag, types.TransactWriteItem{Update: &types.Update{
+			TableName: aws.String(st.Table), Key: userKey(t.CreatedBy),
+			UpdateExpression:          aws.String("ADD orgsCreated :minus"),
+			ConditionExpression:       aws.String(exists + " AND orgsCreated > :zero"),
+			ExpressionAttributeValues: item{":minus": n(-1), ":zero": n(0)},
+		}})
+		if !dynamo.IsConditionFailed(err) {
+			if err != nil {
+				return fmt.Errorf("finish deletion: creator: %w", err)
+			}
+			return nil
+		}
+	}
+	// Released already (the flag alone fails below too), or no creator to give
+	// it back to: set the flag alone.
+	_, err := st.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: flag.Update.TableName, Key: flag.Update.Key, UpdateExpression: flag.Update.UpdateExpression,
+		ConditionExpression: flag.Update.ConditionExpression, ExpressionAttributeValues: flag.Update.ExpressionAttributeValues,
+	})
+	if err != nil && !dynamo.IsConditionFailed(err) {
+		return fmt.Errorf("finish deletion: creator flag: %w", err)
+	}
+	return nil
+}
+
+// expireBy sets the item's ttl to until, unless it has an earlier one. An item
+// already gone is left gone.
+func (st *Store) expireBy(ctx context.Context, key item, until int64) error {
+	_, err := st.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(st.Table), Key: key,
+		UpdateExpression:          aws.String("SET #ttl = :t"),
+		ConditionExpression:       aws.String(exists + " AND (attribute_not_exists(#ttl) OR #ttl > :t)"),
+		ExpressionAttributeNames:  map[string]string{"#ttl": "ttl"},
+		ExpressionAttributeValues: item{":t": n(until)},
+	})
+	if err != nil && !dynamo.IsConditionFailed(err) {
+		return fmt.Errorf("finish deletion: ttl: %w", err)
+	}
+	return nil
 }
