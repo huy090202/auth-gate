@@ -9,4 +9,5 @@ export const AuditIcon = () => icon(<><path d="M8 6h12M8 12h12M8 18h12" /><path 
 export const AdminsIcon = () => icon(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8" /></>);
 export const AccountIcon = () => icon(<><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>);
 export const PanelLeftIcon = () => icon(<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" /></>);
+export const MenuIcon = () => icon(<path d="M4 6h16M4 12h16M4 18h16" />);
 export const SignOutIcon = () => icon(<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></>);

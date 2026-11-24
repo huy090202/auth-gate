@@ -166,24 +166,24 @@ function AdminsBody({ me }: { me: Me }) {
                       );
                       return (
                         <Table.Tr key={r.username}>
-                          <Table.Td>
+                          <Table.Td className="cell-title" data-label={t.admins.colUser}>
                             <span className="actor">
                               <span className="actor-name cell-strong">{r.username}</span>
                               {self && <Badge size="xs" variant="outline" color="gray">{t.admins.you}</Badge>}
                             </span>
                           </Table.Td>
-                          <Table.Td>
+                          <Table.Td data-label={t.admins.colRole}>
                             <Badge variant="light" color={r.role === 'master' ? 'canopy' : 'gray'}>{t.common.role[r.role]}</Badge>
                           </Table.Td>
-                          <Table.Td>
+                          <Table.Td data-label={t.admins.colStatus}>
                             <span className="chips">
                               {r.disabledAt ? <Badge variant="light" color="gray">{t.admins.disabled}</Badge> : <Badge variant="light" color="canopy">{t.admins.active}</Badge>}
                               {r.lockedUntil && <Badge variant="light" color="orange">{fmt(t.admins.locked, { time: formatDate(r.lockedUntil, t) })}</Badge>}
                               {r.mustChangePassword && <Badge variant="outline" color="gray">{t.admins.mustChange}</Badge>}
                             </span>
                           </Table.Td>
-                          <Table.Td className="cell-muted cell-nowrap">{formatDate(r.createdAt, t)}</Table.Td>
-                          <Table.Td>
+                          <Table.Td className="cell-muted cell-nowrap" data-label={t.admins.colCreated}>{formatDate(r.createdAt, t)}</Table.Td>
+                          <Table.Td className="cell-actions" data-label={t.admins.colActions}>
                             <div className="row-actions">
                               {btn('reset', t.admins.reset, { kind: 'reset', username: r.username })}
                               {btn('clear', t.admins.clearFactors, { kind: 'clear', username: r.username })}

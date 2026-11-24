@@ -52,6 +52,9 @@
 
 /* Wide screens: the width animates; icons keep one fixed column (the side padding is the same in both
    states), labels stay in the flow, clipped by the sidebar, and only fade. */
+/* The phone header's parts exist at every width; above 768 px only the old layout shows, and .header-start adds no box. */
+.header-menu, .header-brand { display: none; }
+.header-start { display: contents; }
 @media (min-width: 769px) {
   .sidebar { padding-inline: 10px; transition: width 200ms ease; }
   .sidebar-brand { padding: 0 8px; }
@@ -66,12 +69,25 @@
 
 @media (max-width: 768px) {
   .shell { display: block; }
-  .sidebar {
-    position: static; width: auto; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-    padding: 10px 16px; border-width: 0 0 1px; overflow: visible;
+  .sidebar, .header-start { display: none; }
+  .header-menu {
+    display: grid; place-items: center; flex: none; width: 44px; height: 44px; margin-left: -10px; border: 0; border-radius: 8px; cursor: pointer;
+    background: transparent; color: var(--mantine-color-text);
   }
-  .sidebar-nav { flex-direction: row; flex-wrap: wrap; order: 3; width: 100%; }
-  .sidebar-foot { display: none; }
+  .header-menu:hover { background: var(--nav-hover); }
+  .header-brand { display: block; margin-right: auto; min-width: 0; }
+  .drawer-body { display: flex; flex-direction: column; gap: 16px; }
+  .drawer-nav { display: flex; flex-direction: column; gap: 2px; }
+  .drawer-nav .nav-link { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 9px 12px; border-radius: 8px; color: var(--mantine-color-text); }
+  .drawer-nav .nav-link svg { flex: none; }
+  .drawer-nav .nav-link:hover, .drawer-nav .nav-link:focus-visible { background: var(--nav-hover); }
+  .drawer-nav .nav-link[aria-current='page'] { color: var(--accent-text); background: var(--accent-soft); font-weight: 650; box-shadow: inset 3px 0 0 var(--accent-text); }
+  .drawer-close { width: 44px !important; height: 44px !important; }
+  .drawer-body .mantine-Select-input { min-height: 44px; }
+  .drawer-tools .mantine-ActionIcon-root { min-width: 44px; min-height: 44px; }
+  .drawer-tools .mantine-SegmentedControl-label { display: flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; }
+  .drawer-tools { display: flex; align-items: center; gap: 10px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--mantine-color-default-border); }
+  .drawer-tools:empty { display: none; }
   .shell-content { padding: 24px 16px 64px; }
 }
 @media (max-width: 520px) { .avatar-name { display: none; } }
@@ -104,6 +120,7 @@
 .toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
 .toolbar > * { min-width: 180px; }
 .toolbar-grow { flex: 1 1 260px; }
+.toolbar-end { justify-content: flex-end; }
 .toolbar-form { margin-top: 18px; }
 .toolbar > [role='status'] { align-self: center; min-width: 0; margin-left: auto; }
 
@@ -173,6 +190,8 @@
 .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
 .form-foot { display: flex; justify-content: flex-end; margin-top: 24px; }
 .readonly-field .mantine-Input-input { opacity: 0.75; cursor: default; }
+/* A Select that cannot be typed in is a read-only input: no text caret, a pointer like any button. */
+.mantine-Select-input[readonly] { caret-color: transparent; cursor: pointer; }
 .notice { margin-bottom: 20px; border-left: 3px solid var(--mantine-color-orange-6); }
 
 /* Client detail: a row of consequence text and its button. */
@@ -191,6 +210,76 @@
 .data-table .mantine-Badge-root { max-width: none; flex-shrink: 0; white-space: nowrap; }
 .data-table .mantine-Badge-label { overflow: visible; text-overflow: clip; }
 .data-table td:first-child:not(.col-toggle) { min-width: 140px; }
+
+/* A phone: a table row becomes a card. The header is kept for screen readers, each cell shows its data-label
+   in its place. Below the shell's 768px; above 640px these rules are not in play, so wide screens do not change. */
+@media (max-width: 640px) {
+  .table-wrap { overflow-x: visible; }
+  .data-table, .data-table tbody, .data-table tr, .data-table td { display: block; }
+  .data-table { min-width: 0; width: 100%; }
+  .data-table thead { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .data-table tbody tr {
+    position: relative; margin-bottom: 12px; padding: 10px 14px;
+    border: 1px solid var(--mantine-color-default-border); border-radius: 12px;
+  }
+  .data-table td, .data-table td:first-child {
+    display: grid; grid-template-columns: minmax(72px, 36%) minmax(0, 1fr); align-items: baseline; gap: 4px 12px;
+    min-width: 0; padding: 6px 0; border: 0; overflow-wrap: anywhere;
+  }
+  /* Stronger than the wide-screen `td:first-child:not(.col-toggle) { min-width: 140px }`. */
+  .data-table tbody tr td:first-child:not(.col-toggle) { min-width: 0; }
+  .data-table td::before {
+    content: attr(data-label); grid-column: 1; font-size: 0.75rem; font-weight: 650; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--mantine-color-dimmed);
+  }
+  .data-table td:not([data-label])::before { display: none; }
+  .data-table td > * { grid-column: 2; min-width: 0; }
+  .data-table td:not([data-label]) > * { grid-column: 1 / -1; }
+  .data-table .cell-clip { max-width: 100%; }
+  .data-table .cell-nowrap { white-space: normal; }
+  /* A long badge ("locked until ...", a failure code) wraps inside the card instead of pushing it wider. */
+  .data-table .mantine-Badge-root { height: auto; min-height: 22px; max-width: 100%; flex-shrink: 1; white-space: normal; }
+  .data-table .mantine-Badge-label { white-space: normal; overflow-wrap: anywhere; }
+  .data-table td.cell-title, .data-table td.cell-actions { display: block; }
+  .data-table td.cell-title::before, .data-table td.cell-actions::before { display: none; }
+  .data-table td.cell-title { padding-bottom: 8px; font-size: 1rem; font-weight: 700; }
+  .data-table td.cell-title > * { grid-column: auto; }
+  .data-table td.cell-actions { padding-top: 10px; }
+  .data-table td.cell-actions:empty { display: none; }
+  .data-table .cell-actions .row-actions, .data-table .cell-actions .mantine-Group-root { flex-direction: column; align-items: stretch; }
+  .data-table .cell-actions .mantine-Button-root, .data-table .cell-actions button { width: 100%; }
+  .audit-table .col-toggle, .audit-table td.col-toggle:first-child { position: absolute; top: 6px; right: 8px; display: block; width: auto; padding: 0; }
+  .audit-table td.cell-title { padding-right: 44px; }
+  .audit-table tbody tr:has(+ .row-detail) { margin-bottom: 0; }
+  .audit-table tbody tr.row-open { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .audit-table tbody tr.row-detail { margin-bottom: 12px; padding: 0; border: 0; border-radius: 0; background: none; }
+  .audit-table tbody tr.row-detail td { display: block; padding: 0; background: none; }
+  .audit-table .detail-body { background: var(--accent-soft); }
+  .audit-table .detail-body {
+    padding: 8px 14px 14px; border: 1px solid var(--mantine-color-default-border); border-top: 0; border-radius: 0 0 12px 12px;
+  }
+}
+
+/* Screens and dialogs on a phone: action rows, toolbars, inputs and modals. */
+@media (max-width: 640px) {
+  .action-row { flex-direction: column; align-items: stretch; }
+  /* The wide basis of 320px would become a 320px height in a column. */
+  .action-text { flex: none; max-width: none; }
+  .purge-form { justify-items: stretch; }
+  .action-ctl, .action-ctl > *, .action-ctl .mantine-Button-root { width: 100%; }
+  .toolbar > *, .toolbar-end > * { flex: 1 1 100%; min-width: 0; }
+  .toolbar-end { justify-content: stretch; }
+  /* 16px stops iOS Safari zooming into a focused field. Mantine sizes inputs through --input-fz. */
+  .mantine-Input-wrapper, .mantine-PasswordInput-root, .mantine-PinInput-root { --input-fz: 16px; }
+  .mantine-Modal-inner { padding-inline: 12px; }
+  .secret-box .secret-value { flex: 1 1 100%; }
+  .secret-box .mantine-Button-root, .secret-box button { width: 100%; }
+  .shown-once-foot { flex-direction: column; align-items: stretch; }
+  .shown-once-foot .mantine-Button-root { width: 100%; }
+  .factor-passkey, .factor-passkey .mantine-Button-root { width: 100%; }
+  /* A panel header's button keeps its whole label; the title beside it wraps instead. */
+  .panel > .mantine-Group-root > .mantine-Button-root { flex: none; }
+}
 
 /* Select: Mantine's Combobox, in the glass language. The list is in a portal, so it is styled by its static class. */
 .mantine-Select-input { cursor: pointer; }

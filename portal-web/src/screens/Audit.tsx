@@ -89,15 +89,15 @@ export function Audit() {
                 <Table.Tbody>
                   {entries.map((e, i) => (
                     <Table.Tr key={i}>
-                      <Table.Td className="cell-muted" title={e.at}>{formatDate(e.at, t)}</Table.Td>
-                      <Table.Td>{e.actorName ? e.actorName : <span className="cell-muted">{t.audit.unknownActor}</span>}</Table.Td>
-                      <Table.Td>
+                      <Table.Td className="cell-muted cell-title" data-label={t.audit.colTime} title={e.at}>{formatDate(e.at, t)}</Table.Td>
+                      <Table.Td data-label={t.audit.colActor}>{e.actorName ? e.actorName : <span className="cell-muted">{t.audit.unknownActor}</span>}</Table.Td>
+                      <Table.Td data-label={t.audit.colAction}>
                         <div className="cell-strong">{labelOf(t.audit.actions, e.action)}</div>
                         <DetailChips e={e} t={t} />
                       </Table.Td>
-                      <Table.Td>{e.target === '' ? <span className="cell-muted">—</span> : <IdChip id={e.target} what={t.audit.colTarget} />}</Table.Td>
-                      <Table.Td><ResultBadge result={e.result} t={t} /></Table.Td>
-                      <Table.Td>{e.ip ? <code className="cell-mono">{e.ip}</code> : <span className="cell-muted">—</span>}</Table.Td>
+                      <Table.Td data-label={t.audit.colTarget}>{e.target === '' ? <span className="cell-muted">—</span> : <IdChip id={e.target} what={t.audit.colTarget} />}</Table.Td>
+                      <Table.Td data-label={t.audit.colResult}><ResultBadge result={e.result} t={t} /></Table.Td>
+                      <Table.Td data-label={t.audit.colIp}>{e.ip ? <code className="cell-mono">{e.ip}</code> : <span className="cell-muted">—</span>}</Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>

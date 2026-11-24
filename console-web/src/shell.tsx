@@ -1,9 +1,9 @@
 import { Menu } from '@mantine/core';
 import { NavItem, ShellLayout, endSession } from '@authgate/web-kit/shell-layout';
 import type { ReactNode } from 'react';
-import { NavLink, useNavigate } from 'react-router';
+import { NavLink, useLocation, useNavigate } from 'react-router';
 import { Brand } from './brand';
-import { AccountIcon, AdminsIcon, AuditIcon, ClientsIcon, PanelLeftIcon, SignOutIcon } from './icons';
+import { AccountIcon, AdminsIcon, AuditIcon, ClientsIcon, MenuIcon, PanelLeftIcon, SignOutIcon } from './icons';
 import { api } from './lib/api';
 import { fmt, useStrings } from './lib/i18n';
 import { useMe, type Me } from './session';
@@ -11,12 +11,13 @@ import { useMe, type Me } from './session';
 /**
  * The frame of every signed-in, full-stage screen (the layout is the kit's `ShellLayout`): a sticky
  * sidebar (brand, navigation, collapse), a sticky header with the account controls, and a centred
- * content container. The sidebar can collapse to an icon rail on wide screens; below 768 px it is
- * a top bar and never collapses.
+ * content container. The sidebar can collapse to an icon rail on wide screens; below 768 px the sidebar gives way to a
+ * header menu button and a navigation drawer.
  */
 export function Shell({ me, children, collapsed }: { me: Me; children: ReactNode; collapsed?: boolean }) {
   const t = useStrings();
   const nav = useNavigate();
+  const { pathname } = useLocation();
   const { clear } = useMe();
   const signOut = () => endSession(() => api('/api/auth/logout', { method: 'POST' }), () => {
     clear();
@@ -30,6 +31,8 @@ export function Shell({ me, children, collapsed }: { me: Me; children: ReactNode
       collapsed={collapsed}
       brand={<Brand />}
       collapseIcon={<PanelLeftIcon />}
+      menuIcon={<MenuIcon />}
+      routeKey={pathname}
       nav={<>
         {link('/clients', t.screens.clients, <ClientsIcon />)}
         {link('/audit', t.screens.audit, <AuditIcon />)}

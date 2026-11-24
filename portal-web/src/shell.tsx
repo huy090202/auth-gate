@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { NavLink, useLocation, useNavigate, useParams } from 'react-router';
 import { Brand } from './brand';
 import { LangSwitch, SchemeToggle } from './controls';
-import { AccountIcon, AuditIcon, ClientsIcon, MembersIcon, PanelLeftIcon, SettingsIcon, SignOutIcon } from './icons';
+import { AccountIcon, AuditIcon, ClientsIcon, MembersIcon, MenuIcon, PanelLeftIcon, SettingsIcon, SignOutIcon } from './icons';
 import { api } from './lib/api';
 import { fmt, useStrings } from './lib/i18n';
 import {
@@ -60,12 +60,23 @@ function useTenants(me: Me): { tenants: Tenant[]; reload: () => Promise<void>; l
 }
 
 const NEW_ORG = 'new-org';
+const LAST_WORKSPACE = 'portal.workspace';
+
+/** The workspace this tab last had in its URL; per tab, so two tabs on two workspaces do not fight. */
+function lastWorkspace(): string | null {
+  try {
+    return sessionStorage.getItem(LAST_WORKSPACE);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The frame of every signed-in screen (the layout is the kit's `ShellLayout`): a sticky sidebar
  * (brand, workspace switcher, navigation), a sticky header with the language, theme and account
  * menu, and a centred content container. The workspace is the one in the URL (`/t/:tenantId/…`);
- * the account pages sit under the personal one.
+ * the account page has none, so it keeps the one the tab was last in, or the personal one when the
+ * user no longer has that workspace.
  */
 export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const t = useStrings();
@@ -76,13 +87,28 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const { tenants, reload, loading } = useTenants(me);
   const [creating, setCreating] = useState(false);
   const workspaces = useMemo(() => ({ tenants, reload, userId: me.userId, loading }), [tenants, reload, me.userId, loading]);
-  const current = tenants.find((x) => x.tenantId === (urlTenant ?? me.personalTenantId)) ?? tenants[0]!;
+  useEffect(() => {
+    if (!urlTenant) return;
+    try {
+      sessionStorage.setItem(LAST_WORKSPACE, urlTenant);
+    } catch {
+      // Storage refused: the account page then shows the personal workspace.
+    }
+  }, [urlTenant]);
+  const wanted = urlTenant ?? lastWorkspace() ?? me.personalTenantId;
+  const current = tenants.find((x) => x.tenantId === wanted)
+    ?? tenants.find((x) => x.tenantId === me.personalTenantId) ?? tenants[0]!;
   // The audit log is for owners and admins (spec section 6).
   const org = current.kind === 'org';
   const canAudit = current.role === 'owner' || current.role === 'admin';
 
   const signOut = () => endSession(() => api('/api/auth/logout', { method: 'POST' }), () => {
     clear();
+    try {
+      sessionStorage.removeItem(LAST_WORKSPACE);
+    } catch {
+      // Storage can be blocked; the next user then only inherits what the browser would not let us clear.
+    }
     nav('/sign-in', { replace: true });
   });
   // Switching keeps the section when the next workspace has it (the audit log, Members and Settings are not everywhere), else opens Clients.
@@ -105,6 +131,8 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
       strings={t.common}
       brand={<Brand />}
       collapseIcon={<PanelLeftIcon />}
+      menuIcon={<MenuIcon />}
+      routeKey={pathname}
       switcher={
         <div className="tenant-switch">
           <Select aria-label={t.shell.workspace} value={current.tenantId} onChange={switchTo} allowDeselect={false}

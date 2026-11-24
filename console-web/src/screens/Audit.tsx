@@ -196,8 +196,8 @@ function AuditBody({ me }: { me: Me }) {
                                 <ChevronIcon />
                               </button>
                             </Table.Td>
-                            <Table.Td className="cell-muted cell-nowrap" title={e.at}>{formatDate(e.at, t)}</Table.Td>
-                            <Table.Td>
+                            <Table.Td className="cell-muted cell-nowrap cell-title" data-label={t.audit.colTime} title={e.at}>{formatDate(e.at, t)}</Table.Td>
+                            <Table.Td data-label={t.audit.colActor}>
                               <span className="actor">
                                 {e.username === '' ? <span className="cell-muted">{t.audit.unknownActor}</span> : <span className="actor-name">{e.username}</span>}
                                 {e.source !== '' && (
@@ -205,13 +205,13 @@ function AuditBody({ me }: { me: Me }) {
                                 )}
                               </span>
                             </Table.Td>
-                            <Table.Td className="cell-strong">{labelOf(t.audit.actions, e.action)}</Table.Td>
-                            <Table.Td>
+                            <Table.Td className="cell-strong" data-label={t.audit.colAction}>{labelOf(t.audit.actions, e.action)}</Table.Td>
+                            <Table.Td data-label={t.audit.colTarget}>
                               {e.target === '' ? <span className="cell-muted">—</span>
                                 : stepTarget ? labelOf(t.audit.actions, e.target)
                                 : <IdChip id={e.target} what={t.audit.colTarget} />}
                             </Table.Td>
-                            <Table.Td><ResultBadge result={e.result} t={t} /></Table.Td>
+                            <Table.Td data-label={t.audit.colResult}><ResultBadge result={e.result} t={t} /></Table.Td>
                           </Table.Tr>
                           {/* Always in the table so the height can transition both ways; the content is built on
                               the first open, and `inert` keeps a closed one out of reach of keyboard and readers. */}

@@ -1,7 +1,8 @@
-import { Anchor, Menu } from '@mantine/core';
-import { useState, type ElementType, type ReactNode } from 'react';
+import { Anchor, Drawer, Menu } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
+import { useEffect, useState, type ElementType, type ReactNode } from 'react';
 
-export type ShellStrings = { mainNav: string; expandSidebar: string; collapseSidebar: string; collapse: string };
+export type ShellStrings = { mainNav: string; expandSidebar: string; collapseSidebar: string; collapse: string; openMenu: string; closeMenu: string };
 
 function readCollapsed(key: string): boolean {
   try {
@@ -35,10 +36,10 @@ export async function endSession(logout: () => Promise<unknown>, after: () => vo
 /**
  * The frame of every signed-in, full-stage screen: a sticky sidebar (brand, optional switcher,
  * navigation, collapse), a sticky header with the account controls, and a centred content
- * container. The sidebar can collapse to an icon rail on wide screens; below 768 px it is a top
- * bar and never collapses. The app fills the slots; `storageKey` keeps the collapse choice per app.
+ * container. The sidebar can collapse to an icon rail on wide screens; below 768 px the sidebar gives way to a
+ * header menu button and a navigation drawer. The app fills the slots; `storageKey` keeps the collapse choice per app.
  */
-export function ShellLayout({ storageKey, strings, brand, switcher, nav, collapseIcon, headerStart, account, collapsed: initial, children }: {
+export function ShellLayout({ storageKey, strings, brand, switcher, nav, collapseIcon, menuIcon, routeKey, headerStart, account, collapsed: initial, children }: {
   storageKey: string;
   strings: ShellStrings;
   brand: ReactNode;
@@ -46,6 +47,10 @@ export function ShellLayout({ storageKey, strings, brand, switcher, nav, collaps
   switcher?: ReactNode;
   nav: ReactNode;
   collapseIcon: ReactNode;
+  /** The phone header's menu button. */
+  menuIcon: ReactNode;
+  /** The current route (the app's pathname): a change closes the drawer. */
+  routeKey: string;
   /** Header controls before the account menu. */
   headerStart?: ReactNode;
   account: {
@@ -66,6 +71,9 @@ export function ShellLayout({ storageKey, strings, brand, switcher, nav, collaps
       /* storage blocked: the choice lasts until reload */
     }
   };
+  const [drawer, setDrawer] = useState(false);
+  const wide = useMediaQuery('(min-width: 769px)');
+  useEffect(() => setDrawer(false), [routeKey, wide]);
   const label = collapsed ? strings.expandSidebar : strings.collapseSidebar;
   return (
     <div className="shell">
@@ -82,7 +90,11 @@ export function ShellLayout({ storageKey, strings, brand, switcher, nav, collaps
       </aside>
       <div className="shell-main">
         <header className="content-header glass">
-          {headerStart}
+          <button type="button" className="header-menu" onClick={() => setDrawer(true)} aria-label={strings.openMenu} aria-haspopup="dialog" aria-expanded={drawer}>
+            {menuIcon}
+          </button>
+          <div className="header-brand">{brand}</div>
+          <div className="header-start">{headerStart}</div>
           <Menu position="bottom-end" width={220} withinPortal={false}>
             <Menu.Target>
               <button type="button" className="avatar-btn" aria-label={account.buttonLabel}>
@@ -93,6 +105,12 @@ export function ShellLayout({ storageKey, strings, brand, switcher, nav, collaps
             <Menu.Dropdown>{account.menu}</Menu.Dropdown>
           </Menu>
         </header>
+        <Drawer opened={drawer} onClose={() => setDrawer(false)} position="left" size="min(320px, 85vw)" title={brand}
+          closeButtonProps={{ 'aria-label': strings.closeMenu }} classNames={{ body: 'drawer-body', close: 'drawer-close' }}>
+          {switcher}
+          <nav className="drawer-nav" aria-label={strings.mainNav} onClick={(e) => { if (e.button === 0 && !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) && (e.target as Element).closest('a')) setDrawer(false); }}>{nav}</nav>
+          <div className="drawer-tools">{headerStart}</div>
+        </Drawer>
         <div className="shell-content">
           <div className="shell-container">{children}</div>
         </div>

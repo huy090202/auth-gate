@@ -70,18 +70,18 @@ function ClientsBody({ me }: { me: Me }) {
                 <Table.Tbody>
                   {shown.map((c) => (
                     <Table.Tr key={c.clientId}>
-                      <Table.Td>
+                      <Table.Td className="cell-title" data-label={t.clients.colName}>
                         <Anchor component={Link} to={`/clients/${encodeURIComponent(c.clientId)}`} fw={600} className="cell-name">{c.name}</Anchor>
                         <IdChip id={c.clientId} what={t.clients.id} />
                       </Table.Td>
-                      <Table.Td><code className="cell-mono cell-clip">{c.rpId}</code></Table.Td>
-                      <Table.Td>
+                      <Table.Td data-label={t.clients.colRpId}><code className="cell-mono cell-clip">{c.rpId}</code></Table.Td>
+                      <Table.Td data-label={t.clients.colOwner}>
                         {c.owner ? <code className="cell-mono" title={c.owner}>{c.owner.slice(-8)}</code> : <Text fz="sm" c="dimmed">{t.clients.ownerOperator}</Text>}
                       </Table.Td>
-                      <Table.Td>
+                      <Table.Td data-label={t.clients.colStatus}>
                         <StatusBadge active={!c.disabledAt} on={t.clients.active} off={t.clients.disabled} />
                       </Table.Td>
-                      <Table.Td className="cell-muted">{formatDate(c.createdAt, t)}</Table.Td>
+                      <Table.Td className="cell-muted" data-label={t.clients.colCreated}>{formatDate(c.createdAt, t)}</Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>

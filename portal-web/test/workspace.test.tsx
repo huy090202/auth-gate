@@ -3,7 +3,7 @@ import { MantineProvider } from '@mantine/core';
 import { theme } from '@authgate/web-kit/theme';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { MAX_PAGES, fetchAllClients, type ClientView } from '../src/lib/clients';
 import { auditUrl } from '../src/lib/audit';
@@ -200,4 +200,49 @@ test('the shell lists the user\'s workspaces in the switcher and injects no <sty
   expect(host!.querySelector(`a[href="/t/${TENANT}/audit"]`)).not.toBeNull();
   expect(host!.querySelector('#inner')).not.toBeNull();
   expect(document.querySelectorAll('style').length).toBe(0);
+});
+
+// Why: /account has no workspace in its URL; the switcher used to jump to Personal there, so an owner
+// who opened their account from an organisation lost their place (and the nav pointed at Personal).
+test('the account page keeps the workspace the tab was in; an unknown one falls back to Personal', async () => {
+  const ORG = '01JD0000000000000000000T02';
+  vi.stubGlobal('fetch', async (url: string) =>
+    url === '/api/tenants' ? json({ tenants: [
+      { tenantId: TENANT, kind: 'personal', name: '', role: 'owner' },
+      { tenantId: ORG, kind: 'org', name: 'Acme', role: 'owner' },
+    ] }) : json({}, 404));
+  const me = {
+    userId: 'u1', email: 'a@x.com', displayName: 'Ann', lang: 'en' as const, stage: 'full' as const, personalTenantId: TENANT,
+    factors: { pin: true, webauthn: [] }, recoveryCodesLeft: 10,
+  };
+  const frame = <Shell me={me}><Link to="/account">go</Link></Shell>;
+  const routes = (
+    <SessionProvider>
+      <Routes>
+        <Route path="/t/:tenantId/*" element={frame} />
+        <Route path="/account" element={frame} />
+      </Routes>
+    </SessionProvider>
+  );
+  const switcher = () => (host!.querySelector('input[aria-label="Workspace"]') as HTMLInputElement).value;
+
+  sessionStorage.clear();
+  await mount(routes, `/t/${ORG}/members`);
+  expect(switcher()).toBe('Acme');
+  await act(async () => (host!.querySelector('a[href="/account"]') as HTMLAnchorElement).click());
+  await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+  expect(switcher()).toBe('Acme');
+  expect(host!.querySelector(`a[href="/t/${ORG}/members"]`)).not.toBeNull();
+
+  // A reload of /account in the same tab still knows it; a workspace the user no longer has does not stick.
+  await act(async () => root!.unmount());
+  host!.remove();
+  await mount(routes, '/account');
+  expect(switcher()).toBe('Acme');
+  await act(async () => root!.unmount());
+  host!.remove();
+  sessionStorage.setItem('portal.workspace', '01JD0000000000000000000T99');
+  await mount(routes, '/account');
+  expect(switcher()).toBe('Personal');
+  sessionStorage.clear();
 });
