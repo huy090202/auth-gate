@@ -56,7 +56,7 @@ Notes:
 
 ## 3. API
 
-Every route below needs a session in stage `full`. Routes under `/api/t/{tenantId}/` go through the
+Every route below needs a session in stage `full`, except the invite lookup. Routes under `/api/t/{tenantId}/` go through the
 existing `member(roles…)` guard. A tenant with `deletingAt` answers `404 not_found` on every route
 except its own `DELETE`.
 
@@ -73,7 +73,7 @@ except its own `DELETE`.
 | `POST /api/t/{id}/invites` `{email, role}` | owner, admin | An admin invites `admin` or `member`. Only an owner invites `owner`. `409 already_member` if the address belongs to a member. `409 already_invited` if one is pending; use resend instead. Rate limit 20 per day per organisation. |
 | `POST /api/t/{id}/invites/{inviteId}/resend` | owner, admin | A new token replaces the old one and the expiry restarts. The old link stops working. |
 | `DELETE /api/t/{id}/invites/{inviteId}` | owner, admin | Revoke. |
-| `POST /api/invites/{tenantId}/lookup` `{token}` | the invitee | Organisation name, inviter's name, role, and whether the session's email matches. An unknown, expired or used token answers `404 invite_not_found`. |
+| `POST /api/invites/{tenantId}/lookup` `{token}` | whoever holds the token | No session needed, so the signed-out page can prefill sign-up. It returns the organisation name, the inviter's name, the role and the invited address. The holder received that address's email, so nothing new is revealed. With a full session it also returns `emailMatches`. Per-IP limit as for sign-in. An unknown, expired or used token answers `404 invite_not_found`. |
 | `POST /api/invites/{tenantId}/accept` `{token}` | the invitee | The session's email must equal the invited address, else `403 invite_wrong_email`. Writes the membership pair, deletes the invite and its index item, and increments `memberCount` under `memberCount < 20` and no `deletingAt`, in one transaction. |
 | `POST /api/invites/{tenantId}/decline` `{token}` | the invitee | Same email rule. Deletes the invite. |
 
