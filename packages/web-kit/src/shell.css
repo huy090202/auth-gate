@@ -255,6 +255,24 @@
   }
 }
 
+/* Screens and dialogs on a phone: action rows, toolbars, inputs and modals. */
+@media (max-width: 640px) {
+  .action-row { flex-direction: column; align-items: stretch; }
+  /* The wide basis of 320px would become a 320px height in a column. */
+  .action-text { flex: none; max-width: none; }
+  .purge-form { justify-items: stretch; }
+  .action-ctl, .action-ctl > *, .action-ctl .mantine-Button-root { width: 100%; }
+  .toolbar > *, .toolbar-end > * { flex: 1 1 100%; min-width: 0; }
+  .toolbar-end { justify-content: stretch; }
+  /* 16px stops iOS Safari zooming into a focused field. Mantine sizes inputs through --input-fz. */
+  .mantine-Input-wrapper, .mantine-PasswordInput-root, .mantine-PinInput-root { --input-fz: 16px; }
+  .mantine-Modal-inner { padding-inline: 12px; }
+  .secret-box .secret-value { flex: 1 1 100%; }
+  .secret-box .mantine-Button-root, .secret-box button { width: 100%; }
+  .shown-once-foot { flex-direction: column; align-items: stretch; }
+  .shown-once-foot .mantine-Button-root { width: 100%; }
+}
+
 /* Select: Mantine's Combobox, in the glass language. The list is in a portal, so it is styled by its static class. */
 .mantine-Select-input { cursor: pointer; }
 .mantine-Select-dropdown {

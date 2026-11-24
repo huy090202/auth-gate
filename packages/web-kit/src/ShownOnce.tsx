@@ -64,7 +64,7 @@ export function ShownOnce({ title, label, value, strings, onClose }: { title: st
           </div>
         </div>
         <Checkbox label={strings.saved} checked={saved} onChange={(e) => setSaved(e.currentTarget.checked)} />
-        <Group justify="flex-end">
+        <Group justify="flex-end" className="shown-once-foot">
           <Button disabled={!saved} onClick={close}>{strings.close}</Button>
         </Group>
       </Stack>
