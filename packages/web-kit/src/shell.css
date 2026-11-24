@@ -221,10 +221,12 @@
     position: relative; margin-bottom: 12px; padding: 10px 14px;
     border: 1px solid var(--mantine-color-default-border); border-radius: 12px;
   }
-  .data-table td, .data-table td:first-child, .data-table tbody tr:last-child td {
+  .data-table td, .data-table td:first-child {
     display: grid; grid-template-columns: minmax(72px, 36%) minmax(0, 1fr); align-items: baseline; gap: 4px 12px;
     min-width: 0; padding: 6px 0; border: 0; overflow-wrap: anywhere;
   }
+  /* Stronger than the wide-screen `td:first-child:not(.col-toggle) { min-width: 140px }`. */
+  .data-table tbody tr td:first-child:not(.col-toggle) { min-width: 0; }
   .data-table td::before {
     content: attr(data-label); grid-column: 1; font-size: 0.75rem; font-weight: 650; letter-spacing: 0.04em;
     text-transform: uppercase; color: var(--mantine-color-dimmed);
