@@ -23,7 +23,7 @@ export function Invite() {
   useTitle(portalTitle(t.screens.invite));
   const nav = useNavigate();
   const { tenantId = '' } = useParams();
-  const { me, status, error: sessionError, retry } = useMe();
+  const { me, status, error: sessionError, retry, clear } = useMe();
   const fragmentToken = useFragmentToken();
   const [token] = useState(() => {
     if (fragmentToken) return fragmentToken;
@@ -33,11 +33,17 @@ export function Invite() {
   const [invite, setInvite] = useState<Lookup | null>(null);
   const [lookupError, setLookupError] = useState('');
   const { busy, error, run } = useSubmit();
+  const [attempt, setAttempt] = useState(0);
   const valid = isUlid(tenantId) && token !== '';
+  const leave = () => {
+    forgetInvite();
+    nav('/', { replace: true });
+  };
 
   useEffect(() => {
     if (!valid) return;
     let live = true;
+    setLookupError('');
     api<Lookup>(`/api/invites/${tenantId}/lookup`, { body: { token } }).then(
       (r) => live && setInvite(r),
       (e: unknown) => {
@@ -54,18 +60,33 @@ export function Invite() {
       live = false;
     };
     // The strings only matter for the sentence of a failure.
-  }, [tenantId, token, valid]);
+  }, [tenantId, token, valid, attempt]);
+
+  const halfOrEnroll = status === 'half' || status === 'enroll';
+  const wrongAddress = invite?.emailMatches === false;
+  useEffect(() => {
+    // A session that is not full finishes its sign-in first; the invite is remembered to come back to.
+    if (invite && halfOrEnroll) rememberInvite({ tenantId, token, email: invite.email });
+    // The wrong account cannot use this invite; leaving it stored would bring them straight back.
+    if (wrongAddress) forgetInvite();
+  }, [invite, halfOrEnroll, wrongAddress, tenantId, token]);
 
   if (!valid) return <Card title={t.screens.invite}><Text fz="sm" role="alert">{t.invite.gone}</Text></Card>;
-  if (lookupError) return <Card title={t.screens.invite}><Text fz="sm" role="alert">{lookupError}</Text></Card>;
+  if (lookupError) {
+    return (
+      <Card title={t.screens.invite}>
+        <Text fz="sm" role="alert">{lookupError}</Text>
+        <Group>
+          {lookupError !== t.invite.gone && <Button onClick={() => { setInvite(null); setAttempt((n) => n + 1); }}>{t.common.retry}</Button>}
+          <Button variant="light" onClick={leave}>{t.invite.back}</Button>
+        </Group>
+      </Card>
+    );
+  }
   if (status === 'loading' || !invite) return <Loading />;
   if (status === 'error') return <LoadFailed error={sessionError} onRetry={retry} />;
 
-  // A session that is not full finishes its sign-in first; the invite is remembered to come back to.
-  if (status === 'half' || status === 'enroll') {
-    rememberInvite({ tenantId, token, email: invite.email });
-    return <Navigate to={homeFor(status)} replace />;
-  }
+  if (status === 'half' || status === 'enroll') return <Navigate to={homeFor(status)} replace />;
 
   const who = invite.inviterName === '' ? fmt(t.invite.someone, { org: invite.orgName }) : invite.inviterName;
   const summary = (
@@ -92,12 +113,27 @@ export function Invite() {
     );
   }
 
+  const signOut = async () => {
+    // They will need the invite again once they sign in with the right account.
+    rememberInvite({ tenantId, token, email: invite.email });
+    try {
+      await api('/api/auth/logout', { method: 'POST' });
+    } catch {
+      /* a session that is already gone is what we wanted */
+    }
+    clear();
+    nav('/sign-in', { replace: true });
+  };
+
   if (invite.emailMatches === false) {
     return (
       <Card title={t.screens.invite}>
         {summary}
         <Text fz="sm" role="alert">{fmt(t.invite.wrongAccount, { email: invite.email, you: me.email })}</Text>
-        <Button variant="light" onClick={() => nav('/')}>{t.invite.back}</Button>
+        <Group>
+          <Button onClick={() => void signOut()}>{t.common.signOut}</Button>
+          <Button variant="light" onClick={leave}>{t.invite.back}</Button>
+        </Group>
       </Card>
     );
   }
@@ -118,6 +154,7 @@ export function Invite() {
           forgetInvite();
           nav('/', { replace: true });
         })}>{t.invite.decline}</Button>
+        {error && <Button variant="subtle" disabled={busy} onClick={leave}>{t.invite.back}</Button>}
       </Group>
     </Card>
   );
