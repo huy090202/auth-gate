@@ -286,18 +286,27 @@ func TestLoginFailuresLookAlike(t *testing.T) {
 	}
 }
 
-// Why: telling "unverified" before the password is right would reveal who has signed up.
-func TestLoginUnverifiedOnlyAfterRightPassword(t *testing.T) {
+// Why: answering "unverified" after the right password would tell a stranger who knows an address's password
+// (or who is probing sign-up) that the address is registered; it must look like a wrong password on a live account.
+func TestLoginUnverifiedLooksLikeWrongPassword(t *testing.T) {
 	e := newAuthEnv(t)
 	hash, _ := password.Hash(goodPW)
-	if err := e.a.Store.CreateUser(context.Background(), User{ID: id.New(), Email: "p@x.com", PasswordHash: hash, Lang: "en", CreatedAt: e.a.now()}); err != nil {
+	pending := User{ID: id.New(), Email: "p@x.com", PasswordHash: hash, Lang: "en", CreatedAt: e.a.now()}
+	if err := e.a.Store.CreateUser(context.Background(), pending); err != nil {
 		t.Fatal(err)
 	}
-	b := e.browser(t, "203.0.113.1")
-	want(t, b.login("p@x.com", "wrong-password-here"), 401, "invalid_credentials")
-	want(t, b.login("p@x.com", goodPW), 403, "email_unverified")
-	if b.cookie() != "" {
-		t.Fatal("a session was opened for an unverified address")
+	live := e.user(t, "a@x.com", goodPW)
+	ru := e.browser(t, "203.0.113.1").login("p@x.com", goodPW)
+	rw := e.browser(t, "203.0.113.2").login("a@x.com", "wrong-password-here")
+	want(t, ru, 401, "invalid_credentials")
+	want(t, rw, 401, "invalid_credentials")
+	if ru.Status != rw.Status || string(ru.Body) != string(rw.Body) {
+		t.Fatalf("responses differ: %d %q vs %d %q", ru.Status, ru.Body, rw.Status, rw.Body)
+	}
+	for _, id := range []string{pending.ID, live.ID} {
+		if u, _ := e.a.Store.GetUser(context.Background(), id); u.FailedCount != 1 {
+			t.Fatalf("failedCount of %s = %d, want 1", id, u.FailedCount)
+		}
 	}
 }
 

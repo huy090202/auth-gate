@@ -22,7 +22,7 @@ export function SignIn() {
   const [error, setError] = useState('');
   // The widget appears only once the backend asks for it (403 turnstile_required).
   const [needCheck, setNeedCheck] = useState(false);
-  const [unverified, setUnverified] = useState(false);
+  const [resendOpen, setResendOpen] = useState(false);
   const ts = useTurnstile();
   const gate = useAnonGate();
   if (gate) return gate;
@@ -33,7 +33,6 @@ export function SignIn() {
     inFlight.current = true;
     setBusy(true);
     setError('');
-    setUnverified(false);
     try {
       const r = await api<{ next: 'enroll' | 'second-factor' }>('/api/auth/login', {
         body: { email, password, ...(needCheck ? { turnstileToken: ts.token } : {}) },
@@ -43,8 +42,7 @@ export function SignIn() {
       nav(r.next === 'enroll' ? '/enroll' : '/sign-in/second-factor', { replace: true });
     } catch (e) {
       if (e instanceof ApiError && e.code === 'turnstile_required') setNeedCheck(true);
-      if (e instanceof ApiError && e.code === 'email_unverified') setUnverified(true);
-      else setError(explain(e, t));
+      setError(explain(e, t));
       if (needCheck) ts.reset();
     } finally {
       inFlight.current = false;
@@ -66,12 +64,11 @@ export function SignIn() {
           <Button type="submit" loading={busy} disabled={needCheck && !ts.token}>{t.signIn.submit}</Button>
         </Stack>
       </form>
-      {unverified && (
-        <Stack gap="xs">
-          <Text fz="sm" role="alert">{t.signIn.unverified}</Text>
-          <Resend initialEmail={email} />
-        </Stack>
-      )}
+      <Stack gap="xs">
+        <Anchor component="button" type="button" fz="sm" ta="left" aria-expanded={resendOpen} aria-controls="resend-panel"
+          onClick={() => setResendOpen((o) => !o)}>{t.signIn.noEmail}</Anchor>
+        {resendOpen && <div id="resend-panel"><Resend initialEmail={email} /></div>}
+      </Stack>
       <Anchor component={Link} to="/forgot" fz="sm">{t.signIn.forgot}</Anchor>
       <Text fz="sm">{t.signIn.noAccount} <Anchor component={Link} to="/sign-up">{t.signIn.createAccount}</Anchor></Text>
     </Card>

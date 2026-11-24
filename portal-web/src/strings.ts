@@ -87,7 +87,7 @@ const enStrings = {
     forgot: 'Forgotten password?',
     noAccount: 'New here?',
     createAccount: 'Create an account',
-    unverified: 'This email is not confirmed yet. Send the link again to finish.',
+    noEmail: "Didn't get the verification email?",
   },
   secondFactor: {
     intro: 'Confirm it is you with your PIN or a passkey.',
@@ -421,7 +421,6 @@ const enStrings = {
     invalid_credentials: 'The email, password or code is wrong, or the account is locked. Check them and try again. If it keeps failing, wait 15 minutes.',
     second_factor_required: 'Finish the second factor to continue.',
     enrollment_required: 'Set up a second factor before you continue.',
-    email_unverified: 'This email is not confirmed yet.',
     turnstile_required: 'Complete the security check, then try again.',
     turnstile_failed: 'The security check was not accepted. Try again.',
     turnstile_unavailable: 'The security check is not reachable right now. Try again shortly.',
@@ -553,7 +552,7 @@ export const vi: Strings = {
     forgot: 'Quên mật khẩu?',
     noAccount: 'Bạn mới đến?',
     createAccount: 'Tạo tài khoản',
-    unverified: 'Email này chưa được xác nhận. Hãy gửi lại đường dẫn để hoàn tất.',
+    noEmail: 'Chưa nhận được email xác minh?',
   },
   secondFactor: {
     intro: 'Xác nhận đây là bạn bằng PIN hoặc khóa truy cập.',
@@ -887,7 +886,6 @@ export const vi: Strings = {
     invalid_credentials: 'Email, mật khẩu hoặc mã sai, hoặc tài khoản bị khóa. Hãy kiểm tra lại rồi thử lại. Nếu vẫn không được, hãy chờ 15 phút.',
     second_factor_required: 'Hãy hoàn tất yếu tố thứ hai để tiếp tục.',
     enrollment_required: 'Hãy thiết lập yếu tố thứ hai trước khi tiếp tục.',
-    email_unverified: 'Email này chưa được xác nhận.',
     turnstile_required: 'Hãy hoàn tất bước kiểm tra bảo mật rồi thử lại.',
     turnstile_failed: 'Bước kiểm tra bảo mật không được chấp nhận. Hãy thử lại.',
     turnstile_unavailable: 'Hiện chưa kết nối được bước kiểm tra bảo mật. Hãy thử lại sau ít phút.',
