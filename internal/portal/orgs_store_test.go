@@ -198,6 +198,13 @@ func TestActorDemotedMidwayIsRefused(t *testing.T) {
 	if _, err := st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), b.ID, RoleAdmin); !errors.Is(err, ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict", err)
 	}
+	// The self case has no actor check in the transaction, so it must not promote a demoted owner back.
+	if _, err := st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), a.ID, RoleOwner); !errors.Is(err, ErrConflict) {
+		t.Fatalf("self: err = %v, want ErrConflict", err)
+	}
+	if m, _ := st.GetMembership(ctx, tn.ID, a.ID); m.Role != RoleAdmin {
+		t.Fatalf("role = %s, want admin", m.Role)
+	}
 }
 
 // Why: a personal workspace has no members to manage; the store must refuse before any write.

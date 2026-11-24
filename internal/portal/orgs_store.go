@@ -223,6 +223,9 @@ func (st *Store) SetRole(ctx context.Context, tenantID string, actor Membership,
 	if err != nil {
 		return "", err
 	}
+	if actor.UserID == userID && target.Role != actor.Role {
+		return "", ErrConflict // the actor check is skipped for self, so check the read here
+	}
 	old := target.Role
 	if old == role {
 		return old, nil
@@ -262,6 +265,9 @@ func (st *Store) RemoveMember(ctx context.Context, tenantID string, actor Member
 	target, err := st.GetMembership(ctx, tenantID, userID)
 	if err != nil {
 		return Membership{}, err
+	}
+	if actor.UserID == userID && target.Role != actor.Role {
+		return Membership{}, ErrConflict
 	}
 	delta := 0
 	if target.Role == RoleOwner {
