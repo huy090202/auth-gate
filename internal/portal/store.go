@@ -72,6 +72,8 @@ type Tenant struct {
 	ID, Kind, Name, CreatedBy string
 	CreatedAt                 time.Time
 	SuspendedAt, DeletingAt   *time.Time
+	// Counts are the organisation's counters; a personal workspace has none and reads 0.
+	Counts OrgCounts
 }
 
 // Membership links a user to a tenant.
@@ -685,7 +687,8 @@ func (st *Store) GetTenant(ctx context.Context, tenantID string) (Tenant, error)
 		return Tenant{}, ErrTenantNotFound
 	}
 	it := out.Item
-	t := Tenant{ID: tenantID, Kind: getS(it, "kind"), Name: getS(it, "name"), CreatedBy: getS(it, "createdBy")}
+	t := Tenant{ID: tenantID, Kind: getS(it, "kind"), Name: getS(it, "name"), CreatedBy: getS(it, "createdBy"),
+		Counts: OrgCounts{Members: getN(it, "memberCount"), Owners: getN(it, "ownerCount"), Invites: getN(it, "inviteCount")}}
 	var terr error
 	var c *time.Time
 	if c, terr = getT(it, "createdAt"); terr != nil || c == nil {
