@@ -9,6 +9,8 @@ import { ConfirmEmail } from './screens/ConfirmEmail';
 import { Enroll } from './screens/Enroll';
 import { FactorReset } from './screens/FactorReset';
 import { Forgot } from './screens/Forgot';
+import { Members } from './screens/Members';
+import { OrgSettings } from './screens/OrgSettings';
 import { Recovery } from './screens/Recovery';
 import { ResetPassword } from './screens/ResetPassword';
 import { SecondFactor } from './screens/SecondFactor';
@@ -51,6 +53,8 @@ export function AppRoutes() {
           <Route path="/t/:tenantId/clients/new" element={<ClientNew />} />
           <Route path="/t/:tenantId/clients/:id" element={<ClientDetail />} />
           <Route path="/t/:tenantId/audit" element={<Audit />} />
+          <Route path="/t/:tenantId/members" element={<Members />} />
+          <Route path="/t/:tenantId/settings" element={<OrgSettings />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

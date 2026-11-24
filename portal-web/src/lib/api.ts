@@ -11,6 +11,9 @@ export const errorCodes = [
   // Account, workspace and client calls.
   'invalid_display_name', 'invalid_avatar', 'email_taken', 'forbidden', 'invalid_id', 'invalid_cursor',
   'tenant_deleting', 'tenant_suspended', 'quota_exceeded', 'client_not_found', 'invalid_client', 'disabled_by_operator',
+  // Organisations, members and invites.
+  'personal_workspace', 'org_quota_exceeded', 'members_full', 'invites_full', 'last_owner', 'already_member',
+  'already_invited', 'invite_not_found', 'invite_wrong_email', 'sole_owner', 'invalid_role', 'name_mismatch',
 ] as const;
 export type ErrorCode = (typeof errorCodes)[number];
 
