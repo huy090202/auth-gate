@@ -42,9 +42,9 @@ func addMember(t *testing.T, st *Store, tid string, u User, role string) {
 	}
 }
 
-func owner(tid, uid string) Membership {
-	return Membership{TenantID: tid, UserID: uid, Role: RoleOwner}
-}
+func owner(tid, uid string) Membership { return mem(tid, uid, RoleOwner) }
+
+func mem(tid, uid, role string) Membership { return Membership{TenantID: tid, UserID: uid, Role: role} }
 
 // Why: the quota is a count of creations per person; under a race it must still stop at three, not four.
 func TestCreateOrgQuotaUnderRace(t *testing.T) {
@@ -110,14 +110,20 @@ func TestTwoOwnersDemotingEachOtherLeaveOne(t *testing.T) {
 	a, b := mkUser(t, st, "a@x.com"), mkUser(t, st, "b@x.com")
 	tn := mkOrg(t, st, a)
 	addMember(t, st, tn.ID, b, RoleMember)
-	if _, err := st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), b.ID, RoleOwner); err != nil {
+	if _, err := st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), mem(tn.ID, b.ID, RoleMember), RoleOwner); err != nil {
 		t.Fatal(err)
 	}
 	errs := make([]error, 2)
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); _, errs[0] = st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), b.ID, RoleAdmin) }()
-	go func() { defer wg.Done(); _, errs[1] = st.SetRole(ctx, tn.ID, owner(tn.ID, b.ID), a.ID, RoleAdmin) }()
+	go func() {
+		defer wg.Done()
+		_, errs[0] = st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), owner(tn.ID, b.ID), RoleAdmin)
+	}()
+	go func() {
+		defer wg.Done()
+		_, errs[1] = st.SetRole(ctx, tn.ID, owner(tn.ID, b.ID), owner(tn.ID, a.ID), RoleAdmin)
+	}()
 	wg.Wait()
 	ok := 0
 	for _, err := range errs {
@@ -150,10 +156,10 @@ func TestLastOwnerCannotLeaveOrStepDown(t *testing.T) {
 	ctx := context.Background()
 	a := mkUser(t, st, "a@x.com")
 	tn := mkOrg(t, st, a)
-	if _, err := st.RemoveMember(ctx, tn.ID, owner(tn.ID, a.ID), a.ID); !errors.Is(err, ErrLastOwner) {
+	if _, err := st.RemoveMember(ctx, tn.ID, owner(tn.ID, a.ID), owner(tn.ID, a.ID)); !errors.Is(err, ErrLastOwner) {
 		t.Fatalf("remove self: %v, want ErrLastOwner", err)
 	}
-	if _, err := st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), a.ID, RoleAdmin); !errors.Is(err, ErrLastOwner) {
+	if _, err := st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), owner(tn.ID, a.ID), RoleAdmin); !errors.Is(err, ErrLastOwner) {
 		t.Fatalf("step down: %v, want ErrLastOwner", err)
 	}
 }
@@ -165,7 +171,7 @@ func TestRemoveMemberCounts(t *testing.T) {
 	a, b := mkUser(t, st, "a@x.com"), mkUser(t, st, "b@x.com")
 	tn := mkOrg(t, st, a)
 	addMember(t, st, tn.ID, b, RoleMember)
-	old, err := st.RemoveMember(ctx, tn.ID, owner(tn.ID, a.ID), b.ID)
+	old, err := st.RemoveMember(ctx, tn.ID, owner(tn.ID, a.ID), mem(tn.ID, b.ID, RoleMember))
 	if err != nil || old.Role != RoleMember || old.UserID != b.ID {
 		t.Fatalf("removed = %+v, err %v", old, err)
 	}
@@ -195,11 +201,11 @@ func TestActorDemotedMidwayIsRefused(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), b.ID, RoleAdmin); !errors.Is(err, ErrConflict) {
+	if _, err := st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), mem(tn.ID, b.ID, RoleMember), RoleAdmin); !errors.Is(err, ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict", err)
 	}
 	// The self case has no actor check in the transaction, so it must not promote a demoted owner back.
-	if _, err := st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), a.ID, RoleOwner); !errors.Is(err, ErrConflict) {
+	if _, err := st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), mem(tn.ID, a.ID, RoleAdmin), RoleOwner); !errors.Is(err, ErrConflict) {
 		t.Fatalf("self: err = %v, want ErrConflict", err)
 	}
 	if m, _ := st.GetMembership(ctx, tn.ID, a.ID); m.Role != RoleAdmin {
@@ -216,7 +222,7 @@ func TestPersonalRefused(t *testing.T) {
 	if err := st.VerifyEmail(ctx, u.ID, Tenant{ID: tid}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SetRole(ctx, tid, owner(tid, u.ID), u.ID, RoleAdmin); !errors.Is(err, ErrPersonal) {
+	if _, err := st.SetRole(ctx, tid, owner(tid, u.ID), owner(tid, u.ID), RoleAdmin); !errors.Is(err, ErrPersonal) {
 		t.Fatalf("SetRole: %v, want ErrPersonal", err)
 	}
 	if err := st.RenameOrg(ctx, tid, "New"); !errors.Is(err, ErrPersonal) {
@@ -261,5 +267,24 @@ func TestRenameOrgAndListMembers(t *testing.T) {
 	}
 	if err := st.RenameOrg(ctx, tn.ID, "Gamma"); !errors.Is(err, ErrTenantDeleting) {
 		t.Fatalf("rename while deleting: %v", err)
+	}
+}
+
+// Why: the write is bound to the role the caller checked; if the target was promoted meanwhile, an admin's
+// "member to admin" must not go through as "owner to admin".
+func TestSetRoleRefusesAStaleTargetRole(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	a, b := mkUser(t, st, "a@x.com"), mkUser(t, st, "b@x.com")
+	tn := mkOrg(t, st, a)
+	addMember(t, st, tn.ID, b, RoleOwner)
+	if _, err := st.SetRole(ctx, tn.ID, owner(tn.ID, a.ID), mem(tn.ID, b.ID, RoleMember), RoleAdmin); !errors.Is(err, ErrConflict) {
+		t.Fatalf("SetRole err = %v, want ErrConflict", err)
+	}
+	if _, err := st.RemoveMember(ctx, tn.ID, owner(tn.ID, a.ID), mem(tn.ID, b.ID, RoleMember)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("RemoveMember err = %v, want ErrConflict", err)
+	}
+	if m, err := st.GetMembership(ctx, tn.ID, b.ID); err != nil || m.Role != RoleOwner {
+		t.Fatalf("stored = %+v, err %v; want owner", m, err)
 	}
 }

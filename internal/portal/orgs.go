@@ -190,7 +190,7 @@ func (a *App) changeRole(w http.ResponseWriter, r *http.Request) error {
 	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
-	old, err := a.Store.SetRole(ctx, t.ID, actor, uid, in.Role)
+	old, err := a.Store.SetRole(ctx, t.ID, actor, target, in.Role)
 	if err != nil {
 		return orgErr(err)
 	}
@@ -228,7 +228,7 @@ func (a *App) removeMember(w http.ResponseWriter, r *http.Request) error {
 	if err := a.spendStepUp(r, tok); err != nil {
 		return err
 	}
-	removed, err := a.Store.RemoveMember(ctx, t.ID, actor, uid)
+	removed, err := a.Store.RemoveMember(ctx, t.ID, actor, target)
 	if err != nil {
 		return orgErr(err)
 	}
@@ -247,7 +247,7 @@ func (a *App) leaveOrg(w http.ResponseWriter, r *http.Request) error {
 		return orgErr(ErrPersonal)
 	}
 	setAuditTarget(ctx, actor.UserID)
-	if _, err := a.Store.RemoveMember(ctx, t.ID, actor, actor.UserID); err != nil {
+	if _, err := a.Store.RemoveMember(ctx, t.ID, actor, actor); err != nil {
 		return orgErr(err)
 	}
 	w.WriteHeader(http.StatusNoContent)

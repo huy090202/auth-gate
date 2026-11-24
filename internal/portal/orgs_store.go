@@ -212,19 +212,18 @@ func (st *Store) ListMembers(ctx context.Context, tenantID string) ([]Member, er
 	return all, nil
 }
 
-// SetRole moves a member to role and returns the role they had. The write also
-// holds only while the actor still has the role the caller saw, and while the
+// SetRole moves target to role and returns the role they had. target.Role is the
+// role the caller checked: the write holds only while the stored role is still it
+// (else ErrConflict), and
+// while the actor still has the role the caller saw, and while the
 // change leaves at least one owner.
-func (st *Store) SetRole(ctx context.Context, tenantID string, actor Membership, userID, role string) (string, error) {
+func (st *Store) SetRole(ctx context.Context, tenantID string, actor, target Membership, role string) (string, error) {
 	if _, err := st.orgTenant(ctx, tenantID); err != nil {
 		return "", err
 	}
-	target, err := st.GetMembership(ctx, tenantID, userID)
-	if err != nil {
-		return "", err
-	}
+	userID := target.UserID
 	if actor.UserID == userID && target.Role != actor.Role {
-		return "", ErrConflict // the actor check is skipped for self, so check the read here
+		return "", ErrConflict // the actor check is skipped for self, so check it here
 	}
 	old := target.Role
 	if old == role {
@@ -245,7 +244,7 @@ func (st *Store) SetRole(ctx context.Context, tenantID string, actor Membership,
 			ExpressionAttributeValues: item{":new": s(role), ":old": s(old)},
 		}}
 	}
-	err = txWrite(ctx, st, st.orgWrites(tenantID, actor, userID, delta, 0,
+	err := txWrite(ctx, st, st.orgWrites(tenantID, actor, userID, delta, 0,
 		setRole(memberKey(tenantID, userID)), setRole(userTenantKey(userID, tenantID)))...)
 	if dynamo.IsConditionFailed(err) {
 		return "", st.explainOrgConflict(ctx, tenantID, delta < 0)
@@ -256,16 +255,14 @@ func (st *Store) SetRole(ctx context.Context, tenantID string, actor Membership,
 	return old, nil
 }
 
-// RemoveMember deletes a membership and returns it as it was. Leaving is the
+// RemoveMember deletes target's membership, only while their stored role is still
+// target.Role (else ErrConflict), and returns it. Leaving is the
 // actor removing themselves. Removing the last owner gives ErrLastOwner.
-func (st *Store) RemoveMember(ctx context.Context, tenantID string, actor Membership, userID string) (Membership, error) {
+func (st *Store) RemoveMember(ctx context.Context, tenantID string, actor, target Membership) (Membership, error) {
 	if _, err := st.orgTenant(ctx, tenantID); err != nil {
 		return Membership{}, err
 	}
-	target, err := st.GetMembership(ctx, tenantID, userID)
-	if err != nil {
-		return Membership{}, err
-	}
+	userID := target.UserID
 	if actor.UserID == userID && target.Role != actor.Role {
 		return Membership{}, ErrConflict
 	}
@@ -281,7 +278,7 @@ func (st *Store) RemoveMember(ctx context.Context, tenantID string, actor Member
 			ExpressionAttributeValues: item{":old": s(target.Role)},
 		}}
 	}
-	err = txWrite(ctx, st, st.orgWrites(tenantID, actor, userID, delta, -1,
+	err := txWrite(ctx, st, st.orgWrites(tenantID, actor, userID, delta, -1,
 		del(memberKey(tenantID, userID)), del(userTenantKey(userID, tenantID)))...)
 	if dynamo.IsConditionFailed(err) {
 		return Membership{}, st.explainOrgConflict(ctx, tenantID, delta < 0)
