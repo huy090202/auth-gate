@@ -65,6 +65,7 @@ func (a *App) handler() http.Handler {
 	a.mountStepUp(mux)
 	a.mountTenants(mux)
 	a.mountOrgs(mux)
+	a.mountInvites(mux)
 	a.mountClients(mux)
 	mux.HandleFunc("/api/", notFound)
 	return webapi.NoStore(webapi.RequireJSON(mux))
