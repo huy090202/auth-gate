@@ -121,17 +121,17 @@ function Roster({ tenantId, actor, userId }: { tenantId: string; actor: Role; us
                 const choices = can(actor, 'change-role', m.role) ? roleChoices(actor, m.role) : [];
                 return (
                   <Table.Tr key={m.userId}>
-                    <Table.Td><span className="cell-name">{m.displayName}</span>{m.userId === userId && <> <span className="cell-muted">{t.members.you}</span></>}</Table.Td>
-                    <Table.Td className="cell-muted">{m.email}</Table.Td>
-                    <Table.Td>
+                    <Table.Td className="cell-title" data-label={t.members.colName}><span className="cell-name">{m.displayName}</span>{m.userId === userId && <> <span className="cell-muted">{t.members.you}</span></>}</Table.Td>
+                    <Table.Td className="cell-muted" data-label={t.members.colEmail}>{m.email}</Table.Td>
+                    <Table.Td data-label={t.members.colRole}>
                       {choices.length > 0 ? (
                         <Select aria-label={fmt(t.members.roleOf, { name: m.displayName })} value={m.role} allowDeselect={false}
                           disabled={change.busy || change.waiting} data={choices.map((r) => ({ value: r, label: t.roles[r] }))}
                           onChange={(v) => setRole(m, v)} />
                       ) : t.roles[m.role]}
                     </Table.Td>
-                    <Table.Td className="cell-muted">{formatDate(m.joinedAt, t)}</Table.Td>
-                    <Table.Td>
+                    <Table.Td className="cell-muted" data-label={t.members.colJoined}>{formatDate(m.joinedAt, t)}</Table.Td>
+                    <Table.Td className="cell-actions">
                       {can(actor, 'remove', m.role) && m.userId !== userId && (
                         <Button size="xs" color="red" variant="light" disabled={change.busy || change.waiting} onClick={() => remove(m)}>
                           {t.members.remove}
@@ -167,11 +167,11 @@ function Roster({ tenantId, actor, userId }: { tenantId: string; actor: Role; us
                 <Table.Tbody>
                   {invites.map((i) => (
                     <Table.Tr key={i.inviteId}>
-                      <Table.Td>{i.email}</Table.Td>
-                      <Table.Td>{t.roles[i.role]}</Table.Td>
-                      <Table.Td className="cell-muted">{i.invitedBy.displayName}</Table.Td>
-                      <Table.Td className="cell-muted">{formatDate(i.expiresAt, t)}</Table.Td>
-                      <Table.Td>
+                      <Table.Td className="cell-title" data-label={t.members.colEmail}>{i.email}</Table.Td>
+                      <Table.Td data-label={t.members.colRole}>{t.roles[i.role]}</Table.Td>
+                      <Table.Td className="cell-muted" data-label={t.members.colInvitedBy}>{i.invitedBy.displayName}</Table.Td>
+                      <Table.Td className="cell-muted" data-label={t.members.colExpires}>{formatDate(i.expiresAt, t)}</Table.Td>
+                      <Table.Td className="cell-actions">
                         <Group gap="xs" wrap="nowrap">
                           {can(actor, 'invite', i.role) && (
                             <Button size="xs" variant="light" disabled={invite.busy || invite.waiting}

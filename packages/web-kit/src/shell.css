@@ -210,6 +210,49 @@
 .data-table .mantine-Badge-label { overflow: visible; text-overflow: clip; }
 .data-table td:first-child:not(.col-toggle) { min-width: 140px; }
 
+/* A phone: a table row becomes a card. The header is kept for screen readers, each cell shows its data-label
+   in its place. Below the shell's 768px; above 640px these rules are not in play, so wide screens do not change. */
+@media (max-width: 640px) {
+  .table-wrap { overflow-x: visible; }
+  .data-table, .data-table tbody, .data-table tr, .data-table td { display: block; }
+  .data-table { min-width: 0; width: 100%; }
+  .data-table thead { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .data-table tbody tr {
+    position: relative; margin-bottom: 12px; padding: 10px 14px;
+    border: 1px solid var(--mantine-color-default-border); border-radius: 12px;
+  }
+  .data-table td, .data-table td:first-child, .data-table tbody tr:last-child td {
+    display: grid; grid-template-columns: minmax(72px, 36%) minmax(0, 1fr); align-items: baseline; gap: 4px 12px;
+    min-width: 0; padding: 6px 0; border: 0; overflow-wrap: anywhere;
+  }
+  .data-table td::before {
+    content: attr(data-label); grid-column: 1; font-size: 0.75rem; font-weight: 650; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--mantine-color-dimmed);
+  }
+  .data-table td:not([data-label])::before { display: none; }
+  .data-table td > * { grid-column: 2; min-width: 0; }
+  .data-table td:not([data-label]) > * { grid-column: 1 / -1; }
+  .data-table .cell-clip { max-width: 100%; }
+  .data-table .cell-nowrap { white-space: normal; }
+  .data-table td.cell-title, .data-table td.cell-actions { display: block; }
+  .data-table td.cell-title::before, .data-table td.cell-actions::before { display: none; }
+  .data-table td.cell-title { padding-bottom: 8px; font-size: 1rem; font-weight: 700; }
+  .data-table td.cell-title > * { grid-column: auto; }
+  .data-table td.cell-actions { padding-top: 10px; }
+  .data-table td.cell-actions:empty { display: none; }
+  .data-table .cell-actions .row-actions, .data-table .cell-actions .mantine-Group-root { flex-direction: column; align-items: stretch; }
+  .data-table .cell-actions .mantine-Button-root, .data-table .cell-actions button { width: 100%; }
+  .audit-table .col-toggle, .audit-table td.col-toggle:first-child { position: absolute; top: 6px; right: 8px; display: block; width: auto; padding: 0; }
+  .audit-table td.cell-title { padding-right: 44px; }
+  .audit-table tbody tr:has(+ .row-detail) { margin-bottom: 0; }
+  .audit-table tbody tr.row-open { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .audit-table tbody tr.row-detail { margin-bottom: 12px; padding: 0; border: 0; border-radius: 0; background: none; }
+  .audit-table tbody tr.row-detail td { display: block; padding: 0; }
+  .audit-table .detail-body {
+    padding: 8px 14px 14px; border: 1px solid var(--mantine-color-default-border); border-top: 0; border-radius: 0 0 12px 12px;
+  }
+}
+
 /* Select: Mantine's Combobox, in the glass language. The list is in a portal, so it is styled by its static class. */
 .mantine-Select-input { cursor: pointer; }
 .mantine-Select-dropdown {
