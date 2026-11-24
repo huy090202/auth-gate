@@ -90,7 +90,7 @@ export function ShellLayout({ storageKey, strings, brand, switcher, nav, collaps
       </aside>
       <div className="shell-main">
         <header className="content-header glass">
-          <button type="button" className="header-menu" onClick={() => setDrawer(true)} aria-label={strings.openMenu} aria-expanded={drawer}>
+          <button type="button" className="header-menu" onClick={() => setDrawer(true)} aria-label={strings.openMenu} aria-haspopup="dialog" aria-expanded={drawer}>
             {menuIcon}
           </button>
           <div className="header-brand">{brand}</div>
