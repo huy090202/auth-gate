@@ -82,6 +82,10 @@
   .drawer-nav .nav-link svg { flex: none; }
   .drawer-nav .nav-link:hover, .drawer-nav .nav-link:focus-visible { background: var(--nav-hover); }
   .drawer-nav .nav-link[aria-current='page'] { color: var(--accent-text); background: var(--accent-soft); font-weight: 650; box-shadow: inset 3px 0 0 var(--accent-text); }
+  .drawer-close { width: 44px !important; height: 44px !important; }
+  .drawer-body .mantine-Select-input { min-height: 44px; }
+  .drawer-tools .mantine-ActionIcon-root { min-width: 44px; min-height: 44px; }
+  .drawer-tools .mantine-SegmentedControl-label { display: flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; }
   .drawer-tools { display: flex; align-items: center; gap: 10px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--mantine-color-default-border); }
   .shell-content { padding: 24px 16px 64px; }
 }

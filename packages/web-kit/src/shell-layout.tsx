@@ -36,8 +36,8 @@ export async function endSession(logout: () => Promise<unknown>, after: () => vo
 /**
  * The frame of every signed-in, full-stage screen: a sticky sidebar (brand, optional switcher,
  * navigation, collapse), a sticky header with the account controls, and a centred content
- * container. The sidebar can collapse to an icon rail on wide screens; below 768 px it is a top
- * bar and never collapses. The app fills the slots; `storageKey` keeps the collapse choice per app.
+ * container. The sidebar can collapse to an icon rail on wide screens; below 768 px the sidebar gives way to a
+ * header menu button and a navigation drawer. The app fills the slots; `storageKey` keeps the collapse choice per app.
  */
 export function ShellLayout({ storageKey, strings, brand, switcher, nav, collapseIcon, menuIcon, routeKey, headerStart, account, collapsed: initial, children }: {
   storageKey: string;
@@ -106,9 +106,9 @@ export function ShellLayout({ storageKey, strings, brand, switcher, nav, collaps
           </Menu>
         </header>
         <Drawer opened={drawer} onClose={() => setDrawer(false)} position="left" size="min(320px, 85vw)" title={brand}
-          closeButtonProps={{ 'aria-label': strings.closeMenu }} classNames={{ body: 'drawer-body' }}>
+          closeButtonProps={{ 'aria-label': strings.closeMenu }} classNames={{ body: 'drawer-body', close: 'drawer-close' }}>
           {switcher}
-          <nav className="drawer-nav" aria-label={strings.mainNav} onClick={(e) => { if ((e.target as Element).closest('a')) setDrawer(false); }}>{nav}</nav>
+          <nav className="drawer-nav" aria-label={strings.mainNav} onClick={(e) => { if (e.button === 0 && !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) && (e.target as Element).closest('a')) setDrawer(false); }}>{nav}</nav>
           <div className="drawer-tools">{headerStart}</div>
         </Drawer>
         <div className="shell-content">

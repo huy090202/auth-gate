@@ -95,3 +95,12 @@ test('opening the drawer injects no <style>', async () => {
   await open();
   expect(document.querySelectorAll('style').length).toBe(0);
 });
+
+// Why: a ctrl/cmd-click opens the link in a new tab; the drawer must stay for the page the user is still on.
+test('a modified click on a link leaves the drawer open', async () => {
+  await mount();
+  await open();
+  await act(async () => { dialog()!.querySelector<HTMLAnchorElement>('a')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true })); });
+  await settle();
+  expect(dialog()).not.toBeNull();
+});

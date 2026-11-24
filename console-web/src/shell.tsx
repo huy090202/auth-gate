@@ -11,8 +11,8 @@ import { useMe, type Me } from './session';
 /**
  * The frame of every signed-in, full-stage screen (the layout is the kit's `ShellLayout`): a sticky
  * sidebar (brand, navigation, collapse), a sticky header with the account controls, and a centred
- * content container. The sidebar can collapse to an icon rail on wide screens; below 768 px it is
- * a top bar and never collapses.
+ * content container. The sidebar can collapse to an icon rail on wide screens; below 768 px the sidebar gives way to a
+ * header menu button and a navigation drawer.
  */
 export function Shell({ me, children, collapsed }: { me: Me; children: ReactNode; collapsed?: boolean }) {
   const t = useStrings();
