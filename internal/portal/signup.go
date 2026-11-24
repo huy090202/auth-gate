@@ -68,7 +68,7 @@ func parseEmail(raw string) (string, bool) {
 
 func validName(raw string) (string, bool) {
 	n := strings.TrimSpace(raw)
-	if c := utf8.RuneCountInString(n); c < 1 || c > maxDisplayName {
+	if c := utf8.RuneCountInString(n); c < 1 || c > maxDisplayName || hasURL(n) {
 		return "", false
 	}
 	for _, r := range n {

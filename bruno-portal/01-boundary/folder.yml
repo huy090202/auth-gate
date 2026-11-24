@@ -21,6 +21,12 @@ docs:
     | sign-up without Turnstile | **403** `turnstile_failed` | no bot can create an account |
     | `/api/me` without a cookie | **401** | no session, no data |
     | `/api/t/<ulid>/clients` without a cookie | **401** | no session, no workspace data |
+    | `POST /api/tenants` without a cookie | **401** | no anonymous organisation, no quota spent |
+    | `/api/t/<ulid>/members` without a cookie | **401** | no member names or addresses |
+    | `POST /api/t/<ulid>/invites` without a cookie | **401** | no anonymous invite email |
+    | `POST /api/invites/<ulid>/accept` without a cookie | **401** | a leaked link alone makes no member |
+    | `POST /api/invites/<ulid>/lookup` with a junk token | **404** `invite_not_found` | the lookup needs no cookie; the token is the only gate |
+    | `DELETE /api/t/<ulid>` without a cookie | **401** | no anonymous organisation deletion |
 
     The unknown-account login uses a fresh address on every run, so the per-address failure
     count never builds up. It still counts as one failure for the caller's IP, and it spends one

@@ -9,7 +9,8 @@ import { passkeyCount, type Me } from './session';
 /** The actions the backend guards with a step-up (internal/portal/stepup.go). */
 export type StepUpAction =
   | 'rotate-key' | 'revoke-previous-keys' | 'disable-client' | 'delete-client' | 'purge-subject'
-  | 'change-password' | 'change-email' | 'add-factor' | 'remove-factor' | 'regenerate-recovery-codes' | 'delete-account';
+  | 'change-password' | 'change-email' | 'add-factor' | 'remove-factor' | 'regenerate-recovery-codes' | 'delete-account'
+  | 'change-role' | 'remove-member' | 'delete-org';
 
 /**
  * Runs `run(token)` behind a fresh step-up (the modal, the single retry on step_up_required and

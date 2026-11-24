@@ -193,12 +193,15 @@ func (a *App) mountAuth(mux *http.ServeMux) {
 
 // login checks the password and opens a session at the stage the user's
 // factors call for. An unknown address, a wrong password, a locked and a
-// suspended account all run one password comparison and answer the same bytes;
-// an unverified address is revealed only after the right password. The attempt
-// is logged in the account's workspace only once the password is right: anyone
-// can type an address, and a stranger's guesses must not fill its owner's log
-// (they go to the process log). A failure on a live account records the
-// lockout; any other failure makes one equal write that changes nothing.
+// suspended account all run one password comparison and answer the same bytes.
+// So does an unverified account, even with the right password: it is treated
+// as a wrong password on a live account (reason "unverified"), so sign-in never
+// tells who has registered; the sign-in screen offers the resend instead. The
+// attempt is logged in the account's workspace only once the password is right
+// and the account is verified: anyone can type an address, and a stranger's
+// guesses must not fill its owner's log (they go to the process log). A failure
+// on a live account records the lockout; any other failure makes one equal
+// write that changes nothing.
 func (a *App) login(w http.ResponseWriter, r *http.Request) error {
 	var in struct{ Email, Password, TurnstileToken string }
 	if err := webapi.DecodeBody(r, &in); err != nil {
@@ -232,14 +235,15 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	good := a.verifyPassword(in.Password, hash)
-	if good && found && u.PersonalTenantID != "" {
+	if good && found && u.EmailVerifiedAt != nil && u.PersonalTenantID != "" {
 		setAuditTenant(ctx, u.PersonalTenantID)
 	}
 
 	now := a.now()
 	locked := found && u.LockedUntil != nil && now.Before(*u.LockedUntil)
 	live := found && u.SuspendedAt == nil && !locked
-	if !good || !live {
+	unverified := found && u.EmailVerifiedAt == nil
+	if !good || !live || unverified {
 		reason := "wrong_password"
 		switch {
 		case !found:
@@ -248,6 +252,8 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) error {
 			reason = "suspended"
 		case locked:
 			reason = "locked"
+		case unverified && good:
+			reason = "unverified"
 		}
 		setAuditDetail(ctx, "reason", reason)
 		if live { // a wrong password on a live account
@@ -263,9 +269,6 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		return errInvalidCredentials
-	}
-	if u.EmailVerifiedAt == nil {
-		return apiErr(http.StatusForbidden, "email_unverified")
 	}
 
 	// A factor reset whose wait is over is applied now, after the right password.

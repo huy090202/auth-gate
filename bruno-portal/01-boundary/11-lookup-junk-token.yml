@@ -1,0 +1,38 @@
+info:
+  name: "Invite lookup with a junk token (404)"
+  type: http
+  seq: 11
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/invites/01HZZZZZZZZZZZZZZZZZZZZZZZ/lookup"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "token": "x" }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        // The invite lookup has its own per-IP bucket (invite-lookup#<ip>) with sign-in's settings, so an IP that spent it gets 429.
+        test("404 invite_not_found, or 429 rate_limited once this IP spent its tokens", function() {
+          const s = res.getStatus();
+          expect([404, 429]).to.include(s);
+          expect(res.getBody()).to.deep.equal({ error: s === 404 ? "invite_not_found" : "rate_limited" });
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 404 `invite_not_found`.** The lookup needs no cookie, because the signed-out invite page
+  uses it, so the token is the only gate. An unknown, expired or used token, and an unknown organisation,
+  all answer the same 404. It spends one token of its own per-IP bucket (`invite-lookup#<ip>`, with
+  sign-in's settings); an IP that spent them gets 429 `rate_limited`, also accepted.

@@ -1,10 +1,11 @@
 import { expect, test } from 'vitest';
 import { errorCodes } from '../src/lib/api';
+import { explain } from '../src/lib/explain';
 import { describe as describeError } from '../src/lib/i18n';
 import { en, vi } from '../src/strings';
 
 test('describe() gives a sentence for every ErrorCode in both languages', () => {
-  expect(errorCodes.length).toBe(48);
+  expect(errorCodes.length).toBe(59);
   for (const t of [en, vi]) {
     for (const code of errorCodes) {
       const text = describeError({ code, extras: {} }, t);
@@ -28,4 +29,11 @@ test('every string has the same {placeholders} in both languages', () => {
   walk(en, 'en', a);
   walk(vi, 'en', b);
   expect([...b]).toEqual([...a]);
+});
+
+// Why: a refused account deletion must tell the user which organisations to hand over.
+test('explain() appends the organisations of a sole_owner refusal', () => {
+  const e = { code: 'sole_owner', extras: { organisations: ['Acme', 'Beta'] } };
+  expect(explain(e, en)).toBe(`${en.errors.sole_owner} Acme, Beta`);
+  expect(explain({ code: 'sole_owner', extras: {} }, en)).toBe(en.errors.sole_owner);
 });

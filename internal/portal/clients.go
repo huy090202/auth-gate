@@ -3,6 +3,8 @@ package portal
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -138,17 +140,55 @@ func (a *App) createClient(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return webapi.AuthGateError(err)
 	}
-	// What was typed is recorded only now that AuthGate has accepted it.
-	setAuditDetail(ctx, "name", in.Name)
-	setAuditDetail(ctx, "rpId", in.RPID)
-	setAuditDetail(ctx, "origins", strings.Join(in.Origins, ","))
 	var out struct {
 		ClientID string `json:"clientId"`
 	}
 	_ = json.Unmarshal(raw, &out)
+	// A deletion that set deletingAt after the check above lists the workspace's clients
+	// after that mark. Either this read sees the mark and the client is deleted here, or the
+	// mark came later and the deletion's list sees the client (spec section 4).
+	tid := t.ID
+	if t, err = a.Store.GetTenant(ctx, tid); err != nil {
+		// The caller never gets the key, so the client must not survive.
+		deleted := a.deleteOrphan(ctx, tid, out.ClientID)
+		slog.Warn("portal: tenant re-read failed after a client create", "tenant", tid, "client", out.ClientID, "deleted", deleted, "err", err)
+		return err
+	}
+	if t.DeletingAt != nil {
+		a.deleteOrphan(ctx, t.ID, out.ClientID)
+		if t.Kind == KindOrg {
+			return apiErr(http.StatusNotFound, "not_found")
+		}
+		return apiErr(http.StatusConflict, "tenant_deleting")
+	}
+	// What was typed is recorded only now that AuthGate has accepted it.
+	setAuditDetail(ctx, "name", in.Name)
+	setAuditDetail(ctx, "rpId", in.RPID)
+	setAuditDetail(ctx, "origins", strings.Join(in.Origins, ","))
 	setAuditTarget(ctx, out.ClientID)
 	webapi.WriteRaw(w, http.StatusCreated, raw)
 	return nil
+}
+
+// deleteOrphan deletes a client that must not survive: one created in a workspace that
+// began deleting meanwhile, or whose key the caller never got. It reports whether the
+// client is gone (404 counts). It runs on its own context, so a caller that went away
+// cannot cancel it. A failure is logged (never the key): the client then stays live at
+// AuthGate until an operator disables or deletes it.
+func (a *App) deleteOrphan(ctx context.Context, tenantID, clientID string) bool {
+	if clientID == "" {
+		slog.Error("portal: client created, id unreadable", "tenant", tenantID)
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sideEffectLimit)
+	defer cancel()
+	var ae *authgate.Error
+	err := a.AuthGate.Tenant(tenantID).Delete(ctx, clientID)
+	if err != nil && (!errors.As(err, &ae) || ae.Status != http.StatusNotFound) {
+		slog.Error("portal: orphaned client was not deleted", "tenant", tenantID, "client", clientID, "err", err)
+		return false
+	}
+	return true
 }
 
 // updateClient patches a client's name, origins, PIN policy and token lifetime.

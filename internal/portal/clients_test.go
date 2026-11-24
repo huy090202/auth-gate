@@ -29,6 +29,8 @@ type portalRT struct {
 	calls  []agCall
 	status int
 	body   string
+	// answer, when set, scripts the reply to one call; a 0 status falls back to status and body.
+	answer func(c agCall) (status int, body string)
 }
 
 func (f *portalRT) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -48,10 +50,16 @@ func (f *portalRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, agCall{req.Method, req.URL.RequestURI(), req.Header.Get("x-internal-access-key"), req.Header.Get("x-tenant-id"), b.String()})
+	c := agCall{req.Method, req.URL.RequestURI(), req.Header.Get("x-internal-access-key"), req.Header.Get("x-tenant-id"), b.String()}
+	f.calls = append(f.calls, c)
 	rec := httptest.NewRecorder()
 	rec.Header().Set("Content-Type", "application/json")
 	status, body := f.status, f.body
+	if f.answer != nil {
+		if st, bd := f.answer(c); st != 0 {
+			status, body = st, bd
+		}
+	}
 	if status == 0 {
 		status = 200
 	}
@@ -67,6 +75,13 @@ func (f *portalRT) reset(status int, body string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls, f.status, f.body = nil, status, body
+}
+
+// script sets the per-call answer (see answer).
+func (f *portalRT) script(fn func(c agCall) (status int, body string)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.answer = fn
 }
 
 func (f *portalRT) seen() []agCall {

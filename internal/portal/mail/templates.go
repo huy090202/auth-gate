@@ -7,10 +7,43 @@ var Kinds = []string{
 	"verify", "signup-exists", "reset", "factor-reset-confirm", "factor-reset-started",
 	"email-change-confirm", "email-changed", "password-changed", "factor-added",
 	"factor-removed", "recovery-code-used", "account-locked", "account-deleted",
+	"org-invite", "org-removed", "org-role-changed", "org-deleted",
 }
 
 // linkKinds are the kinds whose whole point is a link.
-var linkKinds = map[string]bool{"verify": true, "reset": true, "factor-reset-confirm": true, "email-change-confirm": true}
+var linkKinds = map[string]bool{"verify": true, "reset": true, "factor-reset-confirm": true, "email-change-confirm": true, "org-invite": true}
+
+// orgKinds are the only kinds that take the typed vars org, inviter and role.
+var orgKinds = map[string]bool{"org-invite": true, "org-removed": true, "org-role-changed": true, "org-deleted": true}
+
+// needsRole are the org kinds whose text names a role.
+var needsRole = map[string]bool{"org-invite": true, "org-role-changed": true}
+
+var roleLabel = map[string]map[string]string{
+	"owner":  {"en": "owner", "vi": "chủ sở hữu"},
+	"admin":  {"en": "admin", "vi": "quản trị viên"},
+	"member": {"en": "member", "vi": "thành viên"},
+}
+
+// memberOf stands in for an inviter without a usable name; it has one %s for the organisation.
+var memberOf = map[string]string{"en": "A member of %s", "vi": "Một thành viên của %s"}
+
+// orgNoticeFooter closes the three organisation notices.
+var orgNoticeFooter = map[string]string{
+	"en": "If you think this is a mistake, ask an owner of the organisation.",
+	"vi": "Nếu bạn cho rằng đây là nhầm lẫn, hãy hỏi chủ sở hữu của tổ chức.",
+}
+
+// orgFooters replace the default footer of an organisation kind.
+var orgFooters = map[string]map[string]string{
+	"org-removed":      orgNoticeFooter,
+	"org-role-changed": orgNoticeFooter,
+	"org-deleted":      orgNoticeFooter,
+	"org-invite": {
+		"en": "If you do not expect this invite, ignore this email; nothing changes unless you accept it.",
+		"vi": "Nếu bạn không mong đợi lời mời này, hãy bỏ qua thư này; không có gì thay đổi trừ khi bạn chấp nhận.",
+	},
+}
 
 var untilLabel = map[string]string{"en": "Until: ", "vi": "Cho đến: "}
 
@@ -20,6 +53,7 @@ var buttons = map[string]map[string]string{
 	"reset":                {"en": "Choose a new password", "vi": "Chọn mật khẩu mới"},
 	"factor-reset-confirm": {"en": "Confirm the reset", "vi": "Xác nhận đặt lại"},
 	"email-change-confirm": {"en": "Confirm new address", "vi": "Xác nhận địa chỉ mới"},
+	"org-invite":           {"en": "View the invite", "vi": "Xem lời mời"},
 }
 
 var signInLabel = map[string]string{"en": "Sign in", "vi": "Đăng nhập"}
@@ -109,5 +143,21 @@ var templates = map[string]map[string]tpl{
 	"account-deleted": {
 		"en": {"Your account was deleted", "Your account and its data were deleted."},
 		"vi": {"Tài khoản đã bị xóa", "Tài khoản và dữ liệu của bạn đã bị xóa."},
+	},
+	"org-invite": {
+		"en": {"You're invited to {org}", "{inviter} invited you to join {org} on the AuthGate Portal as {role}. The invite expires in 7 days."},
+		"vi": {"Bạn được mời vào {org}", "{inviter} đã mời bạn tham gia {org} trên AuthGate Portal với vai trò {role}. Lời mời hết hạn sau 7 ngày."},
+	},
+	"org-removed": {
+		"en": {"You were removed from {org}", "You are no longer a member of {org}. Its clients and audit log are closed to you."},
+		"vi": {"Bạn đã bị xóa khỏi {org}", "Bạn không còn là thành viên của {org}. Bạn không thể truy cập các client và nhật ký kiểm toán của tổ chức này nữa."},
+	},
+	"org-role-changed": {
+		"en": {"Your role in {org} changed", "Your role in {org} is now {role}."},
+		"vi": {"Vai trò của bạn trong {org} đã thay đổi", "Vai trò của bạn trong {org} bây giờ là {role}."},
+	},
+	"org-deleted": {
+		"en": {"{org} was deleted", "The organisation {org} and its clients were deleted."},
+		"vi": {"{org} đã bị xóa", "Tổ chức {org} và các client của tổ chức này đã bị xóa."},
 	},
 }

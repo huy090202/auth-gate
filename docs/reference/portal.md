@@ -6,7 +6,9 @@ their own AuthGate clients in a workspace. It is a third app with its own stack,
 reaching AuthGate only over HTTP. Design:
 [`docs/superpowers/specs/2026-11-22-self-service-design.md`](../superpowers/specs/2026-11-22-self-service-design.md);
 the reasons for the account rules are in [portal-accounts](../memo/portal-accounts.md) and
-[client-ownership](../memo/client-ownership.md).
+[client-ownership](../memo/client-ownership.md); organisations (P3) are in
+[portal-organisations](../memo/portal-organisations.md) and
+[`2026-11-24-p3-organisations-design.md`](../superpowers/specs/2026-11-24-p3-organisations-design.md).
 
 ```text
 browser ──► CloudFront (Portal URL)
@@ -58,11 +60,27 @@ admin key; `make check` fails if either import appears. It shares `internal/plat
   per second. Fixed cost: none, and no WAF.
 - Step-up (a PIN or passkey, single use, bound to the action and its target) guards `rotate-key`,
   `revoke-previous-keys`, `disable-client`, `purge-subject`, `delete-client`, `change-password`,
-  `change-email`, `add-factor`, `remove-factor`, `regenerate-recovery-codes` and `delete-account`.
+  `change-email`, `add-factor`, `remove-factor`, `regenerate-recovery-codes`, `delete-account`, `change-role`, `remove-member` and `delete-org`.
 - A workspace is a tenant at AuthGate. The personal workspace is its owner's only, and a user who is
   not a member of a workspace gets `404` on its routes, the same as an unknown one, before AuthGate
   is called. Roles: everyone reads; owner, admin and member create, edit, rotate and revoke; owner
   and admin disable, enable, purge and delete.
+- An organisation is a workspace with several members. A person creates at most 3, and an organisation holds
+  at most 20 members and 20 pending invites, and sends at most 20 invites a day (a resend counts).
+  Only an owner renames or deletes it or invites an `owner`; owners and admins manage members and
+  invites; anyone leaves, except the last owner. Role changes, member removal and deletion need
+  step-up (`change-role`, `remove-member`, `delete-org`). Each limit is a counter checked in the
+  transaction of the write it guards.
+- An invite lives 7 days. Its link is `/invite/<tenantId>#token=<token>`: the token is in the
+  fragment and in POST bodies, never in a path or query, and only its SHA-256 is stored. Accepting needs a
+  full session whose email is the invited one.
+- A deleting organisation answers `404 not_found` on every `/api/t/{tenantId}/…` route except its own
+  `DELETE`, and is left out of `GET /tenants`. A failed deletion answers `502 authgate_unavailable` and
+  resumes on the next `DELETE` or the next workspace list of any remaining member. A deleting
+  personal workspace keeps `409 tenant_deleting`.
+- Account deletion (`DELETE /me`) removes the person from each organisation with another owner,
+  deletes each organisation where they are the only member, and answers `409 sole_owner` with
+  `organisations: [names]` when they are the only owner of one that has other members.
 
 ## Portal API
 
@@ -77,11 +95,51 @@ All under `/api`, JSON, errors `{"error": "<snake_case>"}`.
 | `GET /me`, `POST /me/pin`, `/me/passkeys/start`, `/me/passkeys/finish`, `/me/recovery-codes`, `DELETE /me/pin`, `/me/passkeys/{id}` | any stage for `GET /me`; enroll or full for the rest | Writes need step-up in `full`, never in `enroll`. The last factor cannot be removed. |
 | `POST /me/display-name`, `/me/password`, `/me/email`, `/me/avatar`, `/me/avatar/confirm`, `DELETE /me/avatar`, `DELETE /me` | full | Password, email and account deletion need step-up. |
 | `POST /stepup/start`, `/stepup/verify` | full | `start` takes the action and its `target`. |
-| `GET /tenants` | full | The caller's workspaces, personal first. |
+| `GET /tenants` | full | The caller's workspaces, personal first. It also resumes the deletion of any organisation of the caller's that is half deleted. |
+| `POST /tenants` `{name}` | full | Creates an organisation; the caller is its owner. `201 {tenantId, kind, name, role}`. `409 org_quota_exceeded` at 3. |
+| `PATCH /t/{tenantId}` `{name}` | owner | Renames. `200 {name}`. |
+| `DELETE /t/{tenantId}` `{name}` | owner | Step-up. `name` must equal the current name (`400 name_mismatch`). `204`. |
+| `GET /t/{tenantId}/members` | any member | `{members: [{userId, displayName, email, role, joinedAt}]}`. |
+| `PATCH /t/{tenantId}/members/{userId}` `{role}` | owner, admin | Step-up. `200 {role}`. An admin moves only between `admin` and `member`. `409 last_owner` if it would leave none. |
+| `DELETE /t/{tenantId}/members/{userId}` | owner, admin | Step-up. `204`. An admin cannot remove an owner (`403 forbidden`). An owner cannot remove themselves: they use `/leave`. |
+| `POST /t/{tenantId}/leave` | any member | No step-up. `204`. `409 last_owner` for the last owner. |
+| `GET /t/{tenantId}/invites` | owner, admin | `{invites: [{inviteId, email, role, invitedBy, expiresAt}]}`. Expired ones are pruned. |
+| `POST /t/{tenantId}/invites` `{email, role}` | owner, admin | `201 {inviteId, email, role, expiresAt}` and an email. Only an owner invites `owner`. |
+| `POST /t/{tenantId}/invites/{inviteId}/resend` | owner, admin | `200 {inviteId, email, role, expiresAt}`. A new token replaces the old one. An owner invite is an owner's to resend: `403 forbidden` for an admin. |
+| `DELETE /t/{tenantId}/invites/{inviteId}` | owner, admin | `204`. |
+| `POST /invites/{tenantId}/lookup` `{token}` | none | `{orgName, inviterName, role, email}`, plus `emailMatches` with a full session. Per-IP limit. |
+| `POST /invites/{tenantId}/accept` `{token}` | full | `200 {tenantId}`. The session's email must be the invited one. |
+| `POST /invites/{tenantId}/decline` `{token}` | full | `204`. Same email rule. |
 | `GET /t/{tenantId}/clients`, `/t/{tenantId}/clients/{id}`, `POST /t/{tenantId}/clients`, `PATCH /t/{tenantId}/clients/{id}` | full | The key is returned once. `rateLimit` is not accepted. |
 | `POST .../clients/{id}/keys`, `DELETE .../clients/{id}/keys/previous`, `POST .../clients/{id}/disable`, `DELETE .../clients/{id}/subjects/{subjectId}`, `DELETE .../clients/{id}` | full | Step-up. `409 disabled_by_operator` for a client an operator disabled. |
 | `POST .../clients/{id}/enable` | full | |
 | `GET /t/{tenantId}/audit` | full | Owner and admin; newest first. |
+
+### Organisation errors
+
+All `{"error": "<code>"}`. A personal workspace answers `400 personal_workspace` on every organisation-only route.
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 400 | `personal_workspace` | An organisation-only route on a personal workspace. |
+| 400 | `invalid_name` | Organisation name: 2 to 64 characters, no control characters, no URL. |
+| 400 | `invalid_role` | A role that is not `owner`, `admin` or `member`. |
+| 400 | `invalid_email` | The invited address is not an email. |
+| 400 | `name_mismatch` | The typed name is not the organisation's. |
+| 403 | `forbidden` | The role may not do this (an admin on an owner, an admin inviting `owner`). |
+| 403 | `invite_wrong_email` | The session's email is not the invited one. |
+| 404 | `not_found` | Unknown, not a member, or being deleted. |
+| 404 | `invite_not_found` | An unknown, expired, used or revoked token, or a gone organisation. |
+| 409 | `org_quota_exceeded` | The person has already created 3 organisations. |
+| 409 | `members_full` | 20 members. |
+| 409 | `invites_full` | 20 pending invites. |
+| 409 | `already_member` | The invited address is already a member. |
+| 409 | `already_invited` | An invite is pending for that address; resend it. |
+| 409 | `last_owner` | The change would leave no owner. |
+| 409 | `sole_owner` | `DELETE /me` while the only owner of an organisation with other members; carries `organisations: [names]`. |
+| 409 | `conflict` | A role or membership moved while the request ran; retry. |
+| 429 | `rate_limited` | 20 invites per day per organisation, or the per-IP lookup limit. |
+| 502 | `authgate_unavailable` | AuthGate failed during a deletion; it resumes on the next try. |
 
 ## Run it locally
 

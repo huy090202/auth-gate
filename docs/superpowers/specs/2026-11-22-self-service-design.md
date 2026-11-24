@@ -201,17 +201,22 @@ and high-entropy, so SHA-256 is enough for them. Passwords use the Console's pas
 2. The answer is always "check your email", whether or not the email has an account.
    - A new email gets a verification link, valid 24 hours.
    - A known email gets "someone tried to sign up with this address; sign in or reset your
-     password".
+     password". The answer on screen is still "check your email"; the mail goes to the account's
+     owner, never to the person who typed the address.
 3. An unverified account expires after 7 days (TTL on the user and email items), which frees the
-   email.
-4. The link marks the email verified, creates the personal workspace and its membership, and starts
-   a session in stage `enroll`.
+   email. A new sign-up for an address whose account is still unverified replaces that account and
+   voids its older links. The newest sign-up wins, so someone who signs up with another person's
+   address cannot hold it: the real owner signs up again and takes it.
+4. The link, together with the account's password, marks the email verified, creates the personal
+   workspace and its membership, and starts a session in stage `enroll`. A wrong password answers
+   like a bad link, counts as a failed sign-in and leaves the link usable.
 
 ### Sign-in
 
 1. Email and password; Turnstile when section 9 requires it. Any failure answers the same `401`.
    Five failures lock the account for 15 minutes, as the Console does. An unverified email cannot
-   sign in; the screen offers to resend the link.
+   sign in, and says so no differently from a wrong password (see
+   `2026-11-24-p3-organisations-design.md` section 6); the screen always offers to resend the link.
 2. A PIN or passkey through AuthGate. An account with no factor must enrol one before reaching
    `full`. `FactorProved` and the first-factor lease work as in the Console.
 
@@ -247,12 +252,14 @@ or passkey: control of the email alone is not enough.
 | Change email | step-up and a link sent to the new address; the old address is told; the email index moves in one transaction |
 | Add or remove a PIN or passkey | step-up; the last factor cannot be removed |
 | Delete account | step-up. Refused while the person is the only owner of an organisation that has other members. Deletes the personal workspace and its clients. |
-| Avatar | PNG, JPEG or WebP, at most 1 MB, uploaded with a presigned S3 PUT, served at `/avatars/*`. The Console's admins get the same mechanism. |
+| Avatar | PNG, JPEG or WebP, at most 1 MB, uploaded with a presigned S3 POST to `pending/` first (a bucket lifecycle rule expires that prefix after 1 day), confirmed by the server, then copied to `avatars/`, which is served at `/avatars/*`. The Console's admins get the same mechanism. |
 
 Security emails are sent for: password changed, email changed, factor added or removed, recovery
 code used, factor reset requested, account locked after failed sign-ins.
 
 ## 8. Organisations
+
+Refined by `2026-11-24-p3-organisations-design.md`, which wins where the two differ.
 
 - **Create:** a name of 2 to 64 characters; the creator is owner. `orgsCreated` on the user item is
   incremented in the same transaction, on the condition `orgsCreated < 3`. Deleting an organisation

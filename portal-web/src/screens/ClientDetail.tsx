@@ -8,7 +8,8 @@ import {
 } from '../lib/clients';
 import { formatDate } from '../lib/format';
 import { fmt, useStrings } from '../lib/i18n';
-import { clientsPath } from '../lib/tenants';
+import { can } from '../lib/orgs';
+import { clientsPath, useWorkspaces } from '../lib/tenants';
 import { useStepUp } from '../stepup';
 import { useToast } from '../toast';
 import { IdChip, InlineLoading, LoadFailedInline, PageHead, ShownOnce, StatusBadge, TypeToConfirm } from '../ui';
@@ -35,6 +36,10 @@ function Detail({ tenantId, id }: { tenantId: string; id: string }) {
   const { stepUp, modal } = useStepUp();
   const toast = useToast();
   const navigate = useNavigate();
+  const { tenants } = useWorkspaces();
+  const role = tenants.find((x) => x.tenantId === tenantId)?.role;
+  // Disable, enable, purge and delete are for owners and admins; an unknown role shows none of them.
+  const manage = role !== undefined && can(role, 'manage-client');
   const [client, setClient] = useState<ClientView | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [form, setForm] = useState<FormState | null>(null);
@@ -173,70 +178,72 @@ function Detail({ tenantId, id }: { tenantId: string; id: string }) {
           <Feedback error={keys.error} />
         </section>
 
-        <section className="panel glass">
-          <h2>{t.clientDetail.stateTitle}</h2>
-          {disabled ? (
-            // An administrator's lock is not the tenant's to lift: no Enable at all, only the notice above.
-            !locked && (
-              <ActionRow title={t.clientDetail.enable} body={t.clientDetail.enableBody}>
-                <Button variant="light" loading={state.busy} disabled={state.waiting}
+        {manage && <>
+          <section className="panel glass">
+            <h2>{t.clientDetail.stateTitle}</h2>
+            {disabled ? (
+              // An administrator's lock is not the tenant's to lift: no Enable at all, only the notice above.
+              !locked && (
+                <ActionRow title={t.clientDetail.enable} body={t.clientDetail.enableBody}>
+                  <Button variant="light" loading={state.busy} disabled={state.waiting}
+                    onClick={() => void state.run(async () => {
+                      await api(`${path}/enable`, { method: 'POST' });
+                      await load();
+                    }, t.clientDetail.enabledDone)}>
+                    {t.clientDetail.enable}
+                  </Button>
+                </ActionRow>
+              )
+            ) : (
+              <ActionRow title={t.clientDetail.disable} body={t.clientDetail.disableBody}>
+                <Button variant="light" color="red" loading={state.busy} disabled={state.waiting}
                   onClick={() => void state.run(async () => {
-                    await api(`${path}/enable`, { method: 'POST' });
+                    const r = await stepUp('disable-client', (token) => api(`${path}/disable`, { method: 'POST', stepUpToken: token }), id);
+                    if (!r) return false;
                     await load();
-                  }, t.clientDetail.enabledDone)}>
-                  {t.clientDetail.enable}
+                  }, t.clientDetail.disabledDone)}>
+                  {t.clientDetail.disable}
                 </Button>
               </ActionRow>
-            )
-          ) : (
-            <ActionRow title={t.clientDetail.disable} body={t.clientDetail.disableBody}>
-              <Button variant="light" color="red" loading={state.busy} disabled={state.waiting}
-                onClick={() => void state.run(async () => {
-                  const r = await stepUp('disable-client', (token) => api(`${path}/disable`, { method: 'POST', stepUpToken: token }), id);
-                  if (!r) return false;
-                  await load();
-                }, t.clientDetail.disabledDone)}>
-                {t.clientDetail.disable}
+            )}
+            <Feedback error={state.error} />
+          </section>
+
+          <section className="panel glass">
+            <h2>{t.clientDetail.purgeTitle}</h2>
+            <ActionRow title={t.clientDetail.purge} body={t.clientDetail.purgeBody}>
+              <form className="purge-form" onSubmit={(ev) => ev.preventDefault()}>
+                <TextInput label={t.clientDetail.subject} description={t.clientDetail.subjectHint} value={subject}
+                  onChange={(e) => setSubject(e.currentTarget.value)} disabled={purge.busy} spellCheck={false} autoComplete="off" />
+                <Button color="red" variant="light" type="submit" loading={purge.busy} disabled={purge.waiting || subject === ''}
+                  onClick={() => void purge.run(async () => {
+                    // Caught here, before a step-up is spent on an id the backend would refuse.
+                    if (!validSubject(subject)) throw new ApiError(400, 'invalid_id', {});
+                    // The token is bound to <clientId>/<subjectId>, exactly as the route's path names them.
+                    const r = await stepUp('purge-subject', (token) =>
+                      api(`${path}/subjects/${encodeURIComponent(subject)}`, { method: 'DELETE', stepUpToken: token }), `${id}/${subject}`);
+                    if (!r) return false;
+                    const done = fmt(t.clientDetail.purged, { id: subject });
+                    setSubject('');
+                    return done;
+                  }, '', 'purge')}>
+                  {t.clientDetail.purge}
+                </Button>
+              </form>
+            </ActionRow>
+            <Feedback error={purge.error} />
+          </section>
+
+          <section className="panel glass">
+            <h2>{t.clientDetail.deleteTitle}</h2>
+            <ActionRow title={t.clientDetail.delete} body={t.clientDetail.deleteBody}>
+              <Button color="red" loading={remove.busy} disabled={remove.waiting} onClick={() => setConfirmDelete(true)}>
+                {t.clientDetail.delete}
               </Button>
             </ActionRow>
-          )}
-          <Feedback error={state.error} />
-        </section>
-
-        <section className="panel glass">
-          <h2>{t.clientDetail.purgeTitle}</h2>
-          <ActionRow title={t.clientDetail.purge} body={t.clientDetail.purgeBody}>
-            <form className="purge-form" onSubmit={(ev) => ev.preventDefault()}>
-              <TextInput label={t.clientDetail.subject} description={t.clientDetail.subjectHint} value={subject}
-                onChange={(e) => setSubject(e.currentTarget.value)} disabled={purge.busy} spellCheck={false} autoComplete="off" />
-              <Button color="red" variant="light" type="submit" loading={purge.busy} disabled={purge.waiting || subject === ''}
-                onClick={() => void purge.run(async () => {
-                  // Caught here, before a step-up is spent on an id the backend would refuse.
-                  if (!validSubject(subject)) throw new ApiError(400, 'invalid_id', {});
-                  // The token is bound to <clientId>/<subjectId>, exactly as the route's path names them.
-                  const r = await stepUp('purge-subject', (token) =>
-                    api(`${path}/subjects/${encodeURIComponent(subject)}`, { method: 'DELETE', stepUpToken: token }), `${id}/${subject}`);
-                  if (!r) return false;
-                  const done = fmt(t.clientDetail.purged, { id: subject });
-                  setSubject('');
-                  return done;
-                }, '', 'purge')}>
-                {t.clientDetail.purge}
-              </Button>
-            </form>
-          </ActionRow>
-          <Feedback error={purge.error} />
-        </section>
-
-        <section className="panel glass">
-          <h2>{t.clientDetail.deleteTitle}</h2>
-          <ActionRow title={t.clientDetail.delete} body={t.clientDetail.deleteBody}>
-            <Button color="red" loading={remove.busy} disabled={remove.waiting} onClick={() => setConfirmDelete(true)}>
-              {t.clientDetail.delete}
-            </Button>
-          </ActionRow>
-          <Feedback error={remove.error} />
-        </section>
+            <Feedback error={remove.error} />
+          </section>
+        </>}
       </div>
       {dialogs}
     </>

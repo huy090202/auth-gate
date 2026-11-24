@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,13 +19,36 @@ var anchorTags = regexp.MustCompile(`</?a( [^>]*)?>`)
 
 const link = "https://portal.example/verify?t=abc"
 
-var wantLink = map[string]bool{"verify": true, "reset": true, "factor-reset-confirm": true, "email-change-confirm": true}
+var wantLink = map[string]bool{"verify": true, "reset": true, "factor-reset-confirm": true, "email-change-confirm": true, "org-invite": true}
+
+// varsFor gives a kind the vars it needs: a link for every kind (unused ones are
+// ignored), and the typed values for the organisation kinds.
+func varsFor(kind string) map[string]string {
+	v := map[string]string{"link": link}
+	if strings.HasPrefix(kind, "org-") {
+		v["org"] = "Acme"
+		v["inviter"] = "Ann"
+		v["role"] = "admin"
+	}
+	return v
+}
 
 var wantButton = map[string]map[string]string{
 	"verify":               {"en": "Confirm email address", "vi": "Xác nhận email"},
 	"reset":                {"en": "Choose a new password", "vi": "Chọn mật khẩu mới"},
 	"factor-reset-confirm": {"en": "Confirm the reset", "vi": "Xác nhận đặt lại"},
 	"email-change-confirm": {"en": "Confirm new address", "vi": "Xác nhận địa chỉ mới"},
+	"org-invite":           {"en": "View the invite", "vi": "Xem lời mời"},
+}
+
+var wantOrgFooter = map[string]string{
+	"en": "If you think this is a mistake, ask an owner of the organisation.",
+	"vi": "Nếu bạn cho rằng đây là nhầm lẫn, hãy hỏi chủ sở hữu của tổ chức.",
+}
+
+var wantInviteFooter = map[string]string{
+	"en": "If you do not expect this invite, ignore this email; nothing changes unless you accept it.",
+	"vi": "Nếu bạn không mong đợi lời mời này, hãy bỏ qua thư này; không có gì thay đổi trừ khi bạn chấp nhận.",
 }
 
 var wantSignIn = map[string]string{"en": "Sign in", "vi": "Đăng nhập"}
@@ -43,7 +67,7 @@ func TestRenderEveryKindInBothLanguages(t *testing.T) {
 	for _, kind := range Kinds {
 		for _, lang := range []string{"en", "vi"} {
 			id := kind + "/" + lang
-			r, err := Render(Message{Lang: lang, Kind: kind, Vars: map[string]string{"link": link}}, site)
+			r, err := Render(Message{Lang: lang, Kind: kind, Vars: varsFor(kind)}, site)
 			if err != nil {
 				t.Fatalf("%s: %v", id, err)
 			}
@@ -55,7 +79,7 @@ func TestRenderEveryKindInBothLanguages(t *testing.T) {
 					t.Errorf("%s: html lacks %q", id, want)
 				}
 			}
-			if !strings.Contains(r.HTML, ">"+r.Subject+"</h1>") {
+			if !strings.Contains(r.HTML, ">"+html.EscapeString(r.Subject)+"</h1>") {
 				t.Errorf("%s: subject not inside h1", id)
 			}
 			for name, part := range map[string]string{"html": r.HTML, "text": r.Text} {
@@ -82,15 +106,19 @@ func TestRenderEveryKindInBothLanguages(t *testing.T) {
 			if !wantLink[kind] && strings.Contains(r.HTML, "word-break:break-all") {
 				t.Errorf("%s: notice carries the link block", id)
 			}
+			wantLF := wantLinkFooter[lang]
+			if kind == "org-invite" {
+				wantLF = wantInviteFooter[lang]
+			}
 			switch {
 			case wantLink[kind]:
 				label := wantButton[kind][lang]
-				for _, want := range []string{label, `href="` + link + `"`, "word-break:break-all", wantLinkFooter[lang]} {
+				for _, want := range []string{label, `href="` + link + `"`, "word-break:break-all", wantLF} {
 					if !strings.Contains(r.HTML, want) {
 						t.Errorf("%s: html lacks %q", id, want)
 					}
 				}
-				for _, want := range []string{label + ": " + link, wantLinkFooter[lang]} {
+				for _, want := range []string{label + ": " + link, wantLF} {
 					if !strings.Contains(r.Text, want) {
 						t.Errorf("%s: text lacks %q", id, want)
 					}
@@ -105,8 +133,12 @@ func TestRenderEveryKindInBothLanguages(t *testing.T) {
 			default:
 				for name, part := range map[string]string{"html": r.HTML, "text": r.Text} {
 					plain := anchorTags.ReplaceAllString(part, "") // the address is a mailto link in the html
-					for _, want := range []string{"https://portal.example/sign-in", wantSignIn[lang], wantNoticeFooter[lang]} {
-						found := strings.Contains(part, want) || (want == wantNoticeFooter[lang] && strings.Contains(plain, want))
+					wantNF := wantNoticeFooter[lang]
+					if strings.HasPrefix(kind, "org-") {
+						wantNF = wantOrgFooter[lang]
+					}
+					for _, want := range []string{"https://portal.example/sign-in", wantSignIn[lang], wantNF} {
+						found := strings.Contains(part, want) || (want == wantNF && strings.Contains(plain, want))
 						if !found {
 							t.Errorf("%s %s: lacks %q", id, name, want)
 						}
@@ -115,15 +147,15 @@ func TestRenderEveryKindInBothLanguages(t *testing.T) {
 			}
 		}
 	}
-	if len(Kinds) != 13 {
-		t.Fatalf("expected 13 kinds, got %d", len(Kinds))
+	if len(Kinds) != 17 {
+		t.Fatalf("expected 17 kinds, got %d", len(Kinds))
 	}
 }
 
 func TestRenderWithoutSupport(t *testing.T) {
 	bare := Site{BaseURL: "https://portal.example"}
 	for _, kind := range Kinds {
-		r, err := Render(Message{Lang: "en", Kind: kind, Vars: map[string]string{"link": link}}, bare)
+		r, err := Render(Message{Lang: "en", Kind: kind, Vars: varsFor(kind)}, bare)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -183,7 +215,9 @@ func TestRenderRefusesOffSiteLinks(t *testing.T) {
 
 func TestRenderRequiresLinkForLinkKinds(t *testing.T) {
 	for _, kind := range Kinds {
-		_, err := Render(Message{Lang: "en", Kind: kind}, site)
+		vars := varsFor(kind)
+		delete(vars, "link")
+		_, err := Render(Message{Lang: "en", Kind: kind, Vars: vars}, site)
 		if wantLink[kind] && err == nil {
 			t.Errorf("%s rendered without a link", kind)
 		}
@@ -315,5 +349,85 @@ func TestSESSendsBothPartsAndReplyTo(t *testing.T) {
 	}
 	if len(f2.in.ReplyToAddresses) != 0 {
 		t.Errorf("reply-to without support: %v", f2.in.ReplyToAddresses)
+	}
+}
+
+func orgMsg(kind, lang string, vars map[string]string) Message {
+	return Message{To: "u@example.com", Lang: lang, Kind: kind, Vars: vars}
+}
+
+func TestRenderOrgKinds(t *testing.T) {
+	want := map[string]map[string]string{
+		"org-invite":       {"en": "Ann invited you to join Acme on the AuthGate Portal as admin.", "vi": "quản trị viên"},
+		"org-removed":      {"en": "You are no longer a member of Acme.", "vi": "Acme"},
+		"org-role-changed": {"en": "Your role in Acme is now admin.", "vi": "quản trị viên"},
+		"org-deleted":      {"en": "The organisation Acme and its clients were deleted.", "vi": "Acme"},
+	}
+	for kind, byLang := range want {
+		for lang, frag := range byLang {
+			r, err := Render(orgMsg(kind, lang, varsFor(kind)), site)
+			if err != nil {
+				t.Fatalf("%s/%s: %v", kind, lang, err)
+			}
+			if !strings.Contains(r.Subject, "Acme") {
+				t.Errorf("%s/%s: subject %q lacks the org", kind, lang, r.Subject)
+			}
+			for name, part := range map[string]string{"html": r.HTML, "text": r.Text} {
+				if !strings.Contains(part, "Acme") || !strings.Contains(part, frag) {
+					t.Errorf("%s/%s %s: lacks %q", kind, lang, name, frag)
+				}
+				if strings.ContainsAny(part, "{}") && !strings.Contains(part, "font-family") {
+					t.Errorf("%s/%s %s: unsubstituted placeholder", kind, lang, name)
+				}
+			}
+			if strings.Contains(r.Text, "{") {
+				t.Errorf("%s/%s: unsubstituted placeholder in text: %q", kind, lang, r.Text)
+			}
+		}
+	}
+}
+
+// Why: a display name saved before names were checked may hold a URL; the caller
+// passes no inviter then, and the mail must still read well (Review Focus 5).
+func TestRenderInviteWithoutInviter(t *testing.T) {
+	for lang, want := range map[string]string{"en": "A member of Acme invited you", "vi": "Một thành viên của Acme"} {
+		r, err := Render(orgMsg("org-invite", lang, map[string]string{"link": link, "org": "Acme", "role": "member"}), site)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(r.Text, want) {
+			t.Errorf("%s: %q lacks %q", lang, r.Text, want)
+		}
+	}
+}
+
+// Why: typed values must never carry a link into an email, and only the org kinds take them.
+func TestRenderRefusesBadOrgVars(t *testing.T) {
+	long := strings.Repeat("a", 65)
+	cases := map[string]Message{
+		"url inviter":     orgMsg("org-invite", "en", map[string]string{"link": link, "org": "Acme", "inviter": "evil.com", "role": "member"}),
+		"url org":         orgMsg("org-deleted", "en", map[string]string{"org": "see acme.io/x"}),
+		"org on verify":   {Lang: "en", Kind: "verify", Vars: map[string]string{"link": link, "org": "Acme"}},
+		"role root":       orgMsg("org-role-changed", "en", map[string]string{"org": "Acme", "role": "root"}),
+		"missing org":     orgMsg("org-removed", "en", map[string]string{}),
+		"missing role":    orgMsg("org-role-changed", "en", map[string]string{"org": "Acme"}),
+		"org too long":    orgMsg("org-removed", "en", map[string]string{"org": long}),
+		"control in org":  orgMsg("org-removed", "en", map[string]string{"org": "Ac\tme"}),
+		"unknown org var": orgMsg("org-removed", "en", map[string]string{"org": "Acme", "name": "x"}),
+	}
+	for name, m := range cases {
+		if _, err := Render(m, site); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
+func TestRenderEscapesOrgName(t *testing.T) {
+	r, err := Render(orgMsg("org-removed", "en", map[string]string{"org": "<b>Acme</b>"}), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(r.HTML, "<b>Acme") || !strings.Contains(r.HTML, "&lt;b&gt;Acme&lt;/b&gt;") {
+		t.Errorf("org name not escaped in html")
 	}
 }

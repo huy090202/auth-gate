@@ -1,0 +1,36 @@
+info:
+  name: "POST /api/t/<ulid>/invites without a cookie (401)"
+  type: http
+  seq: 9
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/t/01HZZZZZZZZZZZZZZZZZZZZZZZ/invites"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "email": "a@b.co", "role": "member" }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("401", function() {
+          expect(res.getStatus()).to.equal(401);
+        });
+
+        test('body is {"error":"unauthorized"}', function() {
+          expect(res.getBody()).to.deep.equal({ error: "unauthorized" });
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 401.** An invite sends an email from the Portal's sender address. No cookie, no mail, and no sign of whether the organisation exists.

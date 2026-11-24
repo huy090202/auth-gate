@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { portalTitle, useTitle } from '../brand';
 import { api } from '../lib/api';
+import { pendingInvite } from '../lib/invite';
 import { useLang, useStrings } from '../lib/i18n';
 import { useAnonGate } from '../session';
 import { Card, TurnstileForm } from './parts';
@@ -18,7 +19,7 @@ export function SignUp() {
   const [lang] = useLang();
   useTitle(portalTitle(t.screens.signUp));
   const nav = useNavigate();
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => pendingInvite()?.email ?? '');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const gate = useAnonGate();
