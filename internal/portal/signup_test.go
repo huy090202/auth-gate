@@ -193,6 +193,7 @@ func TestSignupRejectsMalformedInput(t *testing.T) {
 		{"displayName", "   ", "invalid_name"},
 		{"displayName", "a\x00b", "invalid_name"},
 		{"displayName", strings.Repeat("é", 65), "invalid_name"},
+		{"displayName", "see acme.io", "invalid_name"},
 		{"password", "short", "invalid_password"},
 		{"lang", "fr", "invalid_lang"},
 	}

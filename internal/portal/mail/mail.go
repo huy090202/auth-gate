@@ -14,16 +14,22 @@ import (
 	"html/template"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2/types"
 )
 
-// Message is one email to send. Vars holds only "link" and "until": nothing a
-// user typed is ever interpolated into an email.
+// Message is one email to send. Vars holds "link" and "until", and, for the
+// organisation kinds only, "org", "inviter" and "role". An organisation name
+// and a display name are the only typed values ever interpolated into an
+// email, and both are checked: at most 64 runes, no control characters, no
+// URL. The role is one of owner, admin or member.
 type Message struct {
 	To   string
 	Lang string // "en" or "vi"
@@ -199,11 +205,17 @@ func Render(m Message, s Site) (Rendered, error) {
 		return Rendered{}, fmt.Errorf("mail: site has no base URL")
 	}
 	for k, v := range m.Vars {
-		if k != "link" && k != "until" {
+		typed := k == "org" || k == "inviter" || k == "role"
+		if (k != "link" && k != "until" && !typed) || (typed && !orgKinds[m.Kind]) {
 			return Rendered{}, fmt.Errorf("mail: unknown var %q", k)
 		}
 		if strings.ContainsAny(v, "\r\n") {
 			return Rendered{}, fmt.Errorf("mail: var %q holds a line break", k)
+		}
+		if typed {
+			if err := checkTyped(k, v); err != nil {
+				return Rendered{}, err
+			}
 		}
 	}
 	link, until := m.Vars["link"], m.Vars["until"]
@@ -214,12 +226,20 @@ func Render(m Message, s Site) (Rendered, error) {
 		return Rendered{}, fmt.Errorf("mail: link for %q is not under the site", m.Kind)
 	}
 
-	body := strings.TrimSuffix(l.body, ":")
-	if body != l.body {
+	subject, body := l.subject, l.body
+	if orgKinds[m.Kind] {
+		var err error
+		if subject, body, err = fillOrg(m, subject, body); err != nil {
+			return Rendered{}, err
+		}
+	}
+	orig := body
+	body = strings.TrimSuffix(body, ":")
+	if body != orig {
 		body += "."
 	}
 	v := view{
-		Lang: m.Lang, Subject: l.subject, Preheader: preheader(body), Body: body,
+		Lang: m.Lang, Subject: subject, Preheader: preheader(body), Body: body,
 		Logo: s.BaseURL + "/email-logo.png", BaseURL: s.BaseURL,
 		Host: strings.TrimPrefix(strings.TrimPrefix(s.BaseURL, "https://"), "http://"),
 	}
@@ -235,9 +255,15 @@ func Render(m Message, s Site) (Rendered, error) {
 		v.Button = &button{Label: buttons[m.Kind][m.Lang], URL: link, Primary: true}
 		v.Fallback, v.Link = fallbackLine[m.Lang], link
 		v.Footer = support{Pre: linkFooter[m.Lang]}
+		if f, ok := orgFooters[m.Kind]; ok {
+			v.Footer = support{Pre: f[m.Lang]}
+		}
 		textButton = v.Button.Label + ": " + link
 	default:
 		v.Footer = noticeFooterSupport(m.Lang, s.Support)
+		if f, ok := orgFooters[m.Kind]; ok {
+			v.Footer = support{Pre: f[m.Lang]}
+		}
 		if m.Kind != "account-deleted" {
 			signIn := s.BaseURL + "/sign-in"
 			v.Button = &button{Label: signInLabel[m.Lang], URL: signIn}
@@ -273,7 +299,7 @@ func Render(m Message, s Site) (Rendered, error) {
 	if s.Support != "" {
 		blocks = append(blocks, v.Support.plain())
 	}
-	return Rendered{Subject: l.subject, Text: strings.Join(blocks, "\n\n") + "\n", HTML: h.String()}, nil
+	return Rendered{Subject: subject, Text: strings.Join(blocks, "\n\n") + "\n", HTML: h.String()}, nil
 }
 
 // noticeFooterSupport is the footer of a notice: it names the support address when there is one.
@@ -282,4 +308,60 @@ func noticeFooterSupport(lang, addr string) support {
 		return support{Pre: noticeFooterBare[lang]}
 	}
 	return newSupport(noticeFooter[lang], addr)
+}
+
+const maxTypedRunes = 64
+
+// HasURL reports whether s holds a URL: "://", "www.", or a host-like token
+// (name.tld) that ends the value or is followed by whitespace or one of / : ? #.
+// It is the one check behind organisation names, display names and mail vars.
+func HasURL(s string) bool {
+	s = strings.ToLower(s)
+	return strings.Contains(s, "://") || strings.Contains(s, "www.") || hostLike.MatchString(s)
+}
+
+var hostLike = regexp.MustCompile(`[a-z0-9-]+\.[a-z]{2,63}($|[\s/:?#])`)
+
+// checkTyped refuses a typed var that is too long, holds a control character or a URL,
+// or is a role other than owner, admin or member.
+func checkTyped(k, v string) error {
+	if k == "role" {
+		if _, ok := roleLabel[v]; !ok {
+			return fmt.Errorf("mail: var %q is not a role", k)
+		}
+		return nil
+	}
+	if utf8.RuneCountInString(v) > maxTypedRunes {
+		return fmt.Errorf("mail: var %q is too long", k)
+	}
+	for _, r := range v {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("mail: var %q holds a control character", k)
+		}
+	}
+	if HasURL(v) {
+		return fmt.Errorf("mail: var %q holds a URL", k)
+	}
+	return nil
+}
+
+// fillOrg substitutes {org}, {inviter} and {role} in an organisation kind's subject and body.
+func fillOrg(m Message, subject, body string) (string, string, error) {
+	org := m.Vars["org"]
+	if org == "" {
+		return "", "", fmt.Errorf("mail: kind %q needs org", m.Kind)
+	}
+	role := ""
+	if needsRole[m.Kind] {
+		if m.Vars["role"] == "" {
+			return "", "", fmt.Errorf("mail: kind %q needs role", m.Kind)
+		}
+		role = roleLabel[m.Vars["role"]][m.Lang]
+	}
+	inviter := m.Vars["inviter"]
+	if inviter == "" {
+		inviter = fmt.Sprintf(memberOf[m.Lang], org)
+	}
+	r := strings.NewReplacer("{org}", org, "{inviter}", inviter, "{role}", role)
+	return r.Replace(subject), r.Replace(body), nil
 }
