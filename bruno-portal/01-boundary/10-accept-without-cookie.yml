@@ -1,0 +1,36 @@
+info:
+  name: "POST /api/invites/<ulid>/accept without a cookie (401)"
+  type: http
+  seq: 10
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/invites/01HZZZZZZZZZZZZZZZZZZZZZZZ/accept"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "token": "x" }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("401", function() {
+          expect(res.getStatus()).to.equal(401);
+        });
+
+        test('body is {"error":"unauthorized"}', function() {
+          expect(res.getBody()).to.deep.equal({ error: "unauthorized" });
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 401.** Accepting an invite needs a full session, so a leaked link alone never makes anyone a member. The session guard runs before the token is looked at.

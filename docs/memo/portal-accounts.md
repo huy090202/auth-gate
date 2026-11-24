@@ -5,7 +5,7 @@
 The Portal (`cmd/portal`, `internal/portal`, `portal-web/`, stack `auth-gate-portal-<stage>`) lets anyone make an account and manage their own AuthGate clients. Its accounts follow these rules:
 
 - Every public route that takes an email (sign-up, resend, forgotten password, factor-reset request) answers `202 {"status":"check_email"}` whether or not the address has an account, and takes at least 1500 ms to do it.
-- A sign-in failure is always `401 invalid_credentials`. An unverified email is revealed only after the right password (`403 email_unverified`).
+- A sign-in failure is always `401 invalid_credentials`. An unverified account answers the same way, even with the right password: it counts as a failed sign-in, so no refusal tells whether an address has a pending sign-up. Five right-password sign-ins on an unverified account lock it for 15 minutes, which also blocks its verify link for that time. That trade-off is accepted to close the oracle ([portal-organisations](portal-organisations.md#why-the-oracle-fix)). The sign-in screen always offers to resend the verification email.
 - A second factor (a PIN or a passkey, checked by AuthGate) is mandatory: no session reaches `full` without one. Ten recovery codes are issued with the first factor.
 - A recovery code signs the person in to stage `enroll`, not `full`, so the next screen is "add a new factor".
 - A lost factor with no recovery code is reset by an emailed link, then a 24-hour wait that the next successful sign-in with the old factor cancels. The reset is applied lazily, at the first sign-in after the wait.

@@ -1,0 +1,36 @@
+info:
+  name: "DELETE /api/t/<ulid> without a cookie (401)"
+  type: http
+  seq: 12
+
+http:
+  method: DELETE
+  url: "{{baseUrl}}/api/t/01HZZZZZZZZZZZZZZZZZZZZZZZ"
+  headers:
+    - name: Content-Type
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      { "name": "x" }
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("401", function() {
+          expect(res.getStatus()).to.equal(401);
+        });
+
+        test('body is {"error":"unauthorized"}', function() {
+          expect(res.getBody()).to.deep.equal({ error: "unauthorized" });
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 401.** Deleting an organisation removes its clients at AuthGate. The session guard answers first, before any step-up or name check.

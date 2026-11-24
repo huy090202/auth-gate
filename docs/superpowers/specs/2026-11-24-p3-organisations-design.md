@@ -104,10 +104,14 @@ on every request with a consistent read.
 2. Delete each of the tenant's clients through the portal key (`DELETE /api/portal/clients/{id}`).
    A client already gone (404) is skipped.
 3. Delete the invites and their index items.
-4. Delete the memberships. The acting owner's comes last.
-5. Decrement `orgsCreated` on the creator, if that account still exists.
-6. Set a 30-day TTL on the tenant's remaining items (the tenant item and its audit).
-7. Email every former member `org-deleted`.
+4. Delete the other members' memberships, mailing each one `org-deleted` as theirs is dropped.
+5. The store finish (`FinishDeletion`): decrement `orgsCreated` on the creator, if that account
+   still exists, delete the tenant's index item in the `TENANTS` index, and set a 30-day TTL on the
+   tenant's remaining items (the tenant item and its audit).
+6. Delete the acting owner's membership last, and mail them `org-deleted`. It comes after step 5,
+   not before it: if it went first and step 5 then failed, the actor could no longer run the
+   deletion again, and no other member is guaranteed to exist. Kept until the end, it is the
+   handle a resume holds.
 
 Every step can be run again safely. A run that stops part way, through a timeout or an AuthGate
 error, answers `502` and is resumed in either of two ways:
@@ -118,13 +122,24 @@ error, answers `502` and is resumed in either of two ways:
 
 There is no scheduler and no queue, so this adds no infrastructure and no fixed cost.
 
+A deleting organisation answers 404 through the member guard on every route but its own `DELETE`. A
+deleting personal workspace keeps P2's `409 tenant_deleting`.
+
+**Known residual.** A client create that passed the guard just before `deletingAt` was set can
+reach AuthGate after step 2 listed the clients. That client is then left behind at AuthGate, in a
+tenant nobody can reach through the Portal. It is accepted: the window is the length of one request, and
+the orphan holds no access the Portal can grant.
+
 **Account deletion** (P2's `DELETE /api/me`) now considers each organisation the person belongs to,
 before the step-up is spent:
 
 - another owner remains: the person's membership is removed;
 - the person is the only owner and other members remain: refused with `409 sole_owner`, listing
   those organisations by name, so the person can transfer ownership first;
-- the person is the only member: the organisation is deleted as above.
+- the person is the only member: the organisation is deleted as above. It is marked deleting only
+  while it still has that one member (`MarkDeletingIfAlone`). If someone joined in the meantime,
+  the answer is `409 sole_owner` with that organisation's name. The `org-delete` audit entry is
+  written in each organisation the account deletion deletes, as it is for a direct delete.
 
 ## 5. Accepting an invite
 

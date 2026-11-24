@@ -62,7 +62,8 @@ flowchart LR
   that routes by path. Only `verify` can sign, only `admin` serves the client-management routes,
   and `jwks` holds no secret.
 - The [Portal](docs/reference/portal.md) is where developers sign up, verify an email address,
-  enroll a mandatory second factor and manage their own clients.
+  enroll a mandatory second factor and manage their own clients, alone or in an organisation they
+  invite others to ([organisations](docs/memo/portal-organisations.md)).
 - The [Console](docs/reference/console.md) is the operator's app: every client, its keys, disable
   and enable, purging one user's factors, and the audit log. Its admins sign in with a password
   plus a factor that AuthGate itself verifies.
