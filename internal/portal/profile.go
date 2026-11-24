@@ -130,6 +130,13 @@ func (st *Store) swapAvatar(ctx context.Context, userID, key string) (prev strin
 // a guarantee, the workspace's audit log. The items go in one transaction when
 // they fit in one, with the user and email items in the last. The user's email
 // must still be u.Email, else ErrConflict.
+//
+// The caller has already left or deleted every organisation. A membership
+// other than the personal workspace's is one accepted since then, which only
+// RemoveMember may undo with its counters, so it gives ErrConflict and the
+// caller sorts the organisations again. An invite accepted after the list
+// raises the user's membershipVersion, which the user item's delete is
+// conditioned on: that too gives ErrConflict.
 func (st *Store) DeleteAccount(ctx context.Context, u User) error {
 	del := func(k item, cond string, vals item) types.TransactWriteItem {
 		d := &types.Delete{TableName: aws.String(st.Table), Key: k}
@@ -138,22 +145,35 @@ func (st *Store) DeleteAccount(ctx context.Context, u User) error {
 		}
 		return types.TransactWriteItem{Delete: d}
 	}
+	cur, err := st.getRaw(ctx, userKey(u.ID))
+	if err != nil {
+		return err
+	}
+	if cur == nil {
+		return ErrConflict
+	}
 	ms, err := st.ListMemberships(ctx, u.ID)
 	if err != nil {
 		return err
 	}
-	tenants := map[string]bool{}
 	var core []types.TransactWriteItem
 	for _, m := range ms {
+		if m.TenantID != u.PersonalTenantID {
+			return ErrConflict
+		}
 		core = append(core, del(memberKey(m.TenantID, u.ID), "", nil), del(userTenantKey(u.ID, m.TenantID), "", nil))
-		tenants[m.TenantID] = true
 	}
 	if t := u.PersonalTenantID; t != "" {
 		core = append(core, del(tenantKey(t), "", nil), del(tenantIndexKey(t), "", nil))
 	}
+	version := getN64(cur, "membershipVersion") // absent is 0
+	userCond, userVals := "email = :e AND membershipVersion = :v", item{":e": s(u.Email), ":v": n(version)}
+	if version == 0 {
+		userCond = "email = :e AND (attribute_not_exists(membershipVersion) OR membershipVersion = :v)"
+	}
 	core = append(core,
 		del(emailKey(u.Email), "userId = :u", item{":u": s(u.ID)}),
-		del(userKey(u.ID), "email = :e", item{":e": s(u.Email)}))
+		del(userKey(u.ID), userCond, userVals))
 	extra := []types.TransactWriteItem{del(factorResetKey(u.ID), "", nil)}
 	var start item
 	for {
@@ -578,6 +598,7 @@ type accountOrgs struct {
 	soleOwner []string     // names of those they alone own, with other members: deletion is refused
 	remove    []Tenant     // those they are the only member of, or already being deleted
 	leave     []Membership // the others: their membership is removed
+	gone      []string     // tenants whose item is gone: the leftover membership is dropped
 }
 
 // classifyOrgs sorts the person's organisations for account deletion (spec section 4).
@@ -590,6 +611,7 @@ func (a *App) classifyOrgs(ctx context.Context, userID string) (accountOrgs, err
 	for _, m := range ms {
 		t, err := a.Store.GetTenant(ctx, m.TenantID)
 		if errors.Is(err, ErrTenantNotFound) {
+			out.gone = append(out.gone, m.TenantID)
 			continue
 		}
 		if err != nil {
@@ -649,6 +671,7 @@ func (a *App) deleteAccount(w http.ResponseWriter, r *http.Request) error {
 	for _, t := range orgs.remove {
 		marked, err := a.Store.MarkDeletingIfAlone(ctx, t.ID, a.now())
 		if errors.Is(err, ErrTenantNotFound) {
+			orgs.gone = append(orgs.gone, t.ID)
 			continue
 		}
 		if errors.Is(err, ErrNotAlone) {
@@ -676,6 +699,12 @@ func (a *App) deleteAccount(w http.ResponseWriter, r *http.Request) error {
 		case errors.Is(err, ErrLastOwner), errors.Is(err, ErrConflict), errors.Is(err, ErrTenantDeleting):
 			return apiErr(http.StatusConflict, "conflict") // something moved since the check: the person may retry
 		default:
+			return err
+		}
+	}
+	// Store.DeleteAccount refuses any membership but the personal one.
+	for _, tid := range orgs.gone {
+		if err := a.Store.DropMembership(ctx, tid, u.ID); err != nil {
 			return err
 		}
 	}

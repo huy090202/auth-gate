@@ -205,6 +205,27 @@ func TestDeleteOrgResumes(t *testing.T) {
 	}
 }
 
+// Why: the owner who saw the 502 must be able to finish the deletion with the same DELETE (spec section 4),
+// and the creator's quota must come back exactly once across both runs.
+func TestDeleteOrgResumesOnNextDelete(t *testing.T) {
+	e := newAuthEnv(t)
+	rt := withPortalAPI(e)
+	o, ob := e.owner(t, "o@x.com", "203.0.113.1")
+	m, _ := e.owner(t, "m@x.com", "203.0.113.2")
+	tid := e.orgWith(t, ob, o, orgMember{m, RoleMember})
+	failing := true
+	orgClients(t, rt, tid, []string{id.New(), id.New()}, func(n int) bool { return failing && n == 2 })
+
+	want(t, e.deleteOrg(t, ob, tid, "Acme"), 502, "authgate_unavailable")
+	failing = false
+	want(t, e.deleteOrg(t, ob, tid, "Acme"), 204, "")
+
+	e.wantFinished(t, tid)
+	if n := e.reload(t, o).OrgsCreated; n != 0 {
+		t.Fatalf("orgsCreated = %d, want 0", n)
+	}
+}
+
 // Why: a member's open tab must stop working once deletion starts, and create nothing at AuthGate (Review Focus 3).
 func TestDeletingTenantRefusesWork(t *testing.T) {
 	e := newAuthEnv(t)
@@ -294,6 +315,23 @@ func TestDeleteAccountOnlyMember(t *testing.T) {
 		t.Fatalf("client deletes = %v, want %v", got, wantDel)
 	}
 	e.wantFinished(t, tid)
+	if _, err := e.a.Store.GetUser(context.Background(), o.ID); err == nil {
+		t.Fatal("the account is still there")
+	}
+}
+
+// Why: account deletion refuses every membership but the personal one, so a membership left over from an
+// organisation whose item has expired must be dropped on the way, or the account could never be deleted.
+func TestDeleteAccountDropsALeftoverMembership(t *testing.T) {
+	e := newAuthEnv(t)
+	withPortalAPI(e)
+	o, ob := e.owner(t, "o@x.com", "203.0.113.1")
+	tid := e.orgWith(t, ob, o)
+	if _, err := e.a.Store.DB.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+		TableName: aws.String(e.a.Store.Table), Key: tenantKey(tid)}); err != nil {
+		t.Fatal(err)
+	}
+	want(t, ob.do("DELETE", "/api/me", nil, stepHeader, ob.stepUp("delete-account", "")), 204, "")
 	if _, err := e.a.Store.GetUser(context.Background(), o.ID); err == nil {
 		t.Fatal("the account is still there")
 	}

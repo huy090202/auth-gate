@@ -63,17 +63,33 @@ func TestCreateOrgOverHTTP(t *testing.T) {
 	want(t, b.do("POST", "/api/tenants", map[string]string{"name": "Four"}), 409, "org_quota_exceeded")
 }
 
-// Why: a member who could rename the org or manage people would turn a read role into control of the org.
+// Why: a member who could rename or delete the org, manage people or invites, or read the log would turn a
+// read role into control of the org; an admin who could rename or delete it would out-rank its owners.
 func TestMemberRoutesForbiddenToMembers(t *testing.T) {
 	e := newAuthEnv(t)
 	o, ob := e.owner(t, "o@x.com", "203.0.113.1")
-	m, mb := e.owner(t, "m@x.com", "203.0.113.2")
-	tid := e.orgWith(t, ob, o, orgMember{m, RoleMember})
+	a, ab := e.owner(t, "a@x.com", "203.0.113.2")
+	m, mb := e.owner(t, "m@x.com", "203.0.113.3")
+	tid := e.orgWith(t, ob, o, orgMember{a, RoleAdmin}, orgMember{m, RoleMember})
 	base := "/api/t/" + tid
-	want(t, mb.do("PATCH", base, map[string]string{"name": "Mine"}), 403, "forbidden")
+	inv := ob.do("POST", base+"/invites", map[string]string{"email": "n@x.com", "role": "member"})
+	want(t, inv, 201, "")
+	invPath := base + "/invites/" + inv.str("inviteId")
+	for _, b := range []*browser{mb, ab} {
+		want(t, b.do("PATCH", base, map[string]string{"name": "Mine"}), 403, "forbidden")
+		want(t, b.do("DELETE", base, map[string]string{"name": "Acme"}, stepHeader, b.stepUp("delete-org", tid)), 403, "forbidden")
+	}
 	want(t, mb.do("PATCH", base+"/members/"+o.ID, map[string]string{"role": "member"}), 403, "forbidden")
 	want(t, mb.do("DELETE", base+"/members/"+o.ID, nil), 403, "forbidden")
+	want(t, mb.do("GET", base+"/invites", nil), 403, "forbidden")
+	want(t, mb.do("POST", base+"/invites", map[string]string{"email": "n2@x.com", "role": "member"}), 403, "forbidden")
+	want(t, mb.do("POST", invPath+"/resend", nil), 403, "forbidden")
+	want(t, mb.do("DELETE", invPath, nil), 403, "forbidden")
+	want(t, mb.do("GET", base+"/audit", nil), 403, "forbidden")
 	want(t, mb.do("GET", base+"/members", nil), 200, "")
+	if tn, err := e.a.Store.GetTenant(context.Background(), tid); err != nil || tn.DeletingAt != nil || tn.Name != "Acme" {
+		t.Fatalf("tenant = %+v %v", tn, err)
+	}
 }
 
 // Why: if an admin could demote, remove or out-rank an owner, the owner role would protect nothing.

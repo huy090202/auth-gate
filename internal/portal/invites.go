@@ -151,16 +151,27 @@ func inviteIDOf(r *http.Request) (string, error) {
 	return v, nil
 }
 
+// resendInvite gives an invite a new link. Only an owner may invite an owner
+// (spec section 3), so an owner invite is an owner's to resend; anyone who may
+// manage invites may still revoke it.
 func (a *App) resendInvite(w http.ResponseWriter, r *http.Request) error {
 	ctx := r.Context()
 	_, u := sessionFrom(ctx)
-	t := tenantFrom(ctx)
+	t, actor := tenantFrom(ctx), memberFrom(ctx)
 	if t.Kind != KindOrg {
 		return orgErr(ErrPersonal)
 	}
 	inviteID, err := inviteIDOf(r)
 	if err != nil {
 		return err
+	}
+	old, err := a.Store.findInvite(ctx, t.ID, inviteID)
+	if err != nil {
+		return orgErr(err)
+	}
+	setAuditTarget(ctx, old.Email)
+	if old.Role == RoleOwner && actor.Role != RoleOwner {
+		return errForbidden
 	}
 	if err := a.spendInviteDay(r, t.ID); err != nil {
 		return err
@@ -173,7 +184,6 @@ func (a *App) resendInvite(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return orgErr(err)
 	}
-	setAuditTarget(ctx, inv.Email)
 	a.mailInvite(r, u, t.Name, inv, token)
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"inviteId": inv.ID, "email": inv.Email, "role": inv.Role, "expiresAt": ts(inv.ExpiresAt)})
 	return nil

@@ -240,3 +240,34 @@ func TestInviteDuplicateRefused(t *testing.T) {
 		t.Fatalf("inviteCount = %d", c.Invites)
 	}
 }
+
+// Why: an invite accepted after account deletion's checks must not leave a
+// membership deleted behind the counters' back, nor an org without its owner.
+func TestDeleteAccountRefusesAMembershipAcceptedMeanwhile(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	o := mkUser(t, st, "o@x.com")
+	tn := mkOrg(t, st, o)
+	ann := mkUser(t, st, "ann@x.com") // the read account deletion started from
+	now := time.Now().UTC()
+	inv := mkInvite(tn.ID, "ann@x.com", "h1", now)
+	inv.Role = RoleOwner
+	if err := st.CreateInvite(ctx, inv, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AcceptInvite(ctx, inv, ann, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteAccount(ctx, ann); !errors.Is(err, ErrConflict) {
+		t.Fatalf("delete account = %v, want ErrConflict", err)
+	}
+	if c := orgCounts(t, st, tn.ID); c.Members != 2 || c.Owners != 2 {
+		t.Fatalf("counts = %+v, want 2 members and 2 owners", c)
+	}
+	if m, err := st.GetMembership(ctx, tn.ID, ann.ID); err != nil || m.Role != RoleOwner {
+		t.Fatalf("membership = %+v, %v", m, err)
+	}
+	if _, err := st.GetUser(ctx, ann.ID); err != nil {
+		t.Fatalf("user gone: %v", err)
+	}
+}

@@ -264,7 +264,9 @@ func (st *Store) ListInvites(ctx context.Context, tenantID string, now time.Time
 }
 
 // ResendInvite gives an invite a new token and a new seven days. The old token
-// stops working in the same transaction. The count is unchanged.
+// stops working in the same transaction. The count is unchanged. The tenant
+// must not be marked deletingAt when it commits, so a resend in flight cannot
+// write an invite after the deletion cleared them: that gives ErrTenantDeleting.
 func (st *Store) ResendInvite(ctx context.Context, tenantID, inviteID, newHash string, now time.Time) (Invite, error) {
 	if _, err := st.orgTenant(ctx, tenantID); err != nil {
 		return Invite{}, err
@@ -285,8 +287,15 @@ func (st *Store) ResendInvite(ctx context.Context, tenantID, inviteID, newHash s
 			UpdateExpression:          aws.String("SET tokenHash = :new, expiresAt = :exp"),
 			ConditionExpression:       aws.String("tokenHash = :old"),
 			ExpressionAttributeValues: item{":new": s(newHash), ":exp": s(ts(next.ExpiresAt)), ":old": s(old.TokenHash)},
+		}},
+		types.TransactWriteItem{ConditionCheck: &types.ConditionCheck{
+			TableName: aws.String(st.Table), Key: tenantKey(tenantID),
+			ConditionExpression: aws.String("attribute_not_exists(deletingAt)"),
 		}})
 	if dynamo.IsConditionFailed(err) {
+		if _, terr := st.orgTenant(ctx, tenantID); terr != nil {
+			return Invite{}, terr
+		}
 		if _, ferr := st.findInvite(ctx, tenantID, inviteID); ferr != nil {
 			return Invite{}, ferr
 		}
@@ -338,9 +347,10 @@ func (st *Store) PeekInvite(ctx context.Context, tenantID, tokenHash string, now
 
 // AcceptInvite spends an invite for u: it deletes the invite and its invitee
 // item, moves the tenant's counters (members up, invites down, owners up for
-// an owner invite) and writes the membership pair, in one transaction. u must
-// have the invited address, else ErrInviteNotFound. Other failures give
-// ErrMembersFull, ErrTenantDeleting, ErrPersonal or ErrAlreadyMember.
+// an owner invite), writes the membership pair and raises the user's
+// membershipVersion, in one transaction. u must have the invited address, else
+// ErrInviteNotFound. Other failures give ErrMembersFull, ErrTenantDeleting,
+// ErrPersonal or ErrAlreadyMember.
 func (st *Store) AcceptInvite(ctx context.Context, inv Invite, u User, now time.Time) error {
 	if NormalizeEmail(u.Email) != inv.Email {
 		return ErrInviteNotFound
@@ -368,7 +378,15 @@ func (st *Store) AcceptInvite(ctx context.Context, inv Invite, u User, now time.
 			ExpressionAttributeValues: vals,
 		}},
 		types.TransactWriteItem{Put: &types.Put{TableName: aws.String(st.Table), Item: mi, ConditionExpression: aws.String("attribute_not_exists(pk)")}},
-		types.TransactWriteItem{Put: &types.Put{TableName: aws.String(st.Table), Item: umi}})
+		types.TransactWriteItem{Put: &types.Put{TableName: aws.String(st.Table), Item: umi}},
+		// Account deletion conditions its user-item delete on this version, so
+		// a membership written after it listed them stops it.
+		types.TransactWriteItem{Update: &types.Update{
+			TableName: aws.String(st.Table), Key: userKey(u.ID),
+			UpdateExpression:          aws.String("ADD membershipVersion :one"),
+			ConditionExpression:       aws.String(exists),
+			ExpressionAttributeValues: item{":one": n(1)},
+		}})
 	if dynamo.IsConditionFailed(err) {
 		return st.explainAcceptFailure(ctx, inv, u, now)
 	}

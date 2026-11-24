@@ -123,6 +123,27 @@ func TestAdminCannotInviteOwner(t *testing.T) {
 	want(t, ob.do("POST", path, map[string]string{"email": "nope", "role": "member"}), 400, "invalid_email")
 }
 
+// Why: a resend mails a fresh owner link; an admin who could resend one could still hand out ownership.
+func TestAdminCannotResendOwnerInvite(t *testing.T) {
+	e := newAuthEnv(t)
+	o, ob := e.owner(t, "o@x.com", "203.0.113.1")
+	a, ab := e.owner(t, "a@x.com", "203.0.113.2")
+	tid := e.orgWith(t, ob, o, orgMember{a, RoleAdmin})
+	path := "/api/t/" + tid + "/invites"
+	ownerInv := ob.do("POST", path, map[string]string{"email": "n@x.com", "role": "owner"})
+	want(t, ownerInv, 201, "")
+	memberInv := ob.do("POST", path, map[string]string{"email": "n2@x.com", "role": "member"})
+	want(t, memberInv, 201, "")
+	before := len(e.mails(t))
+	want(t, ab.do("POST", path+"/"+ownerInv.str("inviteId")+"/resend", nil), 403, "forbidden")
+	if len(e.mails(t)) != before {
+		t.Fatal("a refused resend sent mail")
+	}
+	want(t, ab.do("POST", path+"/"+memberInv.str("inviteId")+"/resend", nil), 200, "")
+	want(t, ob.do("POST", path+"/"+ownerInv.str("inviteId")+"/resend", nil), 200, "")
+	want(t, ab.do("DELETE", path+"/"+ownerInv.str("inviteId"), nil), 204, "")
+}
+
 // Why: inviting a member would mail them a link that can only fail, and hint at who is in the organisation.
 func TestInviteAlreadyMember(t *testing.T) {
 	e := newAuthEnv(t)

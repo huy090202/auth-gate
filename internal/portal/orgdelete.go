@@ -73,11 +73,13 @@ func (a *App) auditOrgDelete(r *http.Request, u User, tenantID string) {
 
 // finishOrgDeletion runs steps 2 to 7 of spec section 4 on a tenant marked
 // deletingAt. Every step skips what is already gone, so it may run any number
-// of times: the clients at AuthGate, the invites, every other member's
-// membership, the store's end of the tenant (FinishDeletion), and the actor's
-// membership last, so the actor can still run it again if anything before
-// fails. Each member is mailed org-deleted once their membership is dropped.
-// An AuthGate failure is wrapped around errAuthGateDown.
+// of times: the clients at AuthGate, the invites, the store's end of the tenant
+// (FinishDeletion), every other member's membership, and the actor's membership
+// last. FinishDeletion comes before any membership is dropped: it needs none of
+// them, and a run that stops (or a second run at the same time) then leaves
+// only memberships, which each holder's next workspace list finishes. Each
+// member is mailed org-deleted once their membership is dropped. An AuthGate
+// failure is wrapped around errAuthGateDown.
 func (a *App) finishOrgDeletion(ctx context.Context, t Tenant, actorID string) error {
 	members, err := a.Store.tenantMemberships(ctx, t.ID)
 	if err != nil {
@@ -100,6 +102,9 @@ func (a *App) finishOrgDeletion(ctx context.Context, t Tenant, actorID string) e
 		a.mailUser(ctx, userID, "org-deleted", map[string]string{"org": t.Name})
 		return nil
 	}
+	if err := a.Store.FinishDeletion(ctx, t, a.now()); err != nil {
+		return err
+	}
 	for _, m := range members {
 		if m.UserID == actorID {
 			continue
@@ -107,9 +112,6 @@ func (a *App) finishOrgDeletion(ctx context.Context, t Tenant, actorID string) e
 		if err := drop(m.UserID); err != nil {
 			return err
 		}
-	}
-	if err := a.Store.FinishDeletion(ctx, t, a.now()); err != nil {
-		return err
 	}
 	// Always, even when the tenant's side was not listed: a user side left
 	// behind would make every workspace list run this again.
