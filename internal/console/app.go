@@ -10,6 +10,7 @@ import (
 
 	"github.com/huy090202/auth-gate/internal/platform/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/password"
+	"github.com/huy090202/auth-gate/internal/platform/portalapi"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 	"github.com/huy090202/auth-gate/internal/platform/viewerip"
 	"github.com/huy090202/auth-gate/internal/platform/webapi"
@@ -22,6 +23,7 @@ type Deps struct {
 	Limiter  *ratelimit.Limiter
 	AuthGate *authgate.Client
 	Tokens   *authgate.Verifier
+	Portal   *portalapi.Client
 	Now      func() time.Time
 }
 
@@ -54,6 +56,7 @@ func (a *App) handler() http.Handler {
 	a.meRoutes(mux)
 	a.stepUpRoutes(mux)
 	a.clientRoutes(mux)
+	a.operatorRoutes(mux)
 	a.adminRoutes(mux)
 	mux.HandleFunc("/api/", notFound)
 	return webapi.NoStore(webapi.RequireJSON(mux))

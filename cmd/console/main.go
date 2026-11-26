@@ -20,6 +20,7 @@ import (
 	"github.com/huy090202/auth-gate/internal/platform/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/dynamo"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
+	"github.com/huy090202/auth-gate/internal/platform/portalapi"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 	"github.com/huy090202/auth-gate/internal/platform/ssmx"
 )
@@ -48,9 +49,9 @@ func main() {
 		}
 	}
 	var awsCfg aws.Config
-	var adminKey, clientKey string
+	var adminKey, clientKey, operatorKey string
 	if cfg.Dev {
-		adminKey, clientKey = os.Getenv("ADMIN_KEY"), os.Getenv("CLIENT_KEY")
+		adminKey, clientKey, operatorKey = os.Getenv("ADMIN_KEY"), os.Getenv("CLIENT_KEY"), os.Getenv("PORTAL_OPERATOR_KEY")
 	} else {
 		awsCfg, err = awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
 		if err != nil {
@@ -58,6 +59,7 @@ func main() {
 		}
 		adminKey = mustSecret(ctx, awsCfg, cfg.AdminKeyParam)
 		clientKey = mustSecret(ctx, awsCfg, cfg.ClientKeyParam)
+		operatorKey = mustSecret(ctx, awsCfg, cfg.PortalOperatorKeyParam)
 	}
 	httpc := &http.Client{Timeout: authgate.Timeout}
 	// authgate.Client and Verifier copy this client and refuse redirects themselves.
@@ -67,6 +69,7 @@ func main() {
 		Limiter:  &ratelimit.Limiter{DB: db, Table: cfg.Table, TTL: time.Hour},
 		AuthGate: &authgate.Client{BaseURL: cfg.AuthGateBaseURL, ClientKey: clientKey, AdminKey: adminKey, HTTP: httpc},
 		Tokens:   &authgate.Verifier{BaseURL: cfg.AuthGateBaseURL, Audience: cfg.AuthGateClientID, HTTP: httpc},
+		Portal:   &portalapi.Client{BaseURL: cfg.PortalURL, OperatorKey: operatorKey, HTTP: httpc},
 		Now:      time.Now,
 	})
 

@@ -22,10 +22,12 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 	full := map[string]string{
 		"TABLE_NAME": "t", "AUTHGATE_BASE_URL": "https://a", "AUTHGATE_CLIENT_ID": "c",
 		"ADMIN_KEY_PARAM": "/a", "CLIENT_KEY_PARAM": "/c", "ORIGIN_VERIFY_PARAM": "/o",
+		"PORTAL_URL": "https://p", "PORTAL_CLIENT_ID": "pc", "PORTAL_OPERATOR_KEY_PARAM": "/p",
 	}
 	dev := map[string]string{
 		"CONSOLE_DEV": "1", "TABLE_NAME": "t", "AUTHGATE_BASE_URL": "http://a", "AUTHGATE_CLIENT_ID": "c",
 		"ADMIN_KEY": "k", "CLIENT_KEY": "k",
+		"PORTAL_URL": "http://p", "PORTAL_CLIENT_ID": "pc", "PORTAL_OPERATOR_KEY": "k",
 	}
 	without := func(base map[string]string, drop string) map[string]string {
 		m := map[string]string{}
@@ -48,7 +50,11 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 		{"stage without admin key param", without(full, "ADMIN_KEY_PARAM"), false},
 		{"stage without client key param", without(full, "CLIENT_KEY_PARAM"), false},
 		{"stage without origin param", without(full, "ORIGIN_VERIFY_PARAM"), false},
+		{"stage without portal url", without(full, "PORTAL_URL"), false},
+		{"stage without portal client id", without(full, "PORTAL_CLIENT_ID"), false},
+		{"stage without operator key param", without(full, "PORTAL_OPERATOR_KEY_PARAM"), false},
 		{"dev complete", dev, true},
+		{"dev without operator key", without(dev, "PORTAL_OPERATOR_KEY"), false},
 		{"dev without admin key", without(dev, "ADMIN_KEY"), false},
 		{"dev without client key", without(dev, "CLIENT_KEY"), false},
 		{"dev without table", without(dev, "TABLE_NAME"), false},

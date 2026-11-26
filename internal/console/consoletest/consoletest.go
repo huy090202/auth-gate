@@ -22,6 +22,8 @@ import (
 	"github.com/huy090202/auth-gate/internal/console"
 	"github.com/huy090202/auth-gate/internal/platform/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/dynamo/dynamotest"
+	"github.com/huy090202/auth-gate/internal/platform/id"
+	"github.com/huy090202/auth-gate/internal/platform/portalapi"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 )
 
@@ -88,6 +90,9 @@ type Harness struct {
 	AuthGate *authgate.Client
 	Tokens   *authgate.Verifier
 
+	// Portal is the fake operator API the Console calls.
+	Portal *PortalFake
+
 	Passkey Passkey
 }
 
@@ -128,8 +133,9 @@ func New(t *testing.T) *Harness {
 		t.Fatalf("register the console client: %v", err)
 	}
 
+	portal := newPortalFake(t)
 	h := &Harness{
-		T: t, Clock: clock,
+		T: t, Clock: clock, Portal: portal,
 		AuthGateURL: ag.URL, Clients: clients, ClientID: c.ID, ClientKey: key, Signer: signer,
 		AuthGate: &authgate.Client{BaseURL: ag.URL, ClientKey: key, AdminKey: AdminKey, HTTP: ag.Client()},
 		Tokens:   &authgate.Verifier{BaseURL: ag.URL, Audience: c.ID, HTTP: ag.Client(), Now: clock.Now},
@@ -145,11 +151,13 @@ func New(t *testing.T) *Harness {
 		// the same under.
 		Config: console.Config{
 			Table: conTable, AuthGateBaseURL: ag.URL, AuthGateClientID: c.ID,
+			PortalURL: portal.Server.URL, PortalClientID: id.New(),
 		},
 		DB:       db,
 		Limiter:  &ratelimit.Limiter{DB: db, Table: conTable, TTL: time.Hour, Now: clock.Now},
 		AuthGate: h.AuthGate,
 		Tokens:   h.Tokens,
+		Portal:   &portalapi.Client{BaseURL: portal.Server.URL, OperatorKey: PortalKey, HTTP: portal.Server.Client()},
 		Now:      clock.Now,
 	}
 	h.Console = console.New(h.Deps)
