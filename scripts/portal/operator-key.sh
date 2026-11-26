@@ -3,8 +3,8 @@
 # which the Portal checks on /api/operator/* (header x-operator-key) and the Console sends. It is
 # never overwritten and never printed; prints `created` or `exists`. Only ParameterNotFound means
 # absent. The value goes openssl -> jq stdin -> 0600 file -> --cli-input-json, never through any argv.
-# Run once per stage, before the first Portal or Console deploy that needs it (CI's preflight.sh
-# fails without it).
+# Run once per stage, before the Portal's first deploy: the Portal's Lambda reads the key at cold
+# start and answers 5xx without it. The Console needs it too, and CI's preflight.sh fails without it.
 set -euo pipefail
 # shellcheck source=lib.sh
 # shellcheck source-path=SCRIPTDIR

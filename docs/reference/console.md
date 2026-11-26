@@ -154,10 +154,10 @@ stage, the Portal with both passes done (its `AuthGateClientId` output is set), 
 must exist (`AWS_PROFILE=default scripts/portal/operator-key.sh`, under the admin profile; it creates the SSM
 SecureString once and never overwrites it). `deploy.sh` reads the Portal's `BaseUrl` and
 `AuthGateClientId` outputs and passes them as `PortalUrl` and `PortalClientId`, and stops when
-either is missing. On a new stage the order is: Portal (both passes), `operator-key.sh`, then the
-Console. If the [permissions boundary](deploy.md#permissions-boundary) is new, follow the order
+either is missing. On a new stage the order is: `operator-key.sh` first (the Portal's Lambda needs it at cold start),
+then the Portal (both passes), then the Console. If the [permissions boundary](deploy.md#permissions-boundary) is new, follow the order
 there first. The boundary must also carry the Console's avatar bucket (`avatars/*` and `pending/*`
-of `auth-gate-console-*-avatars-*`): rerun `00-deployer.sh` under the admin profile before the
+of `auth-gate-console-<stage>-avatars-<account>`): rerun `00-deployer.sh` under the admin profile before the
 deploy.
 
 1. `deploy.sh`, first pass, under the admin profile ([First deploy of a

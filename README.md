@@ -80,7 +80,8 @@ are React, Vite and Mantine, in English and Vietnamese.
   long-lived AWS key, and a permissions boundary caps every role the deployer can create
   ([deploy and CI](docs/reference/deploy.md)).
 - Rollout of the operator's side, before its merge, under the admin profile: run
-  `AWS_PROFILE=default scripts/portal/operator-key.sh`, then rerun `scripts/setup-and-deploy/00-deployer.sh`
+  `AWS_PROFILE=default scripts/portal/operator-key.sh`, then rerun
+  `ADMIN_PROFILE=default scripts/setup-and-deploy/00-deployer.sh`
   ([deploy and CI](docs/reference/deploy.md#before-the-operators-side-merges)). CI deploys the Portal
   before the Console.
 - Secrets move between scripts and SSM through 0600 files, never on a command line or in a log.

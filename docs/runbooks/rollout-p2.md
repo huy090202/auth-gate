@@ -1,9 +1,8 @@
 # Rollout of P2 (the Portal)
 
-> Since the operator's side, a new stage also needs `AWS_PROFILE=default scripts/portal/operator-key.sh`
-> (create the operator key; it prints `created` or `exists`) after step 4 and before the Portal's
-> smoke, because the Portal's Lambda refuses to start without it. The Console deploys after the
-> Portal. See [Deploy and CI](../reference/deploy.md#first-deploy-of-a-stage).
+> Since the operator's side, a new stage needs `AWS_PROFILE=default scripts/portal/operator-key.sh`
+> (create the operator key; it prints `created` or `exists`) before step 4, because the Portal's
+> Lambda refuses to start without it and answers 5xx. The Console deploys after the Portal. See [Deploy and CI](../reference/deploy.md#first-deploy-of-a-stage).
 
 This branch adds the Portal and widens the permissions boundary and the deployer policy. It needs a
 person at an admin profile, in this order, from the `feat-self-service` worktree, before the merge.

@@ -135,11 +135,11 @@ email. No route returns a password hash, a recovery code, a token or a session.
 
 | Route | What it does |
 | --- | --- |
-| `GET /api/operator/tenants?cursor=` | 50 tenants per page, newest first. Each has `tenantId`, `name`, `kind`, `createdAt`, `memberCount`, `creatorEmail`, `suspendedAt` and `deletingAt`. |
+| `GET /api/operator/tenants?cursor=` | `400 invalid_cursor` for a bad cursor. 50 tenants per page, newest first. Each has `tenantId`, `name`, `kind`, `createdAt`, `memberCount`, `creatorEmail`, `suspendedAt` and `deletingAt`. |
 | `GET /api/operator/tenants/{tid}` | `{tenant, members, pendingInvites}`; a member has `userId`, `displayName`, `email`, `role` and `joinedAt`. `404 not_found`. |
-| `GET /api/operator/tenants/{tid}/audit?cursor=` | The tenant's audit, in the shape of `GET /t/{tenantId}/audit`. |
+| `GET /api/operator/tenants/{tid}/audit?cursor=` | The tenant's audit, in the shape of `GET /t/{tenantId}/audit`; `400 invalid_cursor` for a bad cursor. |
 | `POST /api/operator/tenants/{tid}/suspend`, `/unsuspend` | Sets or clears `suspendedAt`, writes the tenant audit and emails the owners, only when the state changed. Answers the tenant. `409 tenant_deleting` for a tenant being deleted. |
-| `POST /api/operator/tenants/{tid}/audit` | Body `{action: "tenant-quota", from, to}`. Writes the tenant audit only; `204`. |
+| `POST /api/operator/tenants/{tid}/audit` | Body `{action: "tenant-quota", from, to}`. Writes the tenant audit only; `204`. `400 invalid_action` for any other action or a missing or negative number. |
 | `GET /api/operator/users?email=` | Exact match, or `404 not_found`. `userId`, `email`, `displayName`, `emailVerifiedAt`, `suspendedAt`, `factorCount`, `lastSignInAt` and `tenants` (id, name, kind, role). |
 | `POST /api/operator/users/{uid}/suspend`, `/unsuspend` | Suspend sets `suspendedAt` and bumps `sessionEpoch`. Both email the user when the state changed and the address is verified. Answer the user as above. |
 | `POST /api/operator/users/{uid}/resend-verification` | `200 {"status":"sent"}`; `409 already_verified` for a verified user. |
@@ -228,8 +228,9 @@ policies must carry the Portal's rights first ([Rollout of P2](../runbooks/rollo
    never touches `/credo/auth-gate/<stage>/portal-key`, which belongs to AuthGate.
 
 The operator key (`/credo/auth-gate-portal/<stage>/operator-key`) is created once per stage by
-`scripts/portal/operator-key.sh`, under the admin profile (`AWS_PROFILE=default`). The Portal and the Console both read it, so
-the Portal's stack needs it before its deploy; CI's preflight fails without it.
+`scripts/portal/operator-key.sh`, under the admin profile (`AWS_PROFILE=default`). The Portal reads it
+at cold start, so on a new stage run the script before the Portal's first `deploy.sh`: without the key
+the Portal answers 5xx. The Console reads it too, and CI's preflight fails without it.
 
 CI runs `deploy.sh` and `smoke.sh` before the Console's ([Continuous deploy](deploy.md#continuous-deploy)),
 with `EMAIL_FROM` and `TURNSTILE_SITE_KEY` from the repository variables `PORTAL_EMAIL_FROM` and

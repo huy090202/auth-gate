@@ -165,12 +165,12 @@ AWS_PROFILE=default scripts/setup-and-deploy/03-deploy.sh
 AWS_PROFILE=default scripts/console/deploy.sh
 ```
 
-The Console reads the Portal's outputs and the operator key, so the order on a new stage is the
-Portal (both passes, [Rollout of P2](../runbooks/rollout-p2.md)), then `AWS_PROFILE=default scripts/portal/operator-key.sh`
-(under the admin profile; it creates `/credo/auth-gate-portal/<stage>/operator-key` if absent, never
-overwrites it, and prints `created` or `exists`), then the Console as above. The Portal's Lambda
-reads the key at cold start and refuses to start without it, so create it before the Portal's smoke,
-which calls the function.
+The Portal's Lambda reads the operator key at cold start and refuses to start without it: without the
+key the Portal answers 5xx. The Console also reads it and the Portal's outputs. So the order on a new
+stage is one: first `AWS_PROFILE=default scripts/portal/operator-key.sh` (under the admin profile; it
+creates `/credo/auth-gate-portal/<stage>/operator-key` if absent, never overwrites it, and prints
+`created` or `exists`), then the Portal (both passes, [Rollout of P2](../runbooks/rollout-p2.md)),
+then the Console as above.
 
 Every later deploy, including the Console's second pass, runs as the deployer.
 
