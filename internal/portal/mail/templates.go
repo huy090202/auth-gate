@@ -8,13 +8,29 @@ var Kinds = []string{
 	"email-change-confirm", "email-changed", "password-changed", "factor-added",
 	"factor-removed", "recovery-code-used", "account-locked", "account-deleted",
 	"org-invite", "org-removed", "org-role-changed", "org-deleted",
+	"tenant-suspended", "tenant-unsuspended", "account-suspended", "account-unsuspended",
 }
 
 // linkKinds are the kinds whose whole point is a link.
 var linkKinds = map[string]bool{"verify": true, "reset": true, "factor-reset-confirm": true, "email-change-confirm": true, "org-invite": true}
 
 // orgKinds are the only kinds that take the typed vars org, inviter and role.
-var orgKinds = map[string]bool{"org-invite": true, "org-removed": true, "org-role-changed": true, "org-deleted": true}
+var orgKinds = map[string]bool{
+	"org-invite": true, "org-removed": true, "org-role-changed": true, "org-deleted": true,
+	"tenant-suspended": true, "tenant-unsuspended": true,
+}
+
+// operatorKinds are the notices an AuthGate administrator's action causes. They offer no
+// sign-in button and no "change your password" footer: the reader did nothing wrong.
+var operatorKinds = map[string]bool{
+	"tenant-suspended": true, "tenant-unsuspended": true, "account-suspended": true, "account-unsuspended": true,
+}
+
+// operatorFooter closes the operator notices; the support line follows it.
+var operatorFooter = map[string]string{
+	"en": "This change was made by the AuthGate administrator.",
+	"vi": "Thay đổi này do quản trị viên AuthGate thực hiện.",
+}
 
 // needsRole are the org kinds whose text names a role.
 var needsRole = map[string]bool{"org-invite": true, "org-role-changed": true}
@@ -92,6 +108,22 @@ var whyLine = map[string]string{
 }
 
 var templates = map[string]map[string]tpl{
+	"tenant-suspended": {
+		"en": {"{org} was suspended", "The workspace {org} was suspended. Its clients stopped working and nothing in it can be changed until it is restored."},
+		"vi": {"{org} đã bị tạm ngưng", "Không gian {org} đã bị tạm ngưng. Các client của nó đã ngừng hoạt động và không thể thay đổi gì trong đó cho đến khi được khôi phục."},
+	},
+	"tenant-unsuspended": {
+		"en": {"{org} was restored", "The workspace {org} was restored. Its clients work again and it can be changed as before."},
+		"vi": {"{org} đã được khôi phục", "Không gian {org} đã được khôi phục. Các client của nó hoạt động trở lại và có thể thay đổi như trước."},
+	},
+	"account-suspended": {
+		"en": {"Your account was suspended", "Your account was suspended and you were signed out everywhere. You cannot sign in until it is restored."},
+		"vi": {"Tài khoản của bạn đã bị tạm ngưng", "Tài khoản của bạn đã bị tạm ngưng và bạn đã bị đăng xuất khỏi mọi nơi. Bạn không thể đăng nhập cho đến khi tài khoản được khôi phục."},
+	},
+	"account-unsuspended": {
+		"en": {"Your account was restored", "Your account was restored. You can sign in again."},
+		"vi": {"Tài khoản của bạn đã được khôi phục", "Tài khoản của bạn đã được khôi phục. Bạn có thể đăng nhập lại."},
+	},
 	"verify": {
 		"en": {"Confirm your email address", "Open this link within 24 hours to confirm your email address and finish creating your account:"},
 		"vi": {"Xác nhận địa chỉ email của bạn", "Hãy mở liên kết này trong vòng 24 giờ để xác nhận địa chỉ email và hoàn tất việc tạo tài khoản:"},
@@ -161,3 +193,6 @@ var templates = map[string]map[string]tpl{
 		"vi": {"{org} đã bị xóa", "Tổ chức {org} và các client của tổ chức này đã bị xóa."},
 	},
 }
+
+// PersonalLabel is the name a personal workspace goes by in a notice, in the reader's language.
+var PersonalLabel = map[string]string{"en": "Personal workspace", "vi": "Không gian cá nhân"}

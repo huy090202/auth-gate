@@ -3,11 +3,14 @@ package portal
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/huy090202/auth-gate/internal/platform/dynamo"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 	"github.com/huy090202/auth-gate/internal/platform/webapi"
+	pmail "github.com/huy090202/auth-gate/internal/portal/mail"
 )
 
 // operatorLimit is the one bucket of the operator key: 60 at once, then one per second.
@@ -27,6 +30,13 @@ func (a *App) mountOperator(mux *http.ServeMux) {
 	mux.Handle("GET /api/operator/tenants/{tid}", guard(a.operatorTenant))
 	mux.Handle("GET /api/operator/tenants/{tid}/audit", guard(a.operatorTenantAudit))
 	mux.Handle("GET /api/operator/users", guard(a.operatorUser))
+	mux.Handle("POST /api/operator/tenants/{tid}/suspend", guard(a.operatorSetTenantSuspended(true)))
+	mux.Handle("POST /api/operator/tenants/{tid}/unsuspend", guard(a.operatorSetTenantSuspended(false)))
+	mux.Handle("POST /api/operator/tenants/{tid}/audit", guard(a.operatorQuotaAudit))
+	mux.Handle("POST /api/operator/users/{uid}/suspend", guard(a.operatorSetUserSuspended(true)))
+	mux.Handle("POST /api/operator/users/{uid}/unsuspend", guard(a.operatorSetUserSuspended(false)))
+	mux.Handle("POST /api/operator/users/{uid}/resend-verification", guard(a.operatorResendVerification))
+	mux.Handle("POST /api/operator/users/{uid}/factor-reset", guard(a.operatorFactorReset))
 }
 
 func (a *App) limitOperator(next http.Handler) http.Handler {
@@ -146,6 +156,11 @@ func (a *App) operatorUser(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	return a.writeOperatorUser(w, r, u)
+}
+
+// writeOperatorUser answers the operator's view of one user.
+func (a *App) writeOperatorUser(w http.ResponseWriter, r *http.Request, u User) error {
 	f, err := a.AuthGate.Factors(r.Context(), u.ID)
 	if err != nil {
 		return webapi.AuthGateError(err)
@@ -184,5 +199,176 @@ func (a *App) operatorUser(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// operatorGetUser reads the user in the path, or answers 404.
+func (a *App) operatorGetUser(r *http.Request) (User, error) {
+	u, err := a.Store.GetUser(r.Context(), r.PathValue("uid"))
+	if errors.Is(err, ErrUserNotFound) {
+		return User{}, apiErr(http.StatusNotFound, "not_found")
+	}
+	return u, err
+}
+
+const operatorActorName = "AuthGate administrator"
+
+// auditOperator writes one entry of the operator's action in a tenant's log.
+func (a *App) auditOperator(r *http.Request, tid, action string, detail map[string]string) {
+	a.writeAudit(r, AuditEntry{
+		TenantID: tid, ActorID: "operator", ActorName: operatorActorName, Action: action,
+		Target: tid, Result: "success", IP: a.auditIP(r), Detail: detail, At: a.now(),
+	})
+}
+
+// operatorSetTenantSuspended suspends or restores a workspace. Only a call that changed the state
+// writes the audit entry and mails the owners, so a repeated click is a quiet 200.
+func (a *App) operatorSetTenantSuspended(suspend bool) func(http.ResponseWriter, *http.Request) error {
+	action, kind := "tenant-unsuspend", "tenant-unsuspended"
+	if suspend {
+		action, kind = "tenant-suspend", "tenant-suspended"
+	}
+	return func(w http.ResponseWriter, r *http.Request) error {
+		t, changed, err := a.Store.SetTenantSuspended(r.Context(), r.PathValue("tid"), suspend, a.now())
+		switch {
+		case errors.Is(err, ErrTenantNotFound):
+			return apiErr(http.StatusNotFound, "not_found")
+		case errors.Is(err, ErrTenantDeleting):
+			return apiErr(http.StatusConflict, "tenant_deleting")
+		case err != nil:
+			return err
+		}
+		if changed {
+			a.auditOperator(r, t.ID, action, nil)
+			if err := a.mailTenantOwners(r, t, kind); err != nil {
+				return err
+			}
+		}
+		v, err := a.operatorTenantView(r, t)
+		if err != nil {
+			return err
+		}
+		httpx.WriteJSON(w, http.StatusOK, v)
+		return nil
+	}
+}
+
+// mailTenantOwners sends the kind to every owner of t, naming the workspace in the owner's language.
+func (a *App) mailTenantOwners(r *http.Request, t Tenant, kind string) error {
+	ms, err := a.Store.tenantMemberships(r.Context(), t.ID)
+	if err != nil {
+		return err
+	}
+	for _, m := range ms {
+		if m.Role != RoleOwner {
+			continue
+		}
+		o, err := a.Store.GetUser(r.Context(), m.UserID)
+		if errors.Is(err, ErrUserNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		org := t.Name
+		if t.Kind != KindOrg {
+			org = pmail.PersonalLabel[o.Lang]
+		}
+		a.mailBestEffort(r.Context(), pmail.Message{To: o.Email, Lang: o.Lang, Kind: kind, Vars: map[string]string{"org": org}})
+	}
+	return nil
+}
+
+// operatorQuotaAudit records a client quota change AuthGate made. It writes the audit only.
+func (a *App) operatorQuotaAudit(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		Action   string `json:"action"`
+		From, To *int
+	}
+	if err := webapi.DecodeBody(r, &in); err != nil {
+		return err
+	}
+	if in.Action != "tenant-quota" || in.From == nil || in.To == nil || *in.From < 0 || *in.To < 0 {
+		return apiErr(http.StatusBadRequest, "invalid_action")
+	}
+	t, err := a.operatorGetTenant(r)
+	if err != nil {
+		return err
+	}
+	a.auditOperator(r, t.ID, in.Action, map[string]string{"from": strconv.Itoa(*in.From), "to": strconv.Itoa(*in.To)})
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// operatorSetUserSuspended suspends a user and signs them out everywhere (the epoch bump), or restores
+// them. Only a call that changed the state mails, so a repeated click is a quiet 200.
+func (a *App) operatorSetUserSuspended(suspend bool) func(http.ResponseWriter, *http.Request) error {
+	kind, expr, cond := "account-unsuspended", "REMOVE suspendedAt", "attribute_exists(suspendedAt)"
+	if suspend {
+		kind, expr, cond = "account-suspended", "SET suspendedAt = :t ADD sessionEpoch :one", "attribute_not_exists(suspendedAt)"
+	}
+	return func(w http.ResponseWriter, r *http.Request) error {
+		ctx := r.Context()
+		u, err := a.operatorGetUser(r)
+		if err != nil {
+			return err
+		}
+		var vals item
+		if suspend {
+			vals = item{":t": s(ts(a.now())), ":one": n(1)}
+		}
+		err = a.Store.update(ctx, u.ID, expr, cond, nil, vals)
+		changed := err == nil
+		if err != nil && !dynamo.IsConditionFailed(err) {
+			return err
+		}
+		// Re-read: the answer shows the stored state, whoever changed it.
+		if u, err = a.Store.GetUser(ctx, u.ID); err != nil {
+			return err
+		}
+		// An unverified address was never confirmed, so it gets no mail.
+		if changed && u.EmailVerifiedAt != nil {
+			a.mailBestEffort(ctx, pmail.Message{To: u.Email, Lang: u.Lang, Kind: kind})
+		}
+		return a.writeOperatorUser(w, r, u)
+	}
+}
+
+// operatorResendVerification mails a fresh verify link to an unverified user.
+func (a *App) operatorResendVerification(w http.ResponseWriter, r *http.Request) error {
+	u, err := a.operatorGetUser(r)
+	if err != nil {
+		return err
+	}
+	if u.EmailVerifiedAt != nil {
+		return apiErr(http.StatusConflict, "already_verified")
+	}
+	if err := a.sendVerify(r.Context(), u); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+	return nil
+}
+
+// operatorFactorReset starts the lost-factor wait directly: the operator has confirmed the person, so
+// there is no confirm link. A reset already pending is kept and not mailed again.
+func (a *App) operatorFactorReset(w http.ResponseWriter, r *http.Request) error {
+	u, err := a.operatorGetUser(r)
+	if err != nil {
+		return err
+	}
+	if !mailable(u) {
+		return apiErr(http.StatusConflict, "not_mailable")
+	}
+	now := a.now()
+	fr, created, err := a.Store.PutFactorReset(r.Context(), u.ID, now, now.Add(factorResetWait))
+	if err != nil {
+		return err
+	}
+	if created {
+		a.mailBestEffort(r.Context(), pmail.Message{To: u.Email, Lang: u.Lang, Kind: "factor-reset-started",
+			Vars: map[string]string{"until": fr.DueAt.UTC().Format(untilLayout)}})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"dueAt": ts(fr.DueAt)})
 	return nil
 }

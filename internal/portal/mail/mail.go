@@ -264,7 +264,10 @@ func Render(m Message, s Site) (Rendered, error) {
 		if f, ok := orgFooters[m.Kind]; ok {
 			v.Footer = support{Pre: f[m.Lang]}
 		}
-		if m.Kind != "account-deleted" {
+		if operatorKinds[m.Kind] {
+			v.Footer = support{Pre: operatorFooter[m.Lang]}
+		}
+		if m.Kind != "account-deleted" && !operatorKinds[m.Kind] {
 			signIn := s.BaseURL + "/sign-in"
 			v.Button = &button{Label: signInLabel[m.Lang], URL: signIn}
 			textButton = v.Button.Label + ": " + signIn
