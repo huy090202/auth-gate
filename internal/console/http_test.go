@@ -27,7 +27,6 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 	dev := map[string]string{
 		"CONSOLE_DEV": "1", "TABLE_NAME": "t", "AUTHGATE_BASE_URL": "http://a", "AUTHGATE_CLIENT_ID": "c",
 		"ADMIN_KEY": "k", "CLIENT_KEY": "k",
-		"PORTAL_URL": "http://p", "PORTAL_CLIENT_ID": "pc", "PORTAL_OPERATOR_KEY": "k",
 	}
 	without := func(base map[string]string, drop string) map[string]string {
 		m := map[string]string{}
@@ -54,7 +53,6 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 		{"stage without portal client id", without(full, "PORTAL_CLIENT_ID"), false},
 		{"stage without operator key param", without(full, "PORTAL_OPERATOR_KEY_PARAM"), false},
 		{"dev complete", dev, true},
-		{"dev without operator key", without(dev, "PORTAL_OPERATOR_KEY"), false},
 		{"dev without admin key", without(dev, "ADMIN_KEY"), false},
 		{"dev without client key", without(dev, "CLIENT_KEY"), false},
 		{"dev without table", without(dev, "TABLE_NAME"), false},
@@ -64,6 +62,9 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 			c, err := LoadConfig(func(k string) string { return tc.env[k] })
 			if (err == nil) != tc.ok {
 				t.Fatalf("LoadConfig err = %v, want ok=%v", err, tc.ok)
+			}
+			if tc.ok && c.Dev && (c.PortalURL != "http://localhost:8789" || c.PortalOperatorKey != "dev-operator") {
+				t.Fatalf("dev portal defaults: %q %q", c.PortalURL, c.PortalOperatorKey)
 			}
 			if tc.ok && c.Dev != (tc.env["CONSOLE_DEV"] == "1") {
 				t.Fatalf("Dev = %v", c.Dev)

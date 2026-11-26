@@ -68,6 +68,9 @@ func (a *App) listTenants(w http.ResponseWriter, r *http.Request) error {
 	if json.Unmarshal(raw, &page) != nil || json.Unmarshal(page["tenants"], &rows) != nil {
 		return portalError(portalapi.ErrUnavailable)
 	}
+	if rows == nil {
+		rows = []map[string]any{}
+	}
 	sem := make(chan struct{}, ownerConcurrency)
 	var wg sync.WaitGroup
 	for _, row := range rows {

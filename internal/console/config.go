@@ -16,12 +16,13 @@ type Config struct {
 	// PortalURL and PortalClientID reach the Portal's operator API; the key is
 	// PortalOperatorKeyParam on a stage and PORTAL_OPERATOR_KEY in Dev.
 	PortalURL, PortalClientID, PortalOperatorKeyParam string
+	PortalOperatorKey                                 string // Dev only
 	Dev                                               bool
 }
 
 // LoadConfig reads the environment and refuses to start with anything missing.
 // With CONSOLE_DEV=1 the admin and client keys come from the ADMIN_KEY,
-// CLIENT_KEY and PORTAL_OPERATOR_KEY variables, so the SSM parameter names are not needed.
+// CLIENT_KEY variables, so the SSM parameter names are not needed.
 func LoadConfig(getenv func(string) string) (Config, error) {
 	c := Config{
 		Stage:                  getenv("STAGE"),
@@ -48,12 +49,18 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	need("TABLE_NAME", c.Table)
 	need("AUTHGATE_BASE_URL", c.AuthGateBaseURL)
 	need("AUTHGATE_CLIENT_ID", c.AuthGateClientID)
-	need("PORTAL_URL", c.PortalURL)
-	need("PORTAL_CLIENT_ID", c.PortalClientID)
 	if c.Dev {
 		need("ADMIN_KEY", getenv("ADMIN_KEY"))
 		need("CLIENT_KEY", getenv("CLIENT_KEY"))
-		need("PORTAL_OPERATOR_KEY", getenv("PORTAL_OPERATOR_KEY"))
+		// Local dev: the portal-dev port and the Portal's own Dev key. An empty client
+		// id means no Portal-client protection locally.
+		if c.PortalURL == "" {
+			c.PortalURL = "http://localhost:8789"
+		}
+		c.PortalOperatorKey = getenv("PORTAL_OPERATOR_KEY")
+		if c.PortalOperatorKey == "" {
+			c.PortalOperatorKey = "dev-operator"
+		}
 		if c.Port == "" {
 			c.Port = "8788"
 		}
@@ -61,6 +68,8 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		need("ADMIN_KEY_PARAM", c.AdminKeyParam)
 		need("CLIENT_KEY_PARAM", c.ClientKeyParam)
 		need("ORIGIN_VERIFY_PARAM", c.OriginVerifyParam)
+		need("PORTAL_URL", c.PortalURL)
+		need("PORTAL_CLIENT_ID", c.PortalClientID)
 		need("PORTAL_OPERATOR_KEY_PARAM", c.PortalOperatorKeyParam)
 	}
 	if len(missing) > 0 {

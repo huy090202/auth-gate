@@ -51,7 +51,7 @@ func main() {
 	var awsCfg aws.Config
 	var adminKey, clientKey, operatorKey string
 	if cfg.Dev {
-		adminKey, clientKey, operatorKey = os.Getenv("ADMIN_KEY"), os.Getenv("CLIENT_KEY"), os.Getenv("PORTAL_OPERATOR_KEY")
+		adminKey, clientKey, operatorKey = os.Getenv("ADMIN_KEY"), os.Getenv("CLIENT_KEY"), cfg.PortalOperatorKey
 	} else {
 		awsCfg, err = awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
 		if err != nil {
