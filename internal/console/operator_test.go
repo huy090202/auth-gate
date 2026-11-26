@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -131,4 +132,114 @@ func TestLastSuspensionFromConsoleAudit(t *testing.T) {
 		t.Fatalf("user: %s %v", r.Body, err)
 	}
 	want(t, b.Do("GET", "/api/users?email=nobody@x.test", nil), 404, "not_found")
+}
+
+func lastAudit(t *testing.T, h *consoletest.Harness, action string) console.AuditEntry {
+	t.Helper()
+	es, _, err := h.Store().ListAudit(context.Background(), h.Clock.Now().UTC().Format("2006-01"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range es {
+		if e.Action == action {
+			return e
+		}
+	}
+	t.Fatalf("no %s audit entry", action)
+	return console.AuditEntry{}
+}
+
+// Why: a half-done suspension must be visible and repeatable; AuthGate goes first so a Portal outage never leaves the Portal saying suspended while the keys still work.
+func TestTenantSuspendOrderAndPartial(t *testing.T) {
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleAdmin)
+	tid := h.Portal.AddTenant(consoletest.FakeTenant{Name: "Acme"})
+	path := "/api/tenants/" + tid + "/suspend"
+	body := map[string]string{"reason": "chargeback"}
+
+	h.Portal.SetDown(true)
+	r := b.Do("POST", path, body, tokHeader, b.StepUp("tenant-suspend", tid))
+	if r.Status != 502 && r.Status != 503 {
+		t.Fatalf("want 502 or 503, got %d %s", r.Status, r.Body)
+	}
+	raw, err := h.AuthGate.GetOwner(context.Background(), tid)
+	if err != nil || !strings.Contains(string(raw), `"suspendedAt":"`) {
+		t.Fatalf("AuthGate's owner is not suspended: %s %v", raw, err)
+	}
+	if e := lastAudit(t, h, "tenant-suspend"); e.Result != "partial" || e.Detail["reason"] != "chargeback" || e.Target != tid {
+		t.Fatalf("audit: %+v", e)
+	}
+
+	h.Portal.SetDown(false)
+	want(t, b.Do("POST", path, body, tokHeader, b.StepUp("tenant-suspend", tid)), 200, "")
+	if tn, _ := h.Portal.Tenant(tid); tn.SuspendedAt == "" {
+		t.Fatal("the Portal was not called on the repeat")
+	}
+	if e := lastAudit(t, h, "tenant-suspend"); e.Result != "success" {
+		t.Fatalf("audit: %+v", e)
+	}
+}
+
+// Why: a bad reason must not burn the one-use token, and no write may run without step-up.
+func TestSuspendNeedsReasonAndStepUp(t *testing.T) {
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleAdmin)
+	tid := h.Portal.AddTenant(consoletest.FakeTenant{Name: "Acme"})
+	uid := h.Portal.AddUser(consoletest.FakeUser{Email: "u@x.test"})
+	for _, c := range []struct{ action, target, path string }{
+		{"tenant-suspend", tid, "/api/tenants/" + tid + "/suspend"},
+		{"user-suspend", uid, "/api/users/" + uid + "/suspend"},
+	} {
+		tok := b.StepUp(c.action, c.target)
+		for _, reason := range []string{"", "   ", strings.Repeat("a", 201), strings.Repeat("é", 201)} {
+			want(t, b.Do("POST", c.path, map[string]string{"reason": reason}, tokHeader, tok), 400, "invalid_reason")
+		}
+		requireUnspent(t, h, tok) // a refusal costs no token (this also spends it)
+		// 200 multi-byte runes are 400 bytes and still fine.
+		tok = b.StepUp(c.action, c.target)
+		want(t, b.Do("POST", c.path, map[string]string{"reason": " " + strings.Repeat("é", 200) + " "}, tokHeader, tok), 200, "")
+		want(t, b.Do("POST", c.path, map[string]string{"reason": "x"}), 403, "step_up_required")
+	}
+	if u, _ := h.Portal.User(uid); u.SuspendedAt == "" {
+		t.Fatal("user not suspended")
+	}
+}
+
+// Why: the quota audit must carry the real old value, read from AuthGate before the write.
+func TestTenantQuotaAndUserActions(t *testing.T) {
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleAdmin)
+	tid := h.Portal.AddTenant(consoletest.FakeTenant{Name: "Acme"})
+	uid := h.Portal.AddUser(consoletest.FakeUser{Email: "u@x.test"})
+	raw, _ := h.AuthGate.GetOwner(context.Background(), tid)
+	var o struct{ ClientQuota int }
+	_ = json.Unmarshal(raw, &o)
+
+	want(t, b.Do("PATCH", "/api/tenants/"+tid+"/quota", map[string]int{"clientQuota": 7}, tokHeader, b.StepUp("tenant-quota", tid)), 200, "")
+	es := h.Portal.TenantAuditEntries(tid)
+	if len(es) != 1 || es[0]["action"] != "tenant-quota" {
+		t.Fatalf("portal audit: %v", es)
+	}
+	if e := lastAudit(t, h, "tenant-quota"); e.Detail["from"] != strconv.Itoa(o.ClientQuota) || e.Detail["to"] != "7" {
+		t.Fatalf("audit: %+v", e)
+	}
+	want(t, b.Do("PATCH", "/api/tenants/"+tid+"/quota", map[string]int{"clientQuota": -1}, tokHeader, b.StepUp("tenant-quota", tid)), 400, "invalid_quota")
+
+	for _, c := range []struct{ action, path string }{
+		{"user-unsuspend", "/unsuspend"}, {"user-resend-verification", "/resend-verification"}, {"user-factor-reset", "/factor-reset"},
+	} {
+		want(t, b.Do("POST", "/api/users/"+uid+c.path, nil, tokHeader, b.StepUp(c.action, uid)), 200, "")
+	}
+}
+
+// Why: a tenant suspension of an unknown or malformed id must not reach either service.
+func TestTenantUnsuspendRoute(t *testing.T) {
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleAdmin)
+	tid := h.Portal.AddTenant(consoletest.FakeTenant{Name: "Acme", SuspendedAt: "2026-11-01T00:00:00Z"})
+	want(t, b.Do("POST", "/api/tenants/bad/unsuspend", nil), 404, "not_found")
+	want(t, b.Do("POST", "/api/tenants/"+tid+"/unsuspend", nil, tokHeader, b.StepUp("tenant-unsuspend", tid)), 200, "")
+	if tn, _ := h.Portal.Tenant(tid); tn.SuspendedAt != "" {
+		t.Fatal("still suspended")
+	}
 }

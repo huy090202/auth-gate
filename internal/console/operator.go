@@ -6,9 +6,14 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
+	"github.com/huy090202/auth-gate/internal/platform/auditlog"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/portalapi"
 	"github.com/huy090202/auth-gate/internal/platform/webapi"
@@ -44,6 +49,169 @@ func (a *App) operatorRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/tenants/{tid}", full(webapi.HandlerFunc(a.getTenant)))
 	mux.Handle("GET /api/tenants/{tid}/audit", full(webapi.HandlerFunc(a.tenantAudit)))
 	mux.Handle("GET /api/users", full(webapi.HandlerFunc(a.findUser)))
+
+	mux.Handle("POST /api/tenants/{tid}/suspend", a.audited("tenant-suspend", full(a.tenantSuspension("tenant-suspend", true))))
+	mux.Handle("POST /api/tenants/{tid}/unsuspend", a.audited("tenant-unsuspend", full(a.tenantSuspension("tenant-unsuspend", false))))
+	mux.Handle("PATCH /api/tenants/{tid}/quota", a.audited("tenant-quota", full(webapi.HandlerFunc(a.tenantQuota))))
+	mux.Handle("POST /api/users/{uid}/suspend", a.audited("user-suspend", full(a.userWrite("user-suspend", true, a.Portal.SuspendUser))))
+	mux.Handle("POST /api/users/{uid}/unsuspend", a.audited("user-unsuspend", full(a.userWrite("user-unsuspend", false, a.Portal.UnsuspendUser))))
+	mux.Handle("POST /api/users/{uid}/resend-verification", a.audited("user-resend-verification", full(a.userWrite("user-resend-verification", false, a.Portal.ResendVerification))))
+	mux.Handle("POST /api/users/{uid}/factor-reset", a.audited("user-factor-reset", full(a.userWrite("user-factor-reset", false, a.Portal.ForceFactorReset))))
+}
+
+// maxReasonRunes bounds the internal reason of a suspension.
+const maxReasonRunes = 200
+
+// readReason decodes {reason}, trimmed, 1 to maxReasonRunes runes. The reason is
+// for the Console's audit only and never goes to the Portal.
+func readReason(r *http.Request) (string, error) {
+	var in struct {
+		Reason string `json:"reason"`
+	}
+	if err := webapi.DecodeBody(r, &in); err != nil {
+		return "", err
+	}
+	reason := strings.TrimSpace(in.Reason)
+	if n := utf8.RuneCountInString(reason); n < 1 || n > maxReasonRunes {
+		return "", &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_reason"}
+	}
+	return reason, nil
+}
+
+// portalAfterAuthGate is the Portal step of an action whose AuthGate step already
+// succeeded. When it fails the audit entry says partial, so the half-done action
+// is visible and the operator can repeat it (every step is idempotent).
+func portalAfterAuthGate(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	auditlog.SetResult(ctx, "partial")
+	return portalError(err)
+}
+
+// tenantSuspension suspends or unsuspends a tenant: AuthGate first, then the Portal.
+// Only a suspension takes a reason. The checks run before the token is spent.
+func (a *App) tenantSuspension(action string, suspend bool) webapi.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		tid, err := tenantID(r)
+		if err != nil {
+			return err
+		}
+		ctx := r.Context()
+		setAuditTarget(ctx, tid)
+		x, _ := sessionFrom(ctx)
+		tok, err := a.checkStepUp(r, x, action, tid)
+		if err != nil {
+			return err
+		}
+		if suspend {
+			reason, err := readReason(r)
+			if err != nil {
+				return err
+			}
+			setAuditDetail(ctx, "reason", reason)
+		}
+		if err := a.spendStepUp(r, tok); err != nil {
+			return err
+		}
+		call, portal := a.AuthGate.UnsuspendOwner, a.Portal.UnsuspendTenant
+		if suspend {
+			call, portal = a.AuthGate.SuspendOwner, a.Portal.SuspendTenant
+		}
+		if _, err := call(ctx, tid); err != nil {
+			return webapi.AuthGateError(err)
+		}
+		raw, err := portal(ctx, tid)
+		if err := portalAfterAuthGate(ctx, err); err != nil {
+			return err
+		}
+		webapi.WriteRaw(w, http.StatusOK, raw)
+		return nil
+	}
+}
+
+// tenantQuota sets a tenant's client quota: AuthGate's owner is read for the old
+// value, then written, then the Portal's tenant audit is told.
+func (a *App) tenantQuota(w http.ResponseWriter, r *http.Request) error {
+	tid, err := tenantID(r)
+	if err != nil {
+		return err
+	}
+	ctx := r.Context()
+	setAuditTarget(ctx, tid)
+	x, _ := sessionFrom(ctx)
+	tok, err := a.checkStepUp(r, x, "tenant-quota", tid)
+	if err != nil {
+		return err
+	}
+	var in struct {
+		ClientQuota *int `json:"clientQuota"`
+	}
+	if err := webapi.DecodeBody(r, &in); err != nil {
+		return err
+	}
+	if in.ClientQuota == nil || *in.ClientQuota < 0 {
+		return &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_quota"}
+	}
+	to := *in.ClientQuota
+	if err := a.spendStepUp(r, tok); err != nil {
+		return err
+	}
+	raw, err := a.AuthGate.GetOwner(ctx, tid)
+	if err != nil {
+		return webapi.AuthGateError(err)
+	}
+	var cur struct {
+		ClientQuota *int `json:"clientQuota"`
+	}
+	if json.Unmarshal(raw, &cur) != nil || cur.ClientQuota == nil {
+		return webapi.AuthGateError(authgate.ErrUnavailable)
+	}
+	from := *cur.ClientQuota
+	out, err := a.AuthGate.SetClientQuota(ctx, tid, to)
+	if err != nil {
+		return webapi.AuthGateError(err)
+	}
+	setAuditDetail(ctx, "from", strconv.Itoa(from))
+	setAuditDetail(ctx, "to", strconv.Itoa(to))
+	if err := portalAfterAuthGate(ctx, a.Portal.TenantQuotaAudit(ctx, tid, from, to)); err != nil {
+		return err
+	}
+	webapi.WriteRaw(w, http.StatusOK, out)
+	return nil
+}
+
+// userWrite is a Portal-only action on a Portal user. Only a suspension takes a reason.
+func (a *App) userWrite(action string, withReason bool, call func(context.Context, string) (json.RawMessage, error)) webapi.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		uid := r.PathValue("uid")
+		if !clientIDRE.MatchString(uid) {
+			return &webapi.Error{Status: http.StatusNotFound, Code: "not_found"}
+		}
+		ctx := r.Context()
+		setAuditTarget(ctx, uid)
+		x, _ := sessionFrom(ctx)
+		tok, err := a.checkStepUp(r, x, action, uid)
+		if err != nil {
+			return err
+		}
+		if withReason {
+			reason, err := readReason(r)
+			if err != nil {
+				return err
+			}
+			setAuditDetail(ctx, "reason", reason)
+		}
+		if err := a.spendStepUp(r, tok); err != nil {
+			return err
+		}
+		raw, err := call(ctx, uid)
+		if err != nil {
+			return portalError(err)
+		}
+		webapi.WriteRaw(w, http.StatusOK, raw)
+		return nil
+	}
 }
 
 // tenantID returns the {tid} of the route, or 404 when it cannot be a tenant's.
