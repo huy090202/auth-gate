@@ -5,7 +5,7 @@ import { portalTitle, useTitle } from '../brand';
 import { ApiError, api } from '../lib/api';
 import { fmt, useStrings } from '../lib/i18n';
 import { can, orgApi } from '../lib/orgs';
-import { clientsPath, useWorkspaces } from '../lib/tenants';
+import { clientsPath, useSuspended, useWorkspaces } from '../lib/tenants';
 import { useStepUp } from '../stepup';
 import { ConfirmDialog, InlineLoading, LoadFailedInline, PageHead, TypeToConfirm } from '../ui';
 import { Feedback, useAction } from './forms';
@@ -28,6 +28,7 @@ export function OrgSettings() {
   const { tenantId = '' } = useParams();
   const navigate = useNavigate();
   const { tenants, reload, loading } = useWorkspaces();
+  const suspended = useSuspended(tenantId);
   const { stepUp, modal } = useStepUp();
   const ws = tenants.find((x) => x.tenantId === tenantId);
   const [name, setName] = useState<string | null>(null);
@@ -74,7 +75,7 @@ export function OrgSettings() {
             <TextInput label={t.orgSettings.nameLabel} value={typed} maxLength={64} autoComplete="off" disabled={rename.busy}
               onChange={(e) => setName(e.currentTarget.value)} />
             <div className="form-foot">
-              <Button type="submit" loading={rename.busy} disabled={rename.waiting || ws.suspended === true || typed.trim() === '' || typed.trim() === ws.name}>
+              <Button type="submit" loading={rename.busy} disabled={rename.waiting || suspended || typed.trim() === '' || typed.trim() === ws.name}>
                 {t.orgSettings.save}
               </Button>
             </div>
@@ -94,7 +95,7 @@ export function OrgSettings() {
           <section className="panel glass">
             <h2>{t.orgSettings.dangerTitle}</h2>
             <ActionRow title={t.orgSettings.delete} body={t.orgSettings.deleteBody}>
-              <Button color="red" loading={remove.busy} disabled={remove.waiting || ws.suspended === true} onClick={() => setConfirm('delete')}>
+              <Button color="red" loading={remove.busy} disabled={remove.waiting || suspended} onClick={() => setConfirm('delete')}>
                 {t.orgSettings.delete}
               </Button>
             </ActionRow>

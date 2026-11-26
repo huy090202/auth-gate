@@ -65,3 +65,15 @@ func TestSuspendedTenantRefusesInviteAcceptAndAccountDelete(t *testing.T) {
 	withTenantAPI(e, id.New(), id.New())
 	want(t, ob.do("DELETE", "/api/me", nil, stepHeader, tok), 204, "")
 }
+
+// Why: a suspended customer must not erase their own workspace and its audit while the operator investigates.
+func TestSuspendedPersonalTenantRefusesAccountDelete(t *testing.T) {
+	e := newAuthEnv(t)
+	u, b := e.owner(t, "p@x.com", "203.0.113.1")
+	want(t, e.opPost("/api/operator/tenants/"+u.PersonalTenantID+"/suspend", map[string]string{}), 200, "")
+	tok := b.stepUp("delete-account", "")
+	want(t, b.do("DELETE", "/api/me", nil, stepHeader, tok), 409, "tenant_suspended")
+	want(t, e.opPost("/api/operator/tenants/"+u.PersonalTenantID+"/unsuspend", map[string]string{}), 200, "")
+	withTenantAPI(e, id.New(), id.New())
+	want(t, b.do("DELETE", "/api/me", nil, stepHeader, tok), 204, "")
+}

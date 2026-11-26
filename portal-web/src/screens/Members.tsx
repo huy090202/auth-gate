@@ -6,7 +6,7 @@ import { api } from '../lib/api';
 import { formatDate } from '../lib/format';
 import { fmt, useStrings } from '../lib/i18n';
 import { MAX_INVITES, can, orgApi, roleChoices, type Member, type PendingInvite } from '../lib/orgs';
-import { clientsPath, useWorkspaces, type Role } from '../lib/tenants';
+import { clientsPath, useSuspended, useWorkspaces, type Role } from '../lib/tenants';
 import { useStepUp } from '../stepup';
 import { InlineLoading, LoadFailedInline, PageHead } from '../ui';
 import { Feedback, useAction } from './forms';
@@ -208,6 +208,7 @@ export function Members() {
   useTitle(portalTitle(t.screens.members));
   const { tenantId = '' } = useParams();
   const { tenants, userId, loading } = useWorkspaces();
+  const suspended = useSuspended(tenantId);
   const ws = tenants.find((x) => x.tenantId === tenantId);
   // A personal workspace has no members; the nav hides the link, and a typed URL goes back to the clients.
   if (ws?.kind === 'personal') return <Navigate to={clientsPath(tenantId)} replace />;
@@ -215,7 +216,7 @@ export function Members() {
   return (
     <>
       <PageHead title={t.screens.members} intro={t.members.intro} />
-      <Roster key={tenantId} tenantId={tenantId} actor={ws?.role ?? 'member'} userId={userId} suspended={ws?.suspended === true} />
+      <Roster key={tenantId} tenantId={tenantId} actor={ws?.role ?? 'member'} userId={userId} suspended={suspended} />
     </>
   );
 }

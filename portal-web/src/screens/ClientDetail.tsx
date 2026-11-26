@@ -9,7 +9,7 @@ import {
 import { formatDate } from '../lib/format';
 import { fmt, useStrings } from '../lib/i18n';
 import { can } from '../lib/orgs';
-import { clientsPath, useWorkspaces } from '../lib/tenants';
+import { clientsPath, useSuspended, useWorkspaces } from '../lib/tenants';
 import { useStepUp } from '../stepup';
 import { useToast } from '../toast';
 import { IdChip, InlineLoading, LoadFailedInline, PageHead, ShownOnce, StatusBadge, TypeToConfirm } from '../ui';
@@ -39,7 +39,7 @@ function Detail({ tenantId, id }: { tenantId: string; id: string }) {
   const { tenants } = useWorkspaces();
   const role = tenants.find((x) => x.tenantId === tenantId)?.role;
   // Disable, enable, purge and delete are for owners and admins; an unknown role shows none of them.
-  const suspended = tenants.find((x) => x.tenantId === tenantId)?.suspended === true;
+  const suspended = useSuspended(tenantId);
   const manage = role !== undefined && can(role, 'manage-client');
   const [client, setClient] = useState<ClientView | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
