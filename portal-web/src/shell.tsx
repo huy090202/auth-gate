@@ -1,4 +1,4 @@
-import { Menu, Select } from '@mantine/core';
+import { Menu, Select, Text } from '@mantine/core';
 import { NavItem, ShellLayout, endSession } from '@authgate/web-kit/shell-layout';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate, useParams } from 'react-router';
@@ -53,10 +53,34 @@ function useTenants(me: Me): { tenants: Tenant[]; reload: () => Promise<void>; l
   return {
     tenants: tenants && tenants.length > 0
       ? tenants
-      : [{ tenantId: me.personalTenantId, kind: 'personal', name: '', role: 'owner' }],
+      : [{ tenantId: me.personalTenantId, kind: 'personal', name: '', role: 'owner', suspended: false }],
     reload,
     loading: !resolved,
   };
+}
+
+let supportEmail: Promise<string> | undefined;
+
+/** The read-only notice of a suspended workspace; it names the support address from GET /api/config. */
+function SuspendedBanner() {
+  const t = useStrings();
+  const [support, setSupport] = useState('');
+  useEffect(() => {
+    let live = true;
+    supportEmail ??= api<{ supportEmail?: string }>('/api/config').then((c) => c.supportEmail ?? '', () => {
+      supportEmail = undefined;
+      return '';
+    });
+    void supportEmail.then((s) => live && setSupport(s));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return (
+    <div className="panel glass notice" role="status">
+      <Text fz="sm" fw={600}>{fmt(t.shell.suspendedBanner, { support: support || t.shell.supportFallback })}</Text>
+    </div>
+  );
 }
 
 const NEW_ORG = 'new-org';
@@ -158,6 +182,7 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
         </>,
       }}
     >
+      {current.suspended && <SuspendedBanner />}
       {children}
     </ShellLayout>
     {creating && <NewOrg onClose={() => setCreating(false)} />}

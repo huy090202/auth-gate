@@ -74,7 +74,7 @@ export function OrgSettings() {
             <TextInput label={t.orgSettings.nameLabel} value={typed} maxLength={64} autoComplete="off" disabled={rename.busy}
               onChange={(e) => setName(e.currentTarget.value)} />
             <div className="form-foot">
-              <Button type="submit" loading={rename.busy} disabled={rename.waiting || typed.trim() === '' || typed.trim() === ws.name}>
+              <Button type="submit" loading={rename.busy} disabled={rename.waiting || ws.suspended === true || typed.trim() === '' || typed.trim() === ws.name}>
                 {t.orgSettings.save}
               </Button>
             </div>
@@ -94,7 +94,7 @@ export function OrgSettings() {
           <section className="panel glass">
             <h2>{t.orgSettings.dangerTitle}</h2>
             <ActionRow title={t.orgSettings.delete} body={t.orgSettings.deleteBody}>
-              <Button color="red" loading={remove.busy} disabled={remove.waiting} onClick={() => setConfirm('delete')}>
+              <Button color="red" loading={remove.busy} disabled={remove.waiting || ws.suspended === true} onClick={() => setConfirm('delete')}>
                 {t.orgSettings.delete}
               </Button>
             </ActionRow>

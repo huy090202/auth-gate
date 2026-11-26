@@ -346,7 +346,7 @@ func (a *App) resendVerification(w http.ResponseWriter, r *http.Request) error {
 
 // config is the public configuration the sign-up page needs.
 func (a *App) config(w http.ResponseWriter, _ *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]string{"turnstileSiteKey": a.Config.TurnstileSiteKey})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"turnstileSiteKey": a.Config.TurnstileSiteKey, "supportEmail": a.Config.SupportEmail})
 }
 
 func (a *App) mountSignup(mux *http.ServeMux) {

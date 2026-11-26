@@ -599,6 +599,7 @@ type accountOrgs struct {
 	remove    []Tenant     // those they are the only member of, or already being deleted
 	leave     []Membership // the others: their membership is removed
 	gone      []string     // tenants whose item is gone: the leftover membership is dropped
+	suspended bool         // the personal workspace, or an organisation that would be deleted, is suspended
 }
 
 // classifyOrgs sorts the person's organisations for account deletion (spec section 4).
@@ -619,11 +620,13 @@ func (a *App) classifyOrgs(ctx context.Context, userID string) (accountOrgs, err
 		}
 		switch {
 		case t.Kind != KindOrg:
+			out.suspended = out.suspended || t.SuspendedAt != nil
 		case t.DeletingAt != nil:
 			out.remove = append(out.remove, t) // finishing it drops this membership too
 		case m.Role == RoleOwner && t.Counts.Owners == 1 && t.Counts.Members > 1:
 			out.soleOwner = append(out.soleOwner, t.Name)
 		case m.Role == RoleOwner && t.Counts.Members == 1:
+			out.suspended = out.suspended || t.SuspendedAt != nil
 			out.remove = append(out.remove, t)
 		default:
 			out.leave = append(out.leave, m)
@@ -653,6 +656,9 @@ func (a *App) deleteAccount(w http.ResponseWriter, r *http.Request) error {
 	}
 	if len(orgs.soleOwner) > 0 {
 		return &webapi.Error{Status: http.StatusConflict, Code: "sole_owner", Extra: map[string]any{"organisations": orgs.soleOwner}}
+	}
+	if orgs.suspended {
+		return errTenantSuspended // the operator is inspecting it: nothing of it is deleted, and the step-up is kept
 	}
 	var clients []string
 	if u.PersonalTenantID != "" {

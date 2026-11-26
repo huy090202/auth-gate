@@ -17,7 +17,7 @@ import (
 // tenant being deleted still answers, so a stopped deletion can be run again.
 func (a *App) mountOrgDelete(mux *http.ServeMux) {
 	full := a.session(StageFull)
-	mux.Handle("DELETE /api/t/{tenantId}", a.audited("org-delete", full(a.memberAny(true, RoleOwner)(webapi.HandlerFunc(a.deleteOrg)))))
+	mux.Handle("DELETE /api/t/{tenantId}", a.audited("org-delete", full(a.memberAny(true, RoleOwner)(a.writable(webapi.HandlerFunc(a.deleteOrg))))))
 }
 
 // deleteOrg deletes an organisation (spec section 4) once its owner has typed its

@@ -45,7 +45,7 @@ function InviteDialog({ tenantId, actor, onClose, onSent }: { tenantId: string; 
   );
 }
 
-function Roster({ tenantId, actor, userId }: { tenantId: string; actor: Role; userId: string }) {
+function Roster({ tenantId, actor, userId, suspended }: { tenantId: string; actor: Role; userId: string; suspended: boolean }) {
   const t = useStrings();
   const { stepUp, modal } = useStepUp();
   const { reload } = useWorkspaces();
@@ -102,7 +102,7 @@ function Roster({ tenantId, actor, userId }: { tenantId: string; actor: Role; us
       <section className="panel glass">
         {canInvite && (
           <div className="toolbar toolbar-end">
-            <Button onClick={() => setInviting(true)}>{t.members.invite}</Button>
+            <Button disabled={suspended} onClick={() => setInviting(true)}>{t.members.invite}</Button>
           </div>
         )}
         <div className="table-wrap">
@@ -126,14 +126,14 @@ function Roster({ tenantId, actor, userId }: { tenantId: string; actor: Role; us
                     <Table.Td data-label={t.members.colRole}>
                       {choices.length > 0 ? (
                         <Select aria-label={fmt(t.members.roleOf, { name: m.displayName })} value={m.role} allowDeselect={false}
-                          disabled={change.busy || change.waiting} data={choices.map((r) => ({ value: r, label: t.roles[r] }))}
+                          disabled={suspended || change.busy || change.waiting} data={choices.map((r) => ({ value: r, label: t.roles[r] }))}
                           onChange={(v) => setRole(m, v)} />
                       ) : t.roles[m.role]}
                     </Table.Td>
                     <Table.Td className="cell-muted" data-label={t.members.colJoined}>{formatDate(m.joinedAt, t)}</Table.Td>
                     <Table.Td className="cell-actions">
                       {can(actor, 'remove', m.role) && m.userId !== userId && (
-                        <Button size="xs" color="red" variant="light" disabled={change.busy || change.waiting} onClick={() => remove(m)}>
+                        <Button size="xs" color="red" variant="light" disabled={suspended || change.busy || change.waiting} onClick={() => remove(m)}>
                           {t.members.remove}
                         </Button>
                       )}
@@ -174,14 +174,14 @@ function Roster({ tenantId, actor, userId }: { tenantId: string; actor: Role; us
                       <Table.Td className="cell-actions">
                         <Group gap="xs" wrap="nowrap">
                           {can(actor, 'invite', i.role) && (
-                            <Button size="xs" variant="light" disabled={invite.busy || invite.waiting}
+                            <Button size="xs" variant="light" disabled={suspended || invite.busy || invite.waiting}
                               onClick={() => void invite.run(async () => {
                                 await api(orgApi.resend(tenantId, i.inviteId), { method: 'POST' });
                                 await loadInvites();
                                 return fmt(t.members.resent, { email: i.email });
                               })}>{t.members.resend}</Button>
                           )}
-                          <Button size="xs" color="red" variant="light" disabled={invite.busy || invite.waiting}
+                          <Button size="xs" color="red" variant="light" disabled={suspended || invite.busy || invite.waiting}
                             onClick={() => void invite.run(async () => {
                               await api(orgApi.invite(tenantId, i.inviteId), { method: 'DELETE' });
                               await loadInvites();
@@ -215,7 +215,7 @@ export function Members() {
   return (
     <>
       <PageHead title={t.screens.members} intro={t.members.intro} />
-      <Roster key={tenantId} tenantId={tenantId} actor={ws?.role ?? 'member'} userId={userId} />
+      <Roster key={tenantId} tenantId={tenantId} actor={ws?.role ?? 'member'} userId={userId} suspended={ws?.suspended === true} />
     </>
   );
 }

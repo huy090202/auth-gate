@@ -474,7 +474,7 @@ func TestTenantsListPersonalFirst(t *testing.T) {
 	want(t, r, 200, "")
 	var out struct{ Tenants []tenantView }
 	_ = json.Unmarshal(r.Body, &out)
-	wantList := []tenantView{{u.PersonalTenantID, "personal", "", "owner"}, {org, "org", "Acme", "admin"}}
+	wantList := []tenantView{{u.PersonalTenantID, "personal", "", "owner", false}, {org, "org", "Acme", "admin", false}}
 	if !slices.Equal(out.Tenants, wantList) {
 		t.Fatalf("tenants = %+v, want %+v", out.Tenants, wantList)
 	}

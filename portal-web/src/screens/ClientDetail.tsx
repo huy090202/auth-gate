@@ -39,6 +39,7 @@ function Detail({ tenantId, id }: { tenantId: string; id: string }) {
   const { tenants } = useWorkspaces();
   const role = tenants.find((x) => x.tenantId === tenantId)?.role;
   // Disable, enable, purge and delete are for owners and admins; an unknown role shows none of them.
+  const suspended = tenants.find((x) => x.tenantId === tenantId)?.suspended === true;
   const manage = role !== undefined && can(role, 'manage-client');
   const [client, setClient] = useState<ClientView | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -145,7 +146,7 @@ function Detail({ tenantId, id }: { tenantId: string; id: string }) {
             <TextInput label={t.clientForm.rpId} description={t.clientDetail.rpIdReadOnly} value={client.rpId} readOnly className="readonly-field" />
           </ClientFields>
           <div className="form-foot">
-            <Button type="submit" loading={settings.busy} disabled={settings.waiting}>{t.clientDetail.save}</Button>
+            <Button type="submit" loading={settings.busy} disabled={settings.waiting || suspended}>{t.clientDetail.save}</Button>
           </div>
           <Feedback error={settings.error} />
         </form>
@@ -153,7 +154,7 @@ function Detail({ tenantId, id }: { tenantId: string; id: string }) {
         <section className="panel glass">
           <h2>{t.clientDetail.keysTitle}</h2>
           <ActionRow title={t.clientDetail.rotateTitle} body={t.clientDetail.rotateBody}>
-            <Button variant="light" loading={keys.loading('rotate')} disabled={keys.waiting || (keys.busy && !keys.loading('rotate'))}
+            <Button variant="light" loading={keys.loading('rotate')} disabled={suspended || keys.waiting || (keys.busy && !keys.loading('rotate'))}
               onClick={() => void keys.run(async () => {
                 const r = await stepUp('rotate-key', (token) =>
                   api<{ accessKey: string }>(`${path}/keys`, { method: 'POST', stepUpToken: token }), id);
@@ -164,7 +165,7 @@ function Detail({ tenantId, id }: { tenantId: string; id: string }) {
             </Button>
           </ActionRow>
           <ActionRow title={t.clientDetail.revokeTitle} body={t.clientDetail.revokeBody}>
-            <Button variant="light" color="red" loading={keys.loading('revoke')} disabled={keys.waiting || (keys.busy && !keys.loading('revoke'))}
+            <Button variant="light" color="red" loading={keys.loading('revoke')} disabled={suspended || keys.waiting || (keys.busy && !keys.loading('revoke'))}
               onClick={() => void keys.run(async () => {
                 const r = await stepUp('revoke-previous-keys', (token) =>
                   api<{ revoked: number }>(`${path}/keys/previous`, { method: 'DELETE', stepUpToken: token }), id);
@@ -185,7 +186,7 @@ function Detail({ tenantId, id }: { tenantId: string; id: string }) {
               // An administrator's lock is not the tenant's to lift: no Enable at all, only the notice above.
               !locked && (
                 <ActionRow title={t.clientDetail.enable} body={t.clientDetail.enableBody}>
-                  <Button variant="light" loading={state.busy} disabled={state.waiting}
+                  <Button variant="light" loading={state.busy} disabled={state.waiting || suspended}
                     onClick={() => void state.run(async () => {
                       await api(`${path}/enable`, { method: 'POST' });
                       await load();
@@ -196,7 +197,7 @@ function Detail({ tenantId, id }: { tenantId: string; id: string }) {
               )
             ) : (
               <ActionRow title={t.clientDetail.disable} body={t.clientDetail.disableBody}>
-                <Button variant="light" color="red" loading={state.busy} disabled={state.waiting}
+                <Button variant="light" color="red" loading={state.busy} disabled={state.waiting || suspended}
                   onClick={() => void state.run(async () => {
                     const r = await stepUp('disable-client', (token) => api(`${path}/disable`, { method: 'POST', stepUpToken: token }), id);
                     if (!r) return false;
@@ -215,7 +216,7 @@ function Detail({ tenantId, id }: { tenantId: string; id: string }) {
               <form className="purge-form" onSubmit={(ev) => ev.preventDefault()}>
                 <TextInput label={t.clientDetail.subject} description={t.clientDetail.subjectHint} value={subject}
                   onChange={(e) => setSubject(e.currentTarget.value)} disabled={purge.busy} spellCheck={false} autoComplete="off" />
-                <Button color="red" variant="light" type="submit" loading={purge.busy} disabled={purge.waiting || subject === ''}
+                <Button color="red" variant="light" type="submit" loading={purge.busy} disabled={purge.waiting || suspended || subject === ''}
                   onClick={() => void purge.run(async () => {
                     // Caught here, before a step-up is spent on an id the backend would refuse.
                     if (!validSubject(subject)) throw new ApiError(400, 'invalid_id', {});
@@ -237,7 +238,7 @@ function Detail({ tenantId, id }: { tenantId: string; id: string }) {
           <section className="panel glass">
             <h2>{t.clientDetail.deleteTitle}</h2>
             <ActionRow title={t.clientDetail.delete} body={t.clientDetail.deleteBody}>
-              <Button color="red" loading={remove.busy} disabled={remove.waiting} onClick={() => setConfirmDelete(true)}>
+              <Button color="red" loading={remove.busy} disabled={remove.waiting || suspended} onClick={() => setConfirmDelete(true)}>
                 {t.clientDetail.delete}
               </Button>
             </ActionRow>

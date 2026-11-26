@@ -23,9 +23,9 @@ func (a *App) mountInvites(mux *http.ServeMux) {
 	const base = "/api/t/{tenantId}/invites"
 	admins := a.member(RoleOwner, RoleAdmin)
 	mux.Handle("GET "+base, full(admins(webapi.HandlerFunc(a.listInvites))))
-	mux.Handle("POST "+base, a.audited("invite-create", full(admins(webapi.HandlerFunc(a.createInvite)))))
-	mux.Handle("POST "+base+"/{inviteId}/resend", a.audited("invite-resend", full(admins(webapi.HandlerFunc(a.resendInvite)))))
-	mux.Handle("DELETE "+base+"/{inviteId}", a.audited("invite-revoke", full(admins(webapi.HandlerFunc(a.revokeInvite)))))
+	mux.Handle("POST "+base, a.audited("invite-create", full(admins(a.writable(webapi.HandlerFunc(a.createInvite))))))
+	mux.Handle("POST "+base+"/{inviteId}/resend", a.audited("invite-resend", full(admins(a.writable(webapi.HandlerFunc(a.resendInvite))))))
+	mux.Handle("DELETE "+base+"/{inviteId}", a.audited("invite-revoke", full(admins(a.writable(webapi.HandlerFunc(a.revokeInvite))))))
 	// The invitee's routes name the tenant in the path but are not member routes: the caller is not a member yet.
 	mux.Handle("POST /api/invites/{tenantId}/lookup", webapi.HandlerFunc(a.lookupInvite))
 	mux.Handle("POST /api/invites/{tenantId}/accept", a.audited("invite-accept", full(webapi.HandlerFunc(a.acceptInvite))))
@@ -287,28 +287,31 @@ func (a *App) lookupInvite(w http.ResponseWriter, r *http.Request) error {
 }
 
 // ownInvite reads the invite for a signed-in caller and checks that it is theirs.
-func (a *App) ownInvite(r *http.Request) (Invite, User, error) {
+func (a *App) ownInvite(r *http.Request) (Invite, Tenant, User, error) {
 	_, u := sessionFrom(r.Context())
 	tenantID, hash, err := inviteBody(r)
 	if err != nil {
-		return Invite{}, u, err
+		return Invite{}, Tenant{}, u, err
 	}
-	_, inv, err := a.peekInvite(r.Context(), tenantID, hash)
+	t, inv, err := a.peekInvite(r.Context(), tenantID, hash)
 	if err != nil {
-		return Invite{}, u, err
+		return Invite{}, Tenant{}, u, err
 	}
 	setAuditTenant(r.Context(), tenantID)
 	setAuditTarget(r.Context(), inv.Email)
 	if NormalizeEmail(u.Email) != inv.Email {
-		return Invite{}, u, apiErr(http.StatusForbidden, "invite_wrong_email")
+		return Invite{}, Tenant{}, u, apiErr(http.StatusForbidden, "invite_wrong_email")
 	}
-	return inv, u, nil
+	return inv, t, u, nil
 }
 
 func (a *App) acceptInvite(w http.ResponseWriter, r *http.Request) error {
-	inv, u, err := a.ownInvite(r)
+	inv, t, u, err := a.ownInvite(r)
 	if err != nil {
 		return err
+	}
+	if t.SuspendedAt != nil {
+		return errTenantSuspended
 	}
 	setAuditDetail(r.Context(), "role", inv.Role)
 	if err := a.Store.AcceptInvite(r.Context(), inv, u, a.now()); err != nil {
@@ -319,7 +322,7 @@ func (a *App) acceptInvite(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) declineInvite(w http.ResponseWriter, r *http.Request) error {
-	inv, _, err := a.ownInvite(r)
+	inv, _, _, err := a.ownInvite(r)
 	if err != nil {
 		return err
 	}

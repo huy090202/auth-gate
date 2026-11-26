@@ -3,13 +3,17 @@ import { api } from './api';
 import type { Strings } from '../strings';
 
 export type Role = 'owner' | 'admin' | 'member';
-export type Tenant = { tenantId: string; kind: 'personal' | 'org'; name: string; role: Role };
+export type Tenant = { tenantId: string; kind: 'personal' | 'org'; name: string; role: Role; suspended?: boolean };
 
 /** The shell's workspace list, shared with the screens: they read the user's role and ask for a reload after a change. */
 /** `loading` is true until the first fetch has answered; before that `tenants` is only the personal fallback. */
 export type Workspaces = { tenants: Tenant[]; reload: () => Promise<void>; userId: string; loading: boolean };
 export const WorkspacesContext = createContext<Workspaces>({ tenants: [], reload: async () => {}, userId: '', loading: false });
 export const useWorkspaces = (): Workspaces => useContext(WorkspacesContext);
+
+/** True while the operator has suspended the workspace: reads work, writes are refused. */
+export const useSuspended = (tenantId: string): boolean =>
+  useWorkspaces().tenants.find((x) => x.tenantId === tenantId)?.suspended === true;
 
 export async function fetchTenants(): Promise<Tenant[]> {
   const r = await api<{ tenants?: Tenant[] }>('/api/tenants');

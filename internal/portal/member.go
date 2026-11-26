@@ -10,6 +10,8 @@ import (
 	"github.com/huy090202/auth-gate/internal/platform/webapi"
 )
 
+var errTenantSuspended = &webapi.Error{Status: http.StatusConflict, Code: "tenant_suspended"}
+
 type memberKeyT struct{}
 
 type tenantKeyT struct{}
@@ -71,6 +73,19 @@ func (a *App) memberAny(allowDeleting bool, roles ...string) func(http.Handler) 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// writable refuses a write to a suspended workspace with 409 tenant_suspended.
+// It runs after a.member, which puts the tenant in the context. Leaving an
+// organisation is not wrapped: a member may always leave.
+func (a *App) writable(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tenantFrom(r.Context()).SuspendedAt != nil {
+			webapi.WriteErr(w, errTenantSuspended)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // member is memberAny for a tenant that is not being deleted.

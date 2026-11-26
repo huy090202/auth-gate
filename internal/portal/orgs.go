@@ -48,10 +48,10 @@ func (a *App) mountOrgs(mux *http.ServeMux) {
 	admins := a.member(RoleOwner, RoleAdmin)
 	// A tenant guard sets the audit scope itself; creation names the new tenant in its handler.
 	mux.Handle("POST /api/tenants", a.audited("org-create", full(webapi.HandlerFunc(a.createOrg))))
-	mux.Handle("PATCH "+base, a.audited("org-rename", full(owners(webapi.HandlerFunc(a.renameOrg)))))
+	mux.Handle("PATCH "+base, a.audited("org-rename", full(owners(a.writable(webapi.HandlerFunc(a.renameOrg))))))
 	mux.Handle("GET "+base+"/members", full(all(webapi.HandlerFunc(a.listOrgMembers))))
-	mux.Handle("PATCH "+base+"/members/{userId}", a.audited("member-role-change", full(admins(webapi.HandlerFunc(a.changeRole)))))
-	mux.Handle("DELETE "+base+"/members/{userId}", a.audited("member-remove", full(admins(webapi.HandlerFunc(a.removeMember)))))
+	mux.Handle("PATCH "+base+"/members/{userId}", a.audited("member-role-change", full(admins(a.writable(webapi.HandlerFunc(a.changeRole))))))
+	mux.Handle("DELETE "+base+"/members/{userId}", a.audited("member-remove", full(admins(a.writable(webapi.HandlerFunc(a.removeMember))))))
 	mux.Handle("POST "+base+"/leave", a.audited("member-leave", full(all(webapi.HandlerFunc(a.leaveOrg)))))
 }
 
