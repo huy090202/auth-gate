@@ -70,7 +70,8 @@ a mismatch, never as done.
 
 - Suspend a tenant, then unsuspend it. A suspension needs a reason of 1 to 200 characters
   (`400 invalid_reason`); an unsuspend takes none. The reason is internal: it is kept in the
-  Console's audit and shown to other admins, and the Portal never receives it.
+  Console's audit and shown to other admins, and the Portal never receives it. A tenant suspension
+  does not stop its owners from creating a new organisation and keys; suspend the user too.
 - Change a tenant's client quota. AuthGate's owner is read for the old value, set, and then the
   Portal's tenant audit is told.
 - Suspend (with a reason) or unsuspend a user, resend a verification email, force a factor reset.

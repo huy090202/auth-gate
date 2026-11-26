@@ -38,6 +38,8 @@ The tenant's own audit shows the action as "AuthGate administrator" with the fix
 
 AuthGate caches an owner's state for 30 seconds so that a client key check costs no extra read. A suspended tenant's keys therefore keep working for up to 30 seconds. The alternative is a read on every verification, which costs a request and a DynamoDB read for each call all the time, to speed up a rare action. Thirty seconds is shorter than any human response to an abuse report, so the cache stays.
 
+Suspending a tenant does not stop its owners from creating a new organisation and new keys; to stop a person, suspend the user too.
+
 A suspension does not delete anything. The tenant, its clients, its audit and its members stay for the operator to inspect, and a member may still leave. A suspended workspace answers `409 tenant_suspended` to every write, and deleting an account that would delete one is refused for the same reason. A suspended user is signed out everywhere (the epoch bump, as in [console-sessions](console-sessions.md)) and cannot sign in, and the answer is the same `401` a wrong password gives.
 
 ## What an operator can never do

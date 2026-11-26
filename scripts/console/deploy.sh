@@ -2,8 +2,8 @@
 # Deploy stack auth-gate-console-$STAGE: write origin-verify if absent, build the
 # Lambda and the web app, sam deploy, upload the site, invalidate, print the URLs.
 # Reads AuthGateBaseUrl from the auth-gate stack ($AUTHGATE_STACK), and PortalUrl and PortalClientId
-# from the Portal stack's BaseUrl and AuthGateClientId outputs ($PORTAL_STACK): deploy the Portal
-# first, with its second pass done, and create the operator key (scripts/portal/operator-key.sh).
+# from the Portal stack's BaseUrl and AuthGateClientId outputs ($PORTAL_STACK). Order: create the
+# operator key first (scripts/portal/operator-key.sh), then deploy the Portal (both passes), then the Console.
 # PublicBaseUrl, the avatar bucket's CORS origin, is empty on the first pass (no CloudFront domain
 # yet) and read from this stack's own BaseUrl after; with a custom domain it is always set. AUTHGATE_CLIENT_ID
 # may be empty on the first pass: deploy, run register-client.sh stg (it needs this
