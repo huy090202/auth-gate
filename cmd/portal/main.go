@@ -81,6 +81,10 @@ func main() {
 		s3c := s3.NewFromConfig(awsCfg)
 		deps.Avatars = avatar.NewS3(s3c, s3.NewPresignClient(s3c), cfg.AvatarBucket)
 	}
+	if !cfg.Dev {
+		cfg.OperatorKey = mustSecret(ctx, awsCfg, cfg.OperatorKeyParam)
+		deps.Config = cfg
+	}
 	h := portal.New(deps)
 
 	if cfg.Dev {

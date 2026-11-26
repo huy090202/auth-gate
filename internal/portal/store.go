@@ -60,6 +60,8 @@ type User struct {
 	AvatarKey        string
 	PersonalTenantID string
 	CreatedAt        time.Time
+	// LastSignInAt is the last completed sign-in; nil until the first one.
+	LastSignInAt *time.Time
 
 	// The first-factor lease, store-owned: CreateUser ignores them, the claim and
 	// release methods set them, and no view or log reads them.
@@ -243,6 +245,9 @@ func decodeUser(it item) (User, error) {
 		return User{}, err
 	}
 	if u.LockedUntil, err = getT(it, "lockedUntil"); err != nil {
+		return User{}, err
+	}
+	if u.LastSignInAt, err = getT(it, "lastSignInAt"); err != nil {
 		return User{}, err
 	}
 	c, err := getT(it, "createdAt")

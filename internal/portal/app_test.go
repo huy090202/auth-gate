@@ -20,7 +20,7 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 	full := map[string]string{
 		"TABLE_NAME": "t", "AWS_REGION": "r", "AUTHGATE_BASE_URL": "https://a", "AUTHGATE_CLIENT_ID": "c",
 		"PUBLIC_BASE_URL": "https://p", "EMAIL_FROM": "no-reply@p", "AVATAR_BUCKET": "b", "TURNSTILE_SITE_KEY": "k",
-		"CLIENT_KEY_PARAM": "/c", "PORTAL_KEY_PARAM": "/p", "TURNSTILE_SECRET_PARAM": "/t", "ORIGIN_VERIFY_PARAM": "/o",
+		"CLIENT_KEY_PARAM": "/c", "PORTAL_KEY_PARAM": "/p", "OPERATOR_KEY_PARAM": "/op", "TURNSTILE_SECRET_PARAM": "/t", "ORIGIN_VERIFY_PARAM": "/o",
 	}
 	dev := map[string]string{"PORTAL_DEV": "1", "TABLE_NAME": "t", "AUTHGATE_BASE_URL": "http://a", "AUTHGATE_CLIENT_ID": "c", "CLIENT_KEY": "k"}
 	without := func(base map[string]string, drop string) map[string]string {
@@ -54,7 +54,7 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 		})
 	}
 	c, _ := LoadConfig(func(k string) string { return dev[k] })
-	if !c.Dev || c.Port != "8789" || c.PortalKey != "dev-portal" || c.TurnstileSiteKey != TurnstileTestSiteKey ||
+	if !c.Dev || c.Port != "8789" || c.PortalKey != "dev-portal" || c.OperatorKey != "dev-operator" || c.TurnstileSiteKey != TurnstileTestSiteKey ||
 		c.TurnstileSecret != TurnstileTestSecretKey || c.MailboxDir != ".portal-mailbox" || c.PublicBaseURL != "http://localhost:8789" {
 		t.Fatalf("dev defaults = %+v", c)
 	}
