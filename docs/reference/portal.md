@@ -140,10 +140,10 @@ email. No route returns a password hash, a recovery code, a token or a session.
 | `GET /api/operator/tenants/{tid}/audit?cursor=` | The tenant's audit, in the shape of `GET /t/{tenantId}/audit`; `400 invalid_cursor` for a bad cursor. |
 | `POST /api/operator/tenants/{tid}/suspend`, `/unsuspend` | Sets or clears `suspendedAt`, writes the tenant audit and emails the owners, only when the state changed. Answers the tenant. `409 tenant_deleting` for a tenant being deleted. |
 | `POST /api/operator/tenants/{tid}/audit` | Body `{action: "tenant-quota", from, to}`. Writes the tenant audit only; `204`. `400 invalid_action` for any other action or a missing or negative number. |
-| `GET /api/operator/users?email=` | Exact match, or `404 not_found`. `userId`, `email`, `displayName`, `emailVerifiedAt`, `suspendedAt`, `factorCount`, `lastSignInAt` and `tenants` (id, name, kind, role). |
-| `POST /api/operator/users/{uid}/suspend`, `/unsuspend` | Suspend sets `suspendedAt` and bumps `sessionEpoch`. Both email the user when the state changed and the address is verified. Answer the user as above. |
+| `GET /api/operator/users?email=` | Exact match, or `404 not_found`. `userId`, `email`, `displayName`, `emailVerifiedAt`, `suspendedAt`, `factorCount`, `lastSignInAt` and `tenants` (id, name, kind, role). `factorCount` is left out when AuthGate does not answer, and the user writes below still answer `200`. |
+| `POST /api/operator/users/{uid}/suspend`, `/unsuspend` | Suspend sets `suspendedAt` and bumps `sessionEpoch`. Both email the user when the state changed and the address is verified. Answer the user as above; `404 not_found` if the user was deleted meanwhile. |
 | `POST /api/operator/users/{uid}/resend-verification` | `200 {"status":"sent"}`; `409 already_verified` for a verified user. |
-| `POST /api/operator/users/{uid}/factor-reset` | Starts the 24-hour wait and sends `factor-reset-started`, with no confirm link. `200 {dueAt}`. A reset already pending is kept and not mailed again. `409 not_mailable` when the user has no verified address. |
+| `POST /api/operator/users/{uid}/factor-reset` | Starts the 24-hour wait and sends `factor-reset-started`, with no confirm link. `200 {dueAt}`. A reset already pending is kept and not mailed again. `409 not_mailable` when the user has no verified address; `409 conflict` when a pending reset was cancelled while the call ran (retry). |
 
 The tenant audit names the actor "AuthGate administrator" with the fixed actor id `operator`,
 never the operator. Four mail kinds carry fixed text and the support address, in English and

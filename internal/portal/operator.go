@@ -162,9 +162,11 @@ func (a *App) operatorUser(w http.ResponseWriter, r *http.Request) error {
 
 // writeOperatorUser answers the operator's view of one user.
 func (a *App) writeOperatorUser(w http.ResponseWriter, r *http.Request, u User) error {
-	f, err := a.AuthGate.Factors(r.Context(), u.ID)
-	if err != nil {
-		return webapi.AuthGateError(err)
+	// The view must not depend on AuthGate: a user write has already happened when this runs, so an
+	// outage only drops factorCount.
+	f, ferr := a.AuthGate.Factors(r.Context(), u.ID)
+	if ferr != nil {
+		slog.Warn("portal: operator view without factorCount", "user", u.ID, "err", ferr)
 	}
 	count := len(f.WebAuthn)
 	if f.PIN {
@@ -192,7 +194,10 @@ func (a *App) writeOperatorUser(w http.ResponseWriter, r *http.Request, u User) 
 		tenants = append(tenants, tenantRef{t.ID, t.Name, t.Kind, m.Role})
 	}
 	out := map[string]any{
-		"userId": u.ID, "email": u.Email, "displayName": u.DisplayName, "factorCount": count, "tenants": tenants,
+		"userId": u.ID, "email": u.Email, "displayName": u.DisplayName, "tenants": tenants,
+	}
+	if ferr == nil {
+		out["factorCount"] = count
 	}
 	for k, t := range map[string]*time.Time{"emailVerifiedAt": u.EmailVerifiedAt, "suspendedAt": u.SuspendedAt, "lastSignInAt": u.LastSignInAt} {
 		if t != nil {
@@ -306,9 +311,9 @@ func (a *App) operatorQuotaAudit(w http.ResponseWriter, r *http.Request) error {
 // operatorSetUserSuspended suspends a user and signs them out everywhere (the epoch bump), or restores
 // them. Only a call that changed the state mails, so a repeated click is a quiet 200.
 func (a *App) operatorSetUserSuspended(suspend bool) func(http.ResponseWriter, *http.Request) error {
-	kind, expr, cond := "account-unsuspended", "REMOVE suspendedAt", "attribute_exists(suspendedAt)"
+	kind, expr, cond := "account-unsuspended", "REMOVE suspendedAt", "attribute_exists(pk) AND attribute_exists(suspendedAt)"
 	if suspend {
-		kind, expr, cond = "account-suspended", "SET suspendedAt = :t ADD sessionEpoch :one", "attribute_not_exists(suspendedAt)"
+		kind, expr, cond = "account-suspended", "SET suspendedAt = :t ADD sessionEpoch :one", "attribute_exists(pk) AND attribute_not_exists(suspendedAt)"
 	}
 	return func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
@@ -325,8 +330,12 @@ func (a *App) operatorSetUserSuspended(suspend bool) func(http.ResponseWriter, *
 		if err != nil && !dynamo.IsConditionFailed(err) {
 			return err
 		}
-		// Re-read: the answer shows the stored state, whoever changed it.
+		// Re-read: the answer shows the stored state, whoever changed it. A user who deleted the
+		// account meanwhile is gone (the condition kept the update from recreating it).
 		if u, err = a.Store.GetUser(ctx, u.ID); err != nil {
+			if errors.Is(err, ErrUserNotFound) {
+				return apiErr(http.StatusNotFound, "not_found")
+			}
 			return err
 		}
 		// An unverified address was never confirmed, so it gets no mail.
@@ -365,6 +374,9 @@ func (a *App) operatorFactorReset(w http.ResponseWriter, r *http.Request) error 
 	}
 	now := a.now()
 	fr, created, err := a.Store.PutFactorReset(r.Context(), u.ID, now, now.Add(factorResetWait))
+	if errors.Is(err, ErrConflict) { // a pending reset was cancelled between the put and the read
+		return apiErr(http.StatusConflict, "conflict")
+	}
 	if err != nil {
 		return err
 	}

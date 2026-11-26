@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/huy090202/auth-gate/internal/platform/authgate"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -310,5 +313,48 @@ func TestOperatorQuotaAudit(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ActorID != "operator" || got[0].Detail["from"] != "5" || got[0].Detail["to"] != "8" {
 		t.Fatalf("audit = %+v", got)
+	}
+}
+
+// Why: a user who deletes the account while the operator suspends it must not be brought back as a stray
+// USER# item holding only suspendedAt and sessionEpoch; the operator gets a 404.
+func TestOperatorSuspendDeletedUserIsNotRecreated(t *testing.T) {
+	e := newAuthEnv(t)
+	u := e.user(t, "gone@x.com", goodPW)
+	armed := false
+	e.a.Now = func() time.Time {
+		if armed {
+			if _, err := e.a.Store.DB.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+				TableName: aws.String(e.a.Store.Table), Key: userKey(u.ID),
+			}); err != nil {
+				t.Error(err)
+			}
+		}
+		return *e.clock
+	}
+	armed = true
+	want(t, e.opPost("/api/operator/users/"+u.ID+"/suspend", map[string]string{}), 404, "not_found")
+	armed = false
+	out, err := e.a.Store.DB.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String(e.a.Store.Table), Key: userKey(u.ID), ConsistentRead: aws.Bool(true),
+	})
+	if err != nil || out.Item != nil {
+		t.Fatalf("stray item %v (%v)", out.Item, err)
+	}
+}
+
+// Why: the write and the email already happened; an AuthGate outage must not turn the operator's
+// answer into a failure, so the view only loses factorCount.
+func TestOperatorUserWriteSurvivesAuthGateOutage(t *testing.T) {
+	e := newAuthEnv(t)
+	u := e.user(t, "down@x.com", goodPW)
+	e.a.AuthGate = &authgate.Client{BaseURL: "https://127.0.0.1:1", ClientKey: "x", HTTP: &http.Client{Timeout: time.Second}}
+	r := e.opPost("/api/operator/users/"+u.ID+"/suspend", map[string]string{})
+	want(t, r, 200, "")
+	if r.m()["suspendedAt"] == nil {
+		t.Fatalf("body = %s", r.Body)
+	}
+	if _, ok := r.m()["factorCount"]; ok {
+		t.Fatalf("factorCount present: %s", r.Body)
 	}
 }
