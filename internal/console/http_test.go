@@ -23,6 +23,7 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 		"TABLE_NAME": "t", "AUTHGATE_BASE_URL": "https://a", "AUTHGATE_CLIENT_ID": "c",
 		"ADMIN_KEY_PARAM": "/a", "CLIENT_KEY_PARAM": "/c", "ORIGIN_VERIFY_PARAM": "/o",
 		"PORTAL_URL": "https://p", "PORTAL_CLIENT_ID": "pc", "PORTAL_OPERATOR_KEY_PARAM": "/p",
+		"AVATAR_BUCKET": "b",
 	}
 	dev := map[string]string{
 		"CONSOLE_DEV": "1", "TABLE_NAME": "t", "AUTHGATE_BASE_URL": "http://a", "AUTHGATE_CLIENT_ID": "c",
@@ -52,6 +53,7 @@ func TestLoadConfigRefusesMissing(t *testing.T) {
 		{"stage without portal url", without(full, "PORTAL_URL"), false},
 		{"stage without portal client id", without(full, "PORTAL_CLIENT_ID"), false},
 		{"stage without operator key param", without(full, "PORTAL_OPERATOR_KEY_PARAM"), false},
+		{"stage without avatar bucket", without(full, "AVATAR_BUCKET"), false},
 		{"dev complete", dev, true},
 		{"dev without admin key", without(dev, "ADMIN_KEY"), false},
 		{"dev without client key", without(dev, "CLIENT_KEY"), false},

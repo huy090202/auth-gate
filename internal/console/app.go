@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
 	"github.com/huy090202/auth-gate/internal/platform/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/avatar"
 	"github.com/huy090202/auth-gate/internal/platform/password"
 	"github.com/huy090202/auth-gate/internal/platform/portalapi"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
@@ -24,7 +25,9 @@ type Deps struct {
 	AuthGate *authgate.Client
 	Tokens   *authgate.Verifier
 	Portal   *portalapi.Client
-	Now      func() time.Time
+	// Avatars holds the admins' pictures: S3 on a stage, a local directory in Dev.
+	Avatars avatar.Store
+	Now     func() time.Time
 }
 
 // App holds the dependencies of the handlers.

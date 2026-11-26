@@ -46,6 +46,8 @@ type Admin struct {
 	CreatedAt          time.Time
 	// SessionEpoch is bumped to end every open session of this admin at once.
 	SessionEpoch int
+	// AvatarKey is the object key of the admin's picture under avatars/, or "".
+	AvatarKey string
 }
 
 // Session is a server-side session. Hash is the hex sha256 of the cookie token;
@@ -138,7 +140,7 @@ func decodeAdmin(it item) (Admin, error) {
 	a := Admin{
 		ID: getS(it, "adminId"), Username: getS(it, "username"), Role: Role(getS(it, "role")),
 		PasswordHash: getS(it, "passwordHash"), FailedCount: getN(it, "failedCount"),
-		SessionEpoch: getN(it, "sessionEpoch"),
+		SessionEpoch: getN(it, "sessionEpoch"), AvatarKey: getS(it, "avatarKey"),
 	}
 	if b, ok := it["mustChangePassword"].(*types.AttributeValueMemberBOOL); ok {
 		a.MustChangePassword = b.Value
@@ -566,4 +568,29 @@ func (st *Store) SetRegistration(ctx context.Context, hash, registrationID strin
 // SetFactorProved records that the session itself enrolled the account's first factor.
 func (st *Store) SetFactorProved(ctx context.Context, hash string) error {
 	return st.sessions().SetFactorProved(ctx, hash)
+}
+
+// swapAvatar sets the admin's avatar key (empty removes it) and returns the one
+// it replaced. A missing admin gives ErrAdminNotFound.
+func (st *Store) swapAvatar(ctx context.Context, username, key string) (prev string, err error) {
+	expr := "SET avatarKey = :k"
+	vals := item{":k": s(key)}
+	if key == "" {
+		expr, vals = "REMOVE avatarKey", nil
+	}
+	in := &dynamodb.UpdateItemInput{
+		TableName: aws.String(st.Table), Key: adminKey(username), UpdateExpression: aws.String(expr),
+		ConditionExpression: aws.String(exists), ReturnValues: types.ReturnValueAllOld,
+	}
+	if vals != nil {
+		in.ExpressionAttributeValues = vals
+	}
+	out, err := st.DB.UpdateItem(ctx, in)
+	if dynamo.IsConditionFailed(err) {
+		return "", ErrAdminNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("set avatar: %w", err)
+	}
+	return getS(out.Attributes, "avatarKey"), nil
 }

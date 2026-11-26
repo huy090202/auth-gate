@@ -17,7 +17,9 @@ type Config struct {
 	// PortalOperatorKeyParam on a stage and PORTAL_OPERATOR_KEY in Dev.
 	PortalURL, PortalClientID, PortalOperatorKeyParam string
 	PortalOperatorKey                                 string // Dev only
-	Dev                                               bool
+	// AvatarBucket is required on a stage; AvatarDir is the Dev directory.
+	AvatarBucket, AvatarDir string
+	Dev                     bool
 }
 
 // LoadConfig reads the environment and refuses to start with anything missing.
@@ -38,6 +40,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		PortalOperatorKeyParam: getenv("PORTAL_OPERATOR_KEY_PARAM"),
 		DynamoEndpoint:         getenv("DYNAMO_ENDPOINT"),
 		Port:                   getenv("PORT"),
+		AvatarBucket:           getenv("AVATAR_BUCKET"),
 		Dev:                    getenv("CONSOLE_DEV") == "1",
 	}
 	var missing []string
@@ -61,6 +64,10 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		if c.PortalOperatorKey == "" {
 			c.PortalOperatorKey = "dev-operator"
 		}
+		c.AvatarDir = getenv("AVATAR_DIR")
+		if c.AvatarDir == "" {
+			c.AvatarDir = ".console-avatars"
+		}
 		if c.Port == "" {
 			c.Port = "8788"
 		}
@@ -71,6 +78,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		need("PORTAL_URL", c.PortalURL)
 		need("PORTAL_CLIENT_ID", c.PortalClientID)
 		need("PORTAL_OPERATOR_KEY_PARAM", c.PortalOperatorKeyParam)
+		need("AVATAR_BUCKET", c.AvatarBucket)
 	}
 	if len(missing) > 0 {
 		return Config{}, errors.New("config: console requires " + strings.Join(missing, ", "))

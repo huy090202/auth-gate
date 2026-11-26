@@ -32,6 +32,10 @@ func (a *App) meRoutes(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/me/pin", a.audited("delete-pin", self(webapi.HandlerFunc(a.deletePIN))))
 	mux.Handle("POST /api/me/passkeys/start", a.audited("passkey-start", self(webapi.HandlerFunc(a.passkeyStart))))
 	mux.Handle("POST /api/me/passkeys/finish", a.audited("passkey-finish", self(webapi.HandlerFunc(a.passkeyFinish))))
+	full := a.session(StageFull)
+	mux.Handle("POST /api/me/avatar", a.audited("avatar-form", full(webapi.HandlerFunc(a.avatarForm))))
+	mux.Handle("POST /api/me/avatar/confirm", a.audited("set-avatar", full(webapi.HandlerFunc(a.confirmAvatar))))
+	mux.Handle("DELETE /api/me/avatar", a.audited("remove-avatar", full(webapi.HandlerFunc(a.removeAvatar))))
 	mux.Handle("DELETE /api/me/passkeys/{id}", a.audited("delete-passkey", self(webapi.HandlerFunc(a.deletePasskey))))
 }
 
@@ -41,6 +45,9 @@ func (a *App) me(w http.ResponseWriter, r *http.Request) error {
 	x, admin := sessionFrom(r.Context())
 	out := map[string]any{
 		"username": admin.Username, "role": admin.Role, "stage": x.Stage, "mustChangePassword": admin.MustChangePassword,
+	}
+	if admin.AvatarKey != "" {
+		out["avatarUrl"] = "/" + admin.AvatarKey
 	}
 	f, err := a.AuthGate.Factors(r.Context(), admin.ID)
 	if err != nil {
