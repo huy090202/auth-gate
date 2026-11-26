@@ -36,7 +36,7 @@ export function parsePairs(v: string): [string, string][] | null {
   return out.length > 0 ? out : null;
 }
 
-const ORDER = ['reason', 'action', 'factor', 'target', 'role', 'name', 'rpId', 'origins', 'fields', 'pinPolicy', 'tokenTtlSec', 'rateLimit', 'revoked'];
+const ORDER = ['reason', 'action', 'factor', 'target', 'role', 'name', 'rpId', 'origins', 'fields', 'pinPolicy', 'tokenTtlSec', 'rateLimit', 'revoked', 'from', 'to'];
 
 /** Detail keys in a reading order: the ones we know first, the rest alphabetically. */
 export function detailKeys(detail: Record<string, string> | undefined): string[] {

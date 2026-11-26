@@ -307,7 +307,14 @@ func (a *App) completeSignIn(ctx context.Context, u User) error {
 	if err := a.Store.ResetLoginFailures(ctx, u.ID); err != nil {
 		return err
 	}
-	return a.Store.ClearFail(ctx, failAcct, emailHash(u.Email))
+	if err := a.Store.ClearFail(ctx, failAcct, emailHash(u.Email)); err != nil {
+		return err
+	}
+	// Best effort: a failed note must not turn a good sign-in into an error.
+	if err := a.Store.SetLastSignIn(ctx, u.ID, a.now()); err != nil {
+		slog.Warn("portal: record last sign-in", "user", u.ID, "err", err)
+	}
+	return nil
 }
 
 func (a *App) enrollAfterLogin(ctx context.Context, w http.ResponseWriter, u User) error {

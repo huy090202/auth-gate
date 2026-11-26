@@ -13,6 +13,8 @@
 #   4. $BaseUrl/api/config  200 with a non-empty turnstileSiteKey: the function is up,
 #                           which needs the second deploy pass
 #   4b. $BaseUrl/email-logo.png  200 image/png: the logo the emails link to
+#   4c. $BaseUrl/api/operator/tenants without x-operator-key  401 {"error":"unauthorized"}: the
+#                           operator routes refuse a caller without the key
 #   5. Bruno 01-boundary    the refusals that need no credential
 # It needs no credentials and prints no secret. Exit is non-zero on any failure.
 set -euo pipefail
@@ -109,6 +111,15 @@ fetch "$base_url/email-logo.png"
 if [[ "$code" == 200 ]]; then pass "GET /email-logo.png is 200"; else fail "GET /email-logo.png is $code, want 200"; fi
 ctype="$(header content-type)"
 if [[ "$ctype" == image/png* ]]; then pass "email-logo.png content-type is $ctype"; else fail "email-logo.png content-type is '$ctype', want image/png"; fi
+
+# 4c. the operator routes refuse a request without the operator key
+fetch "$base_url/api/operator/tenants"
+if [[ "$code" == 401 ]]; then pass "GET /api/operator/tenants without the key is 401"; else fail "GET /api/operator/tenants without the key is $code, want 401"; fi
+if [[ "$(tr -d ' \n\r' <"$tmp/body")" == '{"error":"unauthorized"'* ]]; then
+  pass "/api/operator/tenants body is the unauthorized envelope"
+else
+  fail "/api/operator/tenants body is not {\"error\":\"unauthorized\"...}"
+fi
 
 # 5. Bruno, the folder that needs no credential. baseUrl is not a secret, so it
 # goes on argv. Each request fails on purpose and none needs a credential.

@@ -25,7 +25,7 @@ var wantLink = map[string]bool{"verify": true, "reset": true, "factor-reset-conf
 // ignored), and the typed values for the organisation kinds.
 func varsFor(kind string) map[string]string {
 	v := map[string]string{"link": link}
-	if strings.HasPrefix(kind, "org-") {
+	if strings.HasPrefix(kind, "org-") || strings.HasPrefix(kind, "tenant-") {
 		v["org"] = "Acme"
 		v["inviter"] = "Ann"
 		v["role"] = "admin"
@@ -123,6 +123,20 @@ func TestRenderEveryKindInBothLanguages(t *testing.T) {
 						t.Errorf("%s: text lacks %q", id, want)
 					}
 				}
+			case operatorKinds[kind]:
+				// Why: an operator notice must not offer sign-in or tell a customer to change a
+				// password they never lost, and it must end with the support line.
+				for name, part := range map[string]string{"html": r.HTML, "text": r.Text} {
+					if strings.Contains(part, "/sign-in") || strings.Contains(part, wantSignIn[lang]+":") {
+						t.Errorf("%s %s: must not offer sign in", id, name)
+					}
+					if strings.Contains(part, wantNoticeFooter[lang]) || strings.Contains(part, "change your password") || strings.Contains(part, "đổi mật khẩu") {
+						t.Errorf("%s %s: carries the password footer", id, name)
+					}
+				}
+				if !strings.Contains(r.Text, operatorFooter[lang]) || !strings.HasSuffix(strings.TrimSpace(r.Text), "support@example.com.") {
+					t.Errorf("%s: text lacks the operator footer or does not end with the support line: %q", id, r.Text)
+				}
 			case kind == "account-deleted":
 				if strings.Contains(r.HTML, "/sign-in") || strings.Contains(r.Text, "/sign-in") {
 					t.Errorf("%s: must not offer sign in", id)
@@ -147,8 +161,8 @@ func TestRenderEveryKindInBothLanguages(t *testing.T) {
 			}
 		}
 	}
-	if len(Kinds) != 17 {
-		t.Fatalf("expected 17 kinds, got %d", len(Kinds))
+	if len(Kinds) != 21 {
+		t.Fatalf("expected 21 kinds, got %d", len(Kinds))
 	}
 }
 

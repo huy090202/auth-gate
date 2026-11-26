@@ -13,25 +13,35 @@ type Config struct {
 	Stage, Table, Region, AuthGateBaseURL, AuthGateClientID string
 	AdminKeyParam, ClientKeyParam, OriginVerifyParam        string
 	DynamoEndpoint, Port                                    string
-	Dev                                                     bool
+	// PortalURL and PortalClientID reach the Portal's operator API; the key is
+	// PortalOperatorKeyParam on a stage and PORTAL_OPERATOR_KEY in Dev.
+	PortalURL, PortalClientID, PortalOperatorKeyParam string
+	PortalOperatorKey                                 string // Dev only
+	// AvatarBucket is required on a stage; AvatarDir is the Dev directory.
+	AvatarBucket, AvatarDir string
+	Dev                     bool
 }
 
 // LoadConfig reads the environment and refuses to start with anything missing.
-// With CONSOLE_DEV=1 the admin and client keys come from the ADMIN_KEY and
+// With CONSOLE_DEV=1 the admin and client keys come from the ADMIN_KEY,
 // CLIENT_KEY variables, so the SSM parameter names are not needed.
 func LoadConfig(getenv func(string) string) (Config, error) {
 	c := Config{
-		Stage:             getenv("STAGE"),
-		Table:             getenv("TABLE_NAME"),
-		Region:            getenv("AWS_REGION"),
-		AuthGateBaseURL:   getenv("AUTHGATE_BASE_URL"),
-		AuthGateClientID:  getenv("AUTHGATE_CLIENT_ID"),
-		AdminKeyParam:     getenv("ADMIN_KEY_PARAM"),
-		ClientKeyParam:    getenv("CLIENT_KEY_PARAM"),
-		OriginVerifyParam: getenv("ORIGIN_VERIFY_PARAM"),
-		DynamoEndpoint:    getenv("DYNAMO_ENDPOINT"),
-		Port:              getenv("PORT"),
-		Dev:               getenv("CONSOLE_DEV") == "1",
+		Stage:                  getenv("STAGE"),
+		Table:                  getenv("TABLE_NAME"),
+		Region:                 getenv("AWS_REGION"),
+		AuthGateBaseURL:        getenv("AUTHGATE_BASE_URL"),
+		AuthGateClientID:       getenv("AUTHGATE_CLIENT_ID"),
+		AdminKeyParam:          getenv("ADMIN_KEY_PARAM"),
+		ClientKeyParam:         getenv("CLIENT_KEY_PARAM"),
+		OriginVerifyParam:      getenv("ORIGIN_VERIFY_PARAM"),
+		PortalURL:              getenv("PORTAL_URL"),
+		PortalClientID:         getenv("PORTAL_CLIENT_ID"),
+		PortalOperatorKeyParam: getenv("PORTAL_OPERATOR_KEY_PARAM"),
+		DynamoEndpoint:         getenv("DYNAMO_ENDPOINT"),
+		Port:                   getenv("PORT"),
+		AvatarBucket:           getenv("AVATAR_BUCKET"),
+		Dev:                    getenv("CONSOLE_DEV") == "1",
 	}
 	var missing []string
 	need := func(name, v string) {
@@ -45,6 +55,19 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if c.Dev {
 		need("ADMIN_KEY", getenv("ADMIN_KEY"))
 		need("CLIENT_KEY", getenv("CLIENT_KEY"))
+		// Local dev: the portal-dev port and the Portal's own Dev key. An empty client
+		// id means no Portal-client protection locally.
+		if c.PortalURL == "" {
+			c.PortalURL = "http://localhost:8789"
+		}
+		c.PortalOperatorKey = getenv("PORTAL_OPERATOR_KEY")
+		if c.PortalOperatorKey == "" {
+			c.PortalOperatorKey = "dev-operator"
+		}
+		c.AvatarDir = getenv("AVATAR_DIR")
+		if c.AvatarDir == "" {
+			c.AvatarDir = ".console-avatars"
+		}
 		if c.Port == "" {
 			c.Port = "8788"
 		}
@@ -52,6 +75,10 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		need("ADMIN_KEY_PARAM", c.AdminKeyParam)
 		need("CLIENT_KEY_PARAM", c.ClientKeyParam)
 		need("ORIGIN_VERIFY_PARAM", c.OriginVerifyParam)
+		need("PORTAL_URL", c.PortalURL)
+		need("PORTAL_CLIENT_ID", c.PortalClientID)
+		need("PORTAL_OPERATOR_KEY_PARAM", c.PortalOperatorKeyParam)
+		need("AVATAR_BUCKET", c.AvatarBucket)
 	}
 	if len(missing) > 0 {
 		return Config{}, errors.New("config: console requires " + strings.Join(missing, ", "))

@@ -17,3 +17,4 @@ bruno-portal/environments/*.yml
 !bruno-portal/environments/*.example.yml
 .portal-mailbox/
 .portal-avatars/
+.console-avatars/

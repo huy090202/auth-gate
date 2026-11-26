@@ -34,3 +34,16 @@ for app in console portal; do
     "" | None) die "auth-gate-$app-$STAGE has no AuthGateClientId output: its second deploy pass has not run; do it by hand (docs/reference/deploy.md, First deploy of a stage)" ;;
   esac
 done
+
+# The operator key is created by hand (scripts/portal/operator-key.sh), never by CI. Both apps
+# read it, so a deploy without it would start Lambdas that refuse to initialise. No
+# --with-decryption: only its existence is checked, and the value is never read or printed.
+key="/credo/auth-gate-portal/$STAGE/operator-key"
+if aws ssm get-parameter --region "$REGION" --name "$key" >/dev/null 2>"$err"; then
+  echo "ok $key"
+elif grep -q ParameterNotFound "$err"; then
+  die "$key is missing: run scripts/portal/operator-key.sh by hand under the admin profile"
+else
+  cat "$err" >&2
+  die "cannot read $key"
+fi

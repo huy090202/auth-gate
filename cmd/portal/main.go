@@ -17,12 +17,12 @@ import (
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/huy090202/auth-gate/internal/platform/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/avatar"
 	"github.com/huy090202/auth-gate/internal/platform/dynamo"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 	"github.com/huy090202/auth-gate/internal/platform/ssmx"
 	"github.com/huy090202/auth-gate/internal/portal"
-	"github.com/huy090202/auth-gate/internal/portal/avatar"
 	"github.com/huy090202/auth-gate/internal/portal/hibp"
 	"github.com/huy090202/auth-gate/internal/portal/mail"
 	"github.com/huy090202/auth-gate/internal/portal/turnstile"
@@ -80,6 +80,10 @@ func main() {
 		deps.Mail = mail.NewSES(sesv2.NewFromConfig(awsCfg), cfg.EmailFrom, site)
 		s3c := s3.NewFromConfig(awsCfg)
 		deps.Avatars = avatar.NewS3(s3c, s3.NewPresignClient(s3c), cfg.AvatarBucket)
+	}
+	if !cfg.Dev {
+		cfg.OperatorKey = mustSecret(ctx, awsCfg, cfg.OperatorKeyParam)
+		deps.Config = cfg
 	}
 	h := portal.New(deps)
 

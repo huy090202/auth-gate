@@ -9,7 +9,7 @@ import { MAX_PAGES, fetchAllClients, type ClientView } from '../src/lib/clients'
 import { auditUrl } from '../src/lib/audit';
 import { WorkspacesContext, type Role, type Tenant } from '../src/lib/tenants';
 import { ClientDetail } from '../src/screens/ClientDetail';
-import { ClientList } from '../src/screens/Clients';
+import { ClientList, Clients } from '../src/screens/Clients';
 import { SessionProvider } from '../src/session';
 import { Shell } from '../src/shell';
 import { ToastProvider } from '../src/toast';
@@ -245,4 +245,30 @@ test('the account page keeps the workspace the tab was in; an unknown one falls 
   await mount(routes, '/account');
   expect(switcher()).toBe('Personal');
   sessionStorage.clear();
+});
+
+// Why: a suspended customer must not be able to create new keys or invite others while the operator investigates.
+test('the shell shows the suspended banner and disables New client', async () => {
+  vi.stubGlobal('fetch', async (url: string) => {
+    if (url === '/api/tenants') return json({ tenants: [{ tenantId: TENANT, kind: 'personal', name: '', role: 'owner', suspended: true }] });
+    if (url === '/api/config') return json({ supportEmail: 'help@x.test' });
+    if (url.startsWith(`/api/t/${TENANT}/clients`)) return json({ clients: [] });
+    return json({}, 404);
+  });
+  const me = {
+    userId: 'u1', email: 'a@x.com', displayName: 'Ann', lang: 'en' as const, stage: 'full' as const, personalTenantId: TENANT,
+    factors: { pin: true, webauthn: [] }, recoveryCodesLeft: 10,
+  };
+  await mount(
+    <SessionProvider>
+      <Routes>
+        <Route path="/t/:tenantId/clients" element={<Shell me={me}><Clients /></Shell>} />
+      </Routes>
+    </SessionProvider>,
+    `/t/${TENANT}/clients`,
+  );
+  const banner = host!.querySelector('[role="status"]');
+  expect(banner?.textContent).toContain('suspended');
+  expect(banner?.textContent).toContain('help@x.test');
+  expect((button('New client') as HTMLButtonElement).disabled).toBe(true);
 });

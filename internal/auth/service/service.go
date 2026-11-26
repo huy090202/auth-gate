@@ -403,6 +403,15 @@ func (s *Service) ListClients(ctx context.Context, cursor string) ([]client.Summ
 	return s.Clients.List(ctx, cursor)
 }
 
+// ListOwnerClients returns one page of a tenant's clients and the next cursor.
+// A tenant id that is not a canonical ULID is id.ErrInvalid.
+func (s *Service) ListOwnerClients(ctx context.Context, tenantID, cursor string) ([]client.Summary, string, error) {
+	if err := id.ValidateULID(tenantID); err != nil {
+		return nil, "", err
+	}
+	return s.Clients.ListOwned(ctx, tenantID, cursor)
+}
+
 // DisableClient stops the client's keys from authenticating.
 func (s *Service) DisableClient(ctx context.Context, clientID string) (client.Client, error) {
 	if err := validateIDs(clientID); err != nil {

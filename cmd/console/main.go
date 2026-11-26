@@ -14,12 +14,15 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/huy090202/auth-gate/internal/console"
 	"github.com/huy090202/auth-gate/internal/platform/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/avatar"
 	"github.com/huy090202/auth-gate/internal/platform/dynamo"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
+	"github.com/huy090202/auth-gate/internal/platform/portalapi"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 	"github.com/huy090202/auth-gate/internal/platform/ssmx"
 )
@@ -48,9 +51,15 @@ func main() {
 		}
 	}
 	var awsCfg aws.Config
-	var adminKey, clientKey string
+	var adminKey, clientKey, operatorKey string
+	var avatars avatar.Store
+	var devAvatars *avatar.Dir
 	if cfg.Dev {
-		adminKey, clientKey = os.Getenv("ADMIN_KEY"), os.Getenv("CLIENT_KEY")
+		if devAvatars, err = avatar.NewDir(cfg.AvatarDir, console.DevAvatarUploadPath); err != nil {
+			log.Fatal(err)
+		}
+		avatars = devAvatars
+		adminKey, clientKey, operatorKey = os.Getenv("ADMIN_KEY"), os.Getenv("CLIENT_KEY"), cfg.PortalOperatorKey
 	} else {
 		awsCfg, err = awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
 		if err != nil {
@@ -58,6 +67,9 @@ func main() {
 		}
 		adminKey = mustSecret(ctx, awsCfg, cfg.AdminKeyParam)
 		clientKey = mustSecret(ctx, awsCfg, cfg.ClientKeyParam)
+		operatorKey = mustSecret(ctx, awsCfg, cfg.PortalOperatorKeyParam)
+		s3c := s3.NewFromConfig(awsCfg)
+		avatars = avatar.NewS3(s3c, s3.NewPresignClient(s3c), cfg.AvatarBucket)
 	}
 	httpc := &http.Client{Timeout: authgate.Timeout}
 	// authgate.Client and Verifier copy this client and refuse redirects themselves.
@@ -67,10 +79,13 @@ func main() {
 		Limiter:  &ratelimit.Limiter{DB: db, Table: cfg.Table, TTL: time.Hour},
 		AuthGate: &authgate.Client{BaseURL: cfg.AuthGateBaseURL, ClientKey: clientKey, AdminKey: adminKey, HTTP: httpc},
 		Tokens:   &authgate.Verifier{BaseURL: cfg.AuthGateBaseURL, Audience: cfg.AuthGateClientID, HTTP: httpc},
+		Portal:   &portalapi.Client{BaseURL: cfg.PortalURL, OperatorKey: operatorKey, HTTP: httpc},
+		Avatars:  avatars,
 		Now:      time.Now,
 	})
 
 	if cfg.Dev {
+		h = console.DevRoutes(h, cfg.AvatarDir, devAvatars)
 		addr := ":" + cfg.Port
 		log.Printf("console dev listening on %s", addr)
 		srv := &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}

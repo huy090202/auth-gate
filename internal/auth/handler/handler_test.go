@@ -898,3 +898,27 @@ func TestRotateRacingDeleteAnswers404(t *testing.T) {
 		wantError(t, tc.call(), http.StatusNotFound, "client_not_found")
 	}
 }
+
+// Why: the Console's tenant page lists only that tenant's clients; a leak would show another customer's apps.
+func TestAdminListByOwner(t *testing.T) {
+	e := newEnv(t)
+	a, b := id.New(), id.New()
+	want := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		c, _ := e.portalCreate(t, a)
+		want[c] = true
+	}
+	e.portalCreate(t, b)
+	e.newClient(t, fast())
+
+	p := e.list(t, "?owner="+a)
+	if len(p.Clients) != 2 {
+		t.Fatalf("owner list: %d clients, want 2", len(p.Clients))
+	}
+	for _, c := range p.Clients {
+		if !want[c.ClientID] {
+			t.Fatalf("owner list leaked %s", c.ClientID)
+		}
+	}
+	wantError(t, e.admin_(http.MethodGet, "/api/clients?owner=bad", ""), http.StatusBadRequest, "invalid_owner")
+}

@@ -82,8 +82,27 @@ func (a *App) clientRoutes(mux *http.ServeMux) {
 	}
 }
 
+// isOwnClient says whether id is a client the Console must never change: its own and
+// the Portal's. An empty configured id (the Portal's, in Dev) never matches.
+func (a *App) isOwnClient(id string) bool {
+	return id != "" && (id == a.Config.AuthGateClientID || id == a.Config.PortalClientID)
+}
+
+// listClients is one page of clients. With ?owner=<tenant id> it is that tenant's
+// clients; any other owner is 400 (the operator's own clients are filtered by the SPA).
 func (a *App) listClients(w http.ResponseWriter, r *http.Request) error {
-	raw, err := a.AuthGate.ListClients(r.Context(), r.URL.Query().Get("cursor"))
+	q := r.URL.Query()
+	var raw json.RawMessage
+	var err error
+	if q.Has("owner") {
+		owner := q.Get("owner")
+		if !clientIDRE.MatchString(owner) {
+			return &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_owner"}
+		}
+		raw, err = a.AuthGate.ListClientsOwned(r.Context(), owner, q.Get("cursor"))
+	} else {
+		raw, err = a.AuthGate.ListClients(r.Context(), q.Get("cursor"))
+	}
 	if err != nil {
 		return webapi.AuthGateError(err)
 	}
@@ -100,7 +119,7 @@ func (a *App) getClient(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return webapi.AuthGateError(err)
 	}
-	if id == a.Config.AuthGateClientID {
+	if a.isOwnClient(id) {
 		// Tell the SPA up front, so it shows the client read-only instead of learning from a refused write.
 		var m map[string]json.RawMessage
 		if json.Unmarshal(raw, &m) == nil {
@@ -227,7 +246,7 @@ func (a *App) updateClient(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
-	if id == a.Config.AuthGateClientID {
+	if a.isOwnClient(id) {
 		return errOwnClient
 	}
 	body, err := json.Marshal(out)
@@ -264,7 +283,7 @@ func (a *App) clientWrite(action string, status int, call func(context.Context, 
 		if err != nil {
 			return err
 		}
-		if id == a.Config.AuthGateClientID {
+		if a.isOwnClient(id) {
 			return errOwnClient
 		}
 		if err := a.spendStepUp(r, tok); err != nil {
@@ -312,7 +331,7 @@ func (a *App) purgeSubject(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if id == a.Config.AuthGateClientID {
+	if a.isOwnClient(id) {
 		return errOwnClient
 	}
 	if err := a.spendStepUp(r, tok); err != nil {

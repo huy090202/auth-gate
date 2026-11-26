@@ -9,12 +9,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
 	"github.com/huy090202/auth-gate/internal/platform/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/avatar"
 	"github.com/huy090202/auth-gate/internal/platform/password"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 	"github.com/huy090202/auth-gate/internal/platform/viewerip"
 	"github.com/huy090202/auth-gate/internal/platform/webapi"
 	"github.com/huy090202/auth-gate/internal/platform/websession"
-	"github.com/huy090202/auth-gate/internal/portal/avatar"
 	"github.com/huy090202/auth-gate/internal/portal/hibp"
 	"github.com/huy090202/auth-gate/internal/portal/mail"
 	"github.com/huy090202/auth-gate/internal/portal/turnstile"
@@ -68,6 +68,7 @@ func (a *App) handler() http.Handler {
 	a.mountOrgDelete(mux)
 	a.mountInvites(mux)
 	a.mountClients(mux)
+	a.mountOperator(mux)
 	mux.HandleFunc("/api/", notFound)
 	return webapi.NoStore(webapi.RequireJSON(mux))
 }

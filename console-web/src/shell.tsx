@@ -1,12 +1,24 @@
 import { Menu } from '@mantine/core';
 import { NavItem, ShellLayout, endSession } from '@authgate/web-kit/shell-layout';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router';
 import { Brand } from './brand';
-import { AccountIcon, AdminsIcon, AuditIcon, ClientsIcon, MenuIcon, PanelLeftIcon, SignOutIcon } from './icons';
+import { AccountIcon, AdminsIcon, AuditIcon, ClientsIcon, MenuIcon, PanelLeftIcon, SignOutIcon, TenantsIcon, UsersIcon } from './icons';
 import { api } from './lib/api';
 import { fmt, useStrings } from './lib/i18n';
 import { useMe, type Me } from './session';
+
+/** The admin's picture, or their initial when there is none or it cannot be loaded. */
+export function Avatar({ me, large }: { me: Me; large?: boolean }) {
+  const t = useStrings();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [me.avatarUrl]);
+  const cls = large ? 'avatar avatar-lg' : 'avatar';
+  if (me.avatarUrl && !failed) {
+    return <img className={cls} src={me.avatarUrl} alt={fmt(t.common.avatarOf, { name: me.username })} onError={() => setFailed(true)} />;
+  }
+  return <span className={cls} aria-hidden="true">{[...me.username][0]?.toUpperCase()}</span>;
+}
 
 /**
  * The frame of every signed-in, full-stage screen (the layout is the kit's `ShellLayout`): a sticky
@@ -35,12 +47,14 @@ export function Shell({ me, children, collapsed }: { me: Me; children: ReactNode
       routeKey={pathname}
       nav={<>
         {link('/clients', t.screens.clients, <ClientsIcon />)}
+        {link('/tenants', t.screens.tenants, <TenantsIcon />)}
+        {link('/users', t.screens.users, <UsersIcon />)}
         {link('/audit', t.screens.audit, <AuditIcon />)}
         {me.role === 'master' && link('/admins', t.screens.admins, <AdminsIcon />)}
         {link('/account', t.screens.account, <AccountIcon />)}
       </>}
       account={{
-        avatar: <span className="avatar" aria-hidden="true">{[...me.username][0]?.toUpperCase()}</span>,
+        avatar: <Avatar me={me} />,
         name: me.username,
         buttonLabel: fmt(t.common.accountMenu, { username: me.username }),
         menu: <>

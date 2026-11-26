@@ -58,6 +58,8 @@ function Details({ e, t }: { e: AuditEntry; t: Strings }) {
 function ResultBadge({ result, t }: { result: string; t: Strings }) {
   const code = failureOf(result);
   if (code === null) return <Badge variant="light" color="canopy">{t.audit.success}</Badge>;
+  // Half done (AuthGate changed, the Portal step failed): a warning to finish, not a failure.
+  if (result === 'partial') return <Badge variant="light" color="orange">{t.audit.partial}</Badge>;
   return <Badge variant="light" color="red" title={result}>{code === '' ? (result || '?') : failureLabel(code, t)}</Badge>;
 }
 

@@ -1,0 +1,29 @@
+info:
+  name: "/api/tenants without a cookie (401)"
+  type: http
+  seq: 6
+
+http:
+  method: GET
+  url: "{{baseUrl}}/api/tenants"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("401", function() {
+          expect(res.getStatus()).to.equal(401);
+        });
+
+        test("unauthorized, nothing more", function() {
+          expect(res.getBody()).to.deep.equal({ error: "unauthorized" });
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 401.** The tenant list is for a signed-in admin. No cookie, no session, no data.

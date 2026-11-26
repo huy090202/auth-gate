@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Deploy stack auth-gate-console-$STAGE: write origin-verify if absent, build the
 # Lambda and the web app, sam deploy, upload the site, invalidate, print the URLs.
-# Reads AuthGateBaseUrl from the auth-gate stack ($AUTHGATE_STACK). AUTHGATE_CLIENT_ID
+# Reads AuthGateBaseUrl from the auth-gate stack ($AUTHGATE_STACK), and PortalUrl and PortalClientId
+# from the Portal stack's BaseUrl and AuthGateClientId outputs ($PORTAL_STACK). Order: create the
+# operator key first (scripts/portal/operator-key.sh), then deploy the Portal (both passes), then the Console.
+# PublicBaseUrl, the avatar bucket's CORS origin, is empty on the first pass (no CloudFront domain
+# yet) and read from this stack's own BaseUrl after; with a custom domain it is always set. AUTHGATE_CLIENT_ID
 # may be empty on the first pass: deploy, run register-client.sh stg (it needs this
 # stack's BaseUrl), deploy again with AUTHGATE_CLIENT_ID set. CONSOLE_RESERVED_CONCURRENCY,
 # when set, reserves that many concurrent executions for the Console.
@@ -43,6 +47,21 @@ fi
 authgate_url="$(output "$AUTHGATE_STACK" BaseUrl)"
 [[ -n "$authgate_url" ]] || die "stack $AUTHGATE_STACK has no BaseUrl output; deploy auth-gate first"
 
+portal_url="$(output "$PORTAL_STACK" BaseUrl)"
+portal_client_id="$(output "$PORTAL_STACK" AuthGateClientId)"
+[[ -n "$portal_url" ]] || die "stack $PORTAL_STACK has no BaseUrl output; deploy the Portal first"
+[[ -n "$portal_client_id" ]] || die "stack $PORTAL_STACK has no AuthGateClientId output; finish the Portal's second deploy pass first"
+
+# The Console's own origin: empty while the stack does not exist (pass 1), then its BaseUrl.
+public_url=""
+if [[ -n "$DOMAIN" ]]; then
+  public_url="https://$(app_host admin)"
+elif aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" >/dev/null 2>"$tmp/err"; then
+  public_url="$(output "$STACK" BaseUrl)"
+elif ! grep -q 'does not exist' "$tmp/err"; then
+  die "cannot read $STACK: $(<"$tmp/err")"
+fi
+
 cd "$ROOT"
 make console-build
 pnpm --filter console-web run build
@@ -51,7 +70,8 @@ pnpm --filter console-web run build
 # sam rejects empty overrides ("AuthGateClientId="), so the id is passed only when set.
 # On create the template default "" applies; on update SAM keeps the previous value,
 # so a plain redeploy of a healthy stack keeps its client id.
-params=("Stage=$STAGE" "AuthGateBaseUrl=${authgate_url%/}")
+params=("Stage=$STAGE" "AuthGateBaseUrl=${authgate_url%/}" "PortalUrl=${portal_url%/}" "PortalClientId=$portal_client_id")
+[[ -z "$public_url" ]] || params+=("PublicBaseUrl=${public_url%/}")
 [[ -z "$client_id" ]] || params+=("AuthGateClientId=$client_id")
 [[ -z "$DOMAIN" ]] || params+=("DomainName=$(app_host admin)" "CertificateArn=$CERT_ARN")
 # The same for CONSOLE_RESERVED_CONCURRENCY (0 reserves none): unset, a create gets the
@@ -82,6 +102,9 @@ echo "invalidated $dist"
 
 echo "BaseUrl: $(output "$STACK" BaseUrl)"
 echo "RawConsoleUrl: $(output "$STACK" RawConsoleUrl)"
+if [[ -z "$public_url" ]]; then
+  echo "PublicBaseUrl was empty on this pass (the domain did not exist): deploy again to set it; avatar uploads fail on CORS until then."
+fi
 # Judge by the deployed value, not the env var: SAM keeps the id of the last deploy.
 if [[ -z "$(output "$STACK" AuthGateClientId)" ]]; then
   echo "No AuthGate client id is deployed: /api is down until the second pass. Run register-client.sh stg, then deploy again with AUTHGATE_CLIENT_ID=<printed id>."

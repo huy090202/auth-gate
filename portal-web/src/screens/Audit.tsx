@@ -90,7 +90,7 @@ export function Audit() {
                   {entries.map((e, i) => (
                     <Table.Tr key={i}>
                       <Table.Td className="cell-muted cell-title" data-label={t.audit.colTime} title={e.at}>{formatDate(e.at, t)}</Table.Td>
-                      <Table.Td data-label={t.audit.colActor}>{e.actorName ? e.actorName : <span className="cell-muted">{t.audit.unknownActor}</span>}</Table.Td>
+                      <Table.Td data-label={t.audit.colActor}>{e.actorId === 'operator' ? t.audit.operatorActor : e.actorName ? e.actorName : <span className="cell-muted">{t.audit.unknownActor}</span>}</Table.Td>
                       <Table.Td data-label={t.audit.colAction}>
                         <div className="cell-strong">{labelOf(t.audit.actions, e.action)}</div>
                         <DetailChips e={e} t={t} />

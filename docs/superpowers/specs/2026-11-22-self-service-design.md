@@ -333,6 +333,8 @@ month.
 
 ## 10. The operator's side
 
+Refined by `2026-11-26-operator-design.md`.
+
 The Portal exposes `/api/operator/*`, guarded by `portal-operator-key` (SSM SecureString), which
 only the Console reads. The Console's new screens:
 

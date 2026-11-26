@@ -25,17 +25,22 @@ var stepUpActions = map[string]string{
 	"admin-create": "console-admin-create", "admin-reset-password": "console-admin-reset-password",
 	"admin-clear-factors": "console-admin-clear-factors", "admin-disable": "console-admin-disable",
 	"admin-enable": "console-admin-enable", "admin-role": "console-admin-role",
+	"tenant-suspend": "console-tenant-suspend", "tenant-unsuspend": "console-tenant-unsuspend", "tenant-quota": "console-tenant-quota",
+	"user-suspend": "console-user-suspend", "user-unsuspend": "console-user-unsuspend",
+	"user-resend-verification": "console-user-resend-verification", "user-factor-reset": "console-user-factor-reset",
 }
 
 // targetKind is what an action's step-up token is bound to besides the admin.
 type targetKind int
 
 const (
-	noTarget       targetKind = iota // the session's own admin
-	clientTarget                     // a client id
-	subjectTarget                    // <clientId>/<subjectId>
-	userTarget                       // a username
-	userRoleTarget                   // <username>/<role>
+	noTarget         targetKind = iota // the session's own admin
+	clientTarget                       // a client id
+	subjectTarget                      // <clientId>/<subjectId>
+	userTarget                         // a username
+	userRoleTarget                     // <username>/<role>
+	tenantTarget                       // a tenant id (a ULID)
+	portalUserTarget                   // a Portal user id (a ULID)
 )
 
 // stepUpTargets says which actions are bound to a target and of what kind. An
@@ -45,7 +50,10 @@ var stepUpTargets = map[string]targetKind{
 	"purge-subject": subjectTarget,
 	"admin-create":  userRoleTarget, "admin-reset-password": userTarget, "admin-clear-factors": userTarget,
 	"admin-disable": userTarget, "admin-enable": userTarget,
-	"admin-role": userRoleTarget,
+	"admin-role":     userRoleTarget,
+	"tenant-suspend": tenantTarget, "tenant-unsuspend": tenantTarget, "tenant-quota": tenantTarget,
+	"user-suspend": portalUserTarget, "user-unsuspend": portalUserTarget,
+	"user-resend-verification": portalUserTarget, "user-factor-reset": portalUserTarget,
 }
 
 var errInvalidTarget = &webapi.Error{Status: http.StatusBadRequest, Code: "invalid_target"}
@@ -77,7 +85,7 @@ func stepUpPurpose(action, target string) (purpose, normalized string, err error
 
 func normalizeTarget(kind targetKind, target string) (string, bool) {
 	switch kind {
-	case clientTarget:
+	case clientTarget, tenantTarget, portalUserTarget:
 		return target, clientIDRE.MatchString(target)
 	case subjectTarget:
 		client, subject, ok := strings.Cut(target, "/")

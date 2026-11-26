@@ -366,6 +366,32 @@ func (st *Store) markDeleting(ctx context.Context, tenantID string, now time.Tim
 	return t, nil
 }
 
+// SetTenantSuspended sets suspendedAt (suspend) or removes it, and says whether this call changed the
+// state: a tenant already in the wanted state is returned as it is with changed false. A tenant being
+// deleted gives ErrTenantDeleting, a missing one ErrTenantNotFound.
+func (st *Store) SetTenantSuspended(ctx context.Context, tenantID string, suspend bool, now time.Time) (t Tenant, changed bool, err error) {
+	expr, cond := "REMOVE suspendedAt", "attribute_exists(suspendedAt) AND attribute_not_exists(deletingAt)"
+	in := &dynamodb.UpdateItemInput{TableName: aws.String(st.Table), Key: tenantKey(tenantID)}
+	if suspend {
+		expr, cond = "SET suspendedAt = :t", "attribute_exists(pk) AND attribute_not_exists(suspendedAt) AND attribute_not_exists(deletingAt)"
+		in.ExpressionAttributeValues = item{":t": s(ts(now))}
+	}
+	in.UpdateExpression, in.ConditionExpression = aws.String(expr), aws.String(cond)
+	_, err = st.DB.UpdateItem(ctx, in)
+	if err != nil && !dynamo.IsConditionFailed(err) {
+		return Tenant{}, false, fmt.Errorf("set tenant suspended: %w", err)
+	}
+	changed = err == nil
+	// Re-read either way: a failed condition is a missing tenant, one being deleted, or one already in the state.
+	if t, err = st.GetTenant(ctx, tenantID); err != nil {
+		return Tenant{}, false, err
+	}
+	if !changed && t.DeletingAt != nil {
+		return Tenant{}, false, ErrTenantDeleting
+	}
+	return t, changed, nil
+}
+
 // tenantMemberships returns every membership of a tenant, from the tenant's side
 // of the pair, including one whose user is gone.
 func (st *Store) tenantMemberships(ctx context.Context, tenantID string) ([]Membership, error) {

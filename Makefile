@@ -33,7 +33,7 @@ dev:
 
 console-dev:
 	docker compose up -d dynamodb
-	@test -f .env.console || { echo ".env.console is missing (ADMIN_KEY, CLIENT_KEY, AUTHGATE_CLIENT_ID)" >&2; exit 1; }
+	@test -f .env.console || { echo ".env.console is missing (ADMIN_KEY, CLIENT_KEY, AUTHGATE_CLIENT_ID; optional: PORTAL_URL, PORTAL_OPERATOR_KEY, PORTAL_CLIENT_ID)" >&2; exit 1; }
 	set -a && . ./.env.console && set +a && CONSOLE_DEV=1 TABLE_NAME=console-dev DYNAMO_ENDPOINT=http://localhost:8000 AUTHGATE_BASE_URL=http://localhost:8080 go run ./cmd/console
 
 # Same flags as scripts/setup-and-deploy/02-build.sh: linux/arm64, static, zipped for SAM.

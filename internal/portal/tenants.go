@@ -16,6 +16,8 @@ type tenantView struct {
 	Kind     string `json:"kind"`
 	Name     string `json:"name"`
 	Role     string `json:"role"`
+	// Suspended is true while the operator has suspended the workspace: it is read-only.
+	Suspended bool `json:"suspended"`
 }
 
 // mountTenants serves the user's workspace list and each workspace's audit log.
@@ -51,7 +53,7 @@ func (a *App) listTenants(w http.ResponseWriter, r *http.Request) error {
 			}
 			continue
 		}
-		out = append(out, tenantView{TenantID: t.ID, Kind: t.Kind, Name: t.Name, Role: m.Role})
+		out = append(out, tenantView{TenantID: t.ID, Kind: t.Kind, Name: t.Name, Role: m.Role, Suspended: t.SuspendedAt != nil})
 	}
 	slices.SortFunc(out, func(x, y tenantView) int {
 		if px, py := x.Kind == "personal", y.Kind == "personal"; px != py {
@@ -83,8 +85,13 @@ type auditView struct {
 // listTenantAudit pages the workspace's log, newest first. The cursor is the
 // one the previous page returned; anything else is 400 invalid_cursor.
 func (a *App) listTenantAudit(w http.ResponseWriter, r *http.Request) error {
-	m := memberFrom(r.Context())
-	entries, next, err := a.Store.ListAudit(r.Context(), m.TenantID, r.URL.Query().Get("cursor"))
+	return a.writeAuditPage(w, r, memberFrom(r.Context()).TenantID)
+}
+
+// writeAuditPage answers one page of a workspace's log; the member route and the
+// operator route share it so their JSON is the same.
+func (a *App) writeAuditPage(w http.ResponseWriter, r *http.Request, tenantID string) error {
+	entries, next, err := a.Store.ListAudit(r.Context(), tenantID, r.URL.Query().Get("cursor"))
 	if errors.Is(err, ErrInvalidCursor) {
 		return apiErr(http.StatusBadRequest, "invalid_cursor")
 	}

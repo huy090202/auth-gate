@@ -49,3 +49,10 @@ body { font-size: 1rem; word-spacing: 0.05em; -webkit-font-smoothing: antialiase
 .step h2 { font-size: 1.0625rem; font-weight: 650; }
 .enroll-col { width: min(100%, 520px); display: grid; gap: 14px; }
 .enroll-out { justify-self: start; }
+
+/* The admin's picture in the header and on My account. */
+img.avatar { object-fit: cover; background: var(--accent-soft); }
+.avatar-lg { width: 64px; height: 64px; font-size: 1.5rem; }
+.avatar-row { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 14px; }
+.avatar-row .avatar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.plain-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }

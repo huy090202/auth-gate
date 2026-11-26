@@ -52,7 +52,7 @@ func (a *App) mountClients(mux *http.ServeMux) {
 	editors := a.member(RoleOwner, RoleAdmin, RoleMember)
 	admins := a.member(RoleOwner, RoleAdmin)
 	route := func(pattern, action string, guard func(http.Handler) http.Handler, h http.Handler) {
-		mux.Handle(pattern, a.audited(action, full(guard(h))))
+		mux.Handle(pattern, a.audited(action, full(guard(a.writable(h)))))
 	}
 	read := func(pattern string, h webapi.HandlerFunc) { mux.Handle(pattern, full(all(h))) }
 	read("GET "+base, a.listClients)

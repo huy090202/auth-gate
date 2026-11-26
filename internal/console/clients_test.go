@@ -699,3 +699,62 @@ func TestDeleteClientAudited(t *testing.T) {
 	}
 	t.Fatalf("no delete-client audit row for %s in %+v", id, entries)
 }
+
+// Why: rotating or deleting the Portal's own AuthGate client would lock every customer out.
+func TestPortalClientProtected(t *testing.T) {
+	h := consoletest.New(t)
+	b, a := fullAdmin(t, h, "ada", console.RoleAdmin)
+	pid, _ := newClient(t, b, "portal")
+	d := h.Deps
+	d.Config.PortalClientID = pid
+	b2 := h.BrowserFor(console.New(d))
+	b2.SetCookie(b.CookieValue())
+	own := "/api/clients/" + pid
+	before := clientOf(t, h, pid)
+	for _, o := range []struct {
+		action, target, method, path string
+		body                         any
+	}{
+		{"rotate-key", pid, "POST", own + "/keys", struct{}{}},
+		{"disable-client", pid, "POST", own + "/disable", struct{}{}},
+		{"delete-client", pid, "DELETE", own, nil},
+		{"purge-subject", pid + "/" + a.ID, "DELETE", own + "/subjects/" + a.ID, nil},
+	} {
+		tok := b.StepUp(o.action, o.target)
+		want(t, b2.Do(o.method, o.path, o.body, tokHeader, tok), 409, "own_client_protected")
+	}
+	if !reflect.DeepEqual(before, clientOf(t, h, pid)) {
+		t.Fatal("the Portal's client changed")
+	}
+	g := b2.Do("GET", own, nil)
+	want(t, g, 200, "")
+	if g.Map()["ownClient"] != true {
+		t.Fatalf("ownClient not marked: %s", g.Body)
+	}
+	// A deployment without a Portal client id must not protect everything with an empty id.
+	d.Config.PortalClientID = ""
+	b3 := h.BrowserFor(console.New(d))
+	b3.SetCookie(b.CookieValue())
+	want(t, b3.Do("DELETE", own, nil, tokHeader, b.StepUp("delete-client", pid)), 204, "")
+}
+
+// Why: the tenant page lists only the tenant's clients, and a malformed owner must not reach AuthGate.
+func TestListClientsOwnerFilter(t *testing.T) {
+	h := consoletest.New(t)
+	b, _ := fullAdmin(t, h, "ada", console.RoleAdmin)
+	mine, _ := newClient(t, b, "mine")
+	tid := id.New()
+	r := b.Do("GET", "/api/clients?owner="+tid, nil)
+	want(t, r, 200, "")
+	if strings.Contains(string(r.Body), mine) {
+		t.Fatalf("an unowned client is listed for a tenant: %s", r.Body)
+	}
+	for _, bad := range []string{"operator", "x", "", tid + "/../x"} {
+		want(t, b.Do("GET", "/api/clients?owner="+bad, nil), 400, "invalid_owner")
+	}
+	r = b.Do("GET", "/api/clients", nil)
+	want(t, r, 200, "")
+	if !strings.Contains(string(r.Body), mine) {
+		t.Fatalf("the full list lost a client: %s", r.Body)
+	}
+}

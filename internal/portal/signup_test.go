@@ -322,9 +322,10 @@ func TestResendVerification(t *testing.T) {
 func TestPublicConfig(t *testing.T) {
 	e := newSignupEnv(t)
 	e.a.Config.TurnstileSiteKey = "site"
+	e.a.Config.SupportEmail = "help@x.test"
 	rec := httptest.NewRecorder()
 	e.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
-	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"turnstileSiteKey":"site"}` {
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"supportEmail":"help@x.test","turnstileSiteKey":"site"}` {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
 	}
 }

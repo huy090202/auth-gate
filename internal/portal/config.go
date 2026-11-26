@@ -27,14 +27,15 @@ type Config struct {
 	SupportEmail                                         string // optional: Reply-To and mailto in emails
 	TurnstileSiteKey                                     string
 	ClientKeyParam, PortalKeyParam, TurnstileSecretParam string
+	OperatorKeyParam                                     string
 	OriginVerifyParam                                    string
 	DynamoEndpoint, Port                                 string
 	Dev                                                  bool
 
 	// Dev only: the keys come from the environment instead of SSM, mail and
 	// avatars go to local directories, Turnstile uses Cloudflare's test keys.
-	ClientKey, PortalKey, TurnstileSecret string
-	MailboxDir, AvatarDir                 string
+	ClientKey, PortalKey, OperatorKey, TurnstileSecret string
+	MailboxDir, AvatarDir                              string
 }
 
 // LoadConfig reads the environment and refuses to start with anything missing.
@@ -55,6 +56,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		TurnstileSiteKey:     getenv("TURNSTILE_SITE_KEY"),
 		ClientKeyParam:       getenv("CLIENT_KEY_PARAM"),
 		PortalKeyParam:       getenv("PORTAL_KEY_PARAM"),
+		OperatorKeyParam:     getenv("OPERATOR_KEY_PARAM"),
 		TurnstileSecretParam: getenv("TURNSTILE_SECRET_PARAM"),
 		OriginVerifyParam:    getenv("ORIGIN_VERIFY_PARAM"),
 		DynamoEndpoint:       getenv("DYNAMO_ENDPOINT"),
@@ -74,6 +76,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		c.ClientKey = getenv("CLIENT_KEY")
 		need("CLIENT_KEY", c.ClientKey)
 		c.PortalKey = orDefault(getenv("PORTAL_KEY"), "dev-portal")
+		c.OperatorKey = orDefault(getenv("OPERATOR_KEY"), "dev-operator")
 		c.TurnstileSecret = TurnstileTestSecretKey
 		c.TurnstileSiteKey = orDefault(c.TurnstileSiteKey, TurnstileTestSiteKey)
 		c.Port = orDefault(c.Port, "8789")
@@ -88,6 +91,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		need("TURNSTILE_SITE_KEY", c.TurnstileSiteKey)
 		need("CLIENT_KEY_PARAM", c.ClientKeyParam)
 		need("PORTAL_KEY_PARAM", c.PortalKeyParam)
+		need("OPERATOR_KEY_PARAM", c.OperatorKeyParam)
 		need("TURNSTILE_SECRET_PARAM", c.TurnstileSecretParam)
 		need("ORIGIN_VERIFY_PARAM", c.OriginVerifyParam)
 	}

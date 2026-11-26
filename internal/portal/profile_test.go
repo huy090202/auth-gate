@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/huy090202/auth-gate/internal/platform/avatar"
 	"github.com/huy090202/auth-gate/internal/platform/id"
-	"github.com/huy090202/auth-gate/internal/portal/avatar"
 )
 
 const stepHeader = "x-step-up-token"

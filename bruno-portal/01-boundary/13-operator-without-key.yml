@@ -1,0 +1,29 @@
+info:
+  name: "GET /api/operator/tenants without the operator key (401)"
+  type: http
+  seq: 13
+
+http:
+  method: GET
+  url: "{{baseUrl}}/api/operator/tenants"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("401", function() {
+          expect(res.getStatus()).to.equal(401);
+        });
+
+        test('body is {"error":"unauthorized"}', function() {
+          expect(res.getBody()).to.deep.equal({ error: "unauthorized" });
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 15000
+  followRedirects: false
+  maxRedirects: 0
+
+docs: |-
+  **Expected: 401.** The operator routes are for the Console, which sends the key in `x-operator-key`. Without it the request is refused before any tenant is read.

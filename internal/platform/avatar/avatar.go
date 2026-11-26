@@ -173,7 +173,7 @@ func (d *Dir) Save(_ context.Context, key string, r io.Reader) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0o600)
+	return os.WriteFile(p, data, 0o600) //nolint:gosec // G703: p comes from d.path, which confines the key to the avatar root
 }
 
 func (d *Dir) Head(_ context.Context, key string) (int64, string, error) {

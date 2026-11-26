@@ -5,7 +5,7 @@ import { portalTitle, useTitle } from '../brand';
 import { fetchAllClients, type ClientSummary } from '../lib/clients';
 import { formatDate } from '../lib/format';
 import { fmt, useStrings } from '../lib/i18n';
-import { clientPath, clientsPath } from '../lib/tenants';
+import { clientPath, clientsPath, useSuspended } from '../lib/tenants';
 import { IdChip, InlineLoading, LoadFailedInline, PageHead, StatusBadge } from '../ui';
 
 /** The table of one workspace's clients, or the empty state. Exported for the list's tests. */
@@ -63,6 +63,7 @@ export function Clients() {
   const t = useStrings();
   useTitle(portalTitle(t.screens.clients));
   const { tenantId = '' } = useParams();
+  const suspended = useSuspended(tenantId);
   const [rows, setRows] = useState<ClientSummary[] | null>(null);
   const [capped, setCapped] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -83,7 +84,8 @@ export function Clients() {
   return (
     <>
       <PageHead title={t.screens.clients} intro={t.clients.intro}
-        actions={<Button component={Link} to={`${clientsPath(tenantId)}/new`}>{t.clients.newClient}</Button>} />
+        actions={suspended ? <Button disabled>{t.clients.newClient}</Button>
+          : <Button component={Link} to={`${clientsPath(tenantId)}/new`}>{t.clients.newClient}</Button>} />
       {error !== null ? <LoadFailedInline error={error} onRetry={load} />
         : rows === null ? <InlineLoading />
         : <ClientList rows={rows} capped={capped} tenantId={tenantId} />}

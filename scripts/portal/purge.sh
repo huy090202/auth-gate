@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Empty the site and avatar buckets, delete stack auth-gate-portal-$STAGE and its three own
-# SSM parameters (origin-verify, authgate-client-key, turnstile-secret), after a typed
+# SSM parameters (origin-verify, authgate-client-key, turnstile-secret, operator-key), after a typed
 # confirmation. It never touches /credo/auth-gate/$STAGE/portal-key: that one belongs to auth-gate.
 set -euo pipefail
 # shellcheck source=lib.sh
@@ -59,7 +59,7 @@ if ! { aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK" 
 fi
 echo "deleted stack $STACK"
 
-for name in origin-verify authgate-client-key turnstile-secret; do
+for name in origin-verify authgate-client-key turnstile-secret operator-key; do
   if err="$(aws ssm delete-parameter --region "$REGION" --name "$PARAM_PREFIX/$name" 2>&1)"; then
     echo "deleted $PARAM_PREFIX/$name"
   elif [[ "$err" == *ParameterNotFound* ]]; then
