@@ -24,6 +24,7 @@ const MaxTarget = 200
 type Note struct {
 	ActorID, ActorName, Scope, Target string
 	Detail                            map[string]string
+	result                            string
 }
 
 // Entry is the finished record of one request, handed to the app to store.
@@ -61,6 +62,14 @@ func SetTarget(ctx context.Context, target string) {
 	}
 }
 
+// SetResult overrides the result Wrap derives from the status, for an action
+// whose outcome the status cannot tell, such as "partial".
+func SetResult(ctx context.Context, result string) {
+	if n := NoteFrom(ctx); n != nil {
+		n.result = result
+	}
+}
+
 // SetDetail records one fact about the action. Keys are fixed names in the
 // handler; the value comes from a decoded field, never from a raw body, an
 // upstream error or a credential.
@@ -94,7 +103,7 @@ func (b *bufWriter) Write(p []byte) (int, error) {
 
 // Wrap runs h with a fresh note, then calls finish with the outcome before the
 // response goes out: Result is "success", or "failed:<code>" with the error code
-// the handler answered. The note's target is already cut to MaxTarget. finish
+// the handler answered, unless it set its own with SetResult. The note's target is already cut to MaxTarget. finish
 // decides where the entry goes and never changes the answer.
 func Wrap(action string, h http.Handler, finish func(r *http.Request, e Entry)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +123,9 @@ func Wrap(action string, h http.Handler, finish func(r *http.Request, e Entry)) 
 				e.Error = fmt.Sprintf("http_%d", bw.status)
 			}
 			result = Truncate("failed:"+e.Error, MaxTarget)
+		}
+		if note.result != "" {
+			result = Truncate(note.result, MaxTarget)
 		}
 		note.Target = Truncate(note.Target, MaxTarget)
 		finish(r, Entry{Action: action, Result: result, Note: *note})

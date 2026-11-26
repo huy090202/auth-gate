@@ -15,12 +15,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/huy090202/auth-gate/internal/platform/authgate"
+	"github.com/huy090202/auth-gate/internal/platform/avatar"
 	"github.com/huy090202/auth-gate/internal/platform/dynamo"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
 	"github.com/huy090202/auth-gate/internal/platform/id"
 	"github.com/huy090202/auth-gate/internal/platform/password"
 	"github.com/huy090202/auth-gate/internal/platform/webapi"
-	"github.com/huy090202/auth-gate/internal/portal/avatar"
 	pmail "github.com/huy090202/auth-gate/internal/portal/mail"
 )
 

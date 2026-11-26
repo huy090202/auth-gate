@@ -1,6 +1,6 @@
 import { ApiError, api } from './api';
 
-/** The most the backend accepts (internal/portal/avatar MaxBytes) and the types it takes. */
+/** The most the backend accepts (internal/platform/avatar MaxBytes) and the types it takes. */
 export const AVATAR_MAX_BYTES = 1 << 20;
 export const AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const;
 
