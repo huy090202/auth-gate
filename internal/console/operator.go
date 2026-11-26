@@ -22,6 +22,9 @@ import (
 // ownerConcurrency bounds the AuthGate owner calls that enrich one tenants page.
 const ownerConcurrency = 8
 
+// ownerEnrichTimeout bounds all of those calls together, well under the Lambda timeout.
+const ownerEnrichTimeout = 8 * time.Second
+
 // suspensionPages bounds how many audit pages the search for the last suspension
 // reads in one month, so a busy month cannot make a tenant page slow.
 const suspensionPages = 10
@@ -239,6 +242,9 @@ func (a *App) listTenants(w http.ResponseWriter, r *http.Request) error {
 	if rows == nil {
 		rows = []map[string]any{}
 	}
+	// A slow AuthGate degrades the page (counts absent) rather than outlasting the Lambda.
+	ctx, cancel := context.WithTimeout(r.Context(), ownerEnrichTimeout)
+	defer cancel()
 	sem := make(chan struct{}, ownerConcurrency)
 	var wg sync.WaitGroup
 	for _, row := range rows {
@@ -251,7 +257,7 @@ func (a *App) listTenants(w http.ResponseWriter, r *http.Request) error {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			raw, err := a.AuthGate.GetOwner(r.Context(), tid)
+			raw, err := a.AuthGate.GetOwner(ctx, tid)
 			var o struct {
 				ClientCount *int `json:"clientCount"`
 				ClientQuota *int `json:"clientQuota"`

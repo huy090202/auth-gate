@@ -55,7 +55,7 @@ func main() {
 	var avatars avatar.Store
 	var devAvatars *avatar.Dir
 	if cfg.Dev {
-		if devAvatars, err = avatar.NewDir(cfg.AvatarDir, "http://localhost:"+cfg.Port+console.DevAvatarUploadPath); err != nil {
+		if devAvatars, err = avatar.NewDir(cfg.AvatarDir, console.DevAvatarUploadPath); err != nil {
 			log.Fatal(err)
 		}
 		avatars = devAvatars
