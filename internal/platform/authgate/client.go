@@ -303,6 +303,35 @@ func (c *Client) ListClients(ctx context.Context, cursor string) (json.RawMessag
 	return c.admin(ctx, http.MethodGet, path, nil)
 }
 
+// ListClientsOwned returns one page of a tenant's client summaries.
+func (c *Client) ListClientsOwned(ctx context.Context, tenantID, cursor string) (json.RawMessage, error) {
+	q := url.Values{"owner": {tenantID}}
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	return c.admin(ctx, http.MethodGet, "/api/clients?"+q.Encode(), nil)
+}
+
+// GetOwner returns a tenant's counters; a tenant that never created a client has the defaults.
+func (c *Client) GetOwner(ctx context.Context, tenantID string) (json.RawMessage, error) {
+	return c.admin(ctx, http.MethodGet, "/api/owners/"+seg(tenantID), nil)
+}
+
+// SetClientQuota sets how many clients a tenant may own.
+func (c *Client) SetClientQuota(ctx context.Context, tenantID string, quota int) (json.RawMessage, error) {
+	return c.admin(ctx, http.MethodPatch, "/api/owners/"+seg(tenantID), map[string]int{"clientQuota": quota})
+}
+
+// SuspendOwner refuses the tenant's writes and, soon after, its keys.
+func (c *Client) SuspendOwner(ctx context.Context, tenantID string) (json.RawMessage, error) {
+	return c.admin(ctx, http.MethodPost, "/api/owners/"+seg(tenantID)+"/suspend", struct{}{})
+}
+
+// UnsuspendOwner lifts a suspension.
+func (c *Client) UnsuspendOwner(ctx context.Context, tenantID string) (json.RawMessage, error) {
+	return c.admin(ctx, http.MethodPost, "/api/owners/"+seg(tenantID)+"/unsuspend", struct{}{})
+}
+
 // GetClient returns one client's view.
 func (c *Client) GetClient(ctx context.Context, id string) (json.RawMessage, error) {
 	return c.admin(ctx, http.MethodGet, "/api/clients/"+seg(id), nil)

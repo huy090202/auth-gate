@@ -2,7 +2,9 @@ package authgate_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -159,5 +161,47 @@ func TestRedirectDoesNotCarryKey(t *testing.T) {
 	}
 	if seen != "" {
 		t.Fatal("the redirect target received the key")
+	}
+}
+
+type recorder struct {
+	method, path, query, body string
+}
+
+func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	var b []byte
+	if req.Body != nil {
+		b, _ = io.ReadAll(req.Body)
+	}
+	r.method, r.path, r.query, r.body = req.Method, req.URL.Path, req.URL.RawQuery, string(b)
+	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{}`)), Request: req}, nil
+}
+
+// Why: each owner call must hit the right verb and path with the admin key; a wrong one suspends or re-quotas the wrong thing.
+func TestOwnerCalls(t *testing.T) {
+	rec := &recorder{}
+	c := &authgate.Client{BaseURL: "https://ag.example.com", ClientKey: clientKey, AdminKey: adminKey, HTTP: &http.Client{Transport: rec}}
+	ctx := context.Background()
+	tid := "01J00000000000000000000000"
+	cases := []struct {
+		name              string
+		call              func() (json.RawMessage, error)
+		method, path, qry string
+		body              string
+	}{
+		{"list", func() (json.RawMessage, error) { return c.ListClientsOwned(ctx, tid, "") }, "GET", "/api/clients", "owner=" + tid, ""},
+		{"list cursor", func() (json.RawMessage, error) { return c.ListClientsOwned(ctx, tid, "a b") }, "GET", "/api/clients", "cursor=a+b&owner=" + tid, ""},
+		{"get", func() (json.RawMessage, error) { return c.GetOwner(ctx, tid) }, "GET", "/api/owners/" + tid, "", ""},
+		{"quota", func() (json.RawMessage, error) { return c.SetClientQuota(ctx, tid, 7) }, "PATCH", "/api/owners/" + tid, "", `{"clientQuota":7}`},
+		{"suspend", func() (json.RawMessage, error) { return c.SuspendOwner(ctx, tid) }, "POST", "/api/owners/" + tid + "/suspend", "", `{}`},
+		{"unsuspend", func() (json.RawMessage, error) { return c.UnsuspendOwner(ctx, tid) }, "POST", "/api/owners/" + tid + "/unsuspend", "", `{}`},
+	}
+	for _, tc := range cases {
+		if _, err := tc.call(); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if rec.method != tc.method || rec.path != tc.path || rec.query != tc.qry || strings.TrimSpace(rec.body) != tc.body {
+			t.Errorf("%s: got %s %s?%s %q, want %s %s?%s %q", tc.name, rec.method, rec.path, rec.query, rec.body, tc.method, tc.path, tc.qry, tc.body)
+		}
 	}
 }

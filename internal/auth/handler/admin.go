@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/huy090202/auth-gate/internal/auth/client"
 	"github.com/huy090202/auth-gate/internal/auth/service"
 	"github.com/huy090202/auth-gate/internal/platform/httpx"
+	"github.com/huy090202/auth-gate/internal/platform/id"
 	"github.com/huy090202/auth-gate/internal/platform/ratelimit"
 )
 
@@ -185,7 +187,21 @@ func (h *admin) patch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *admin) list(w http.ResponseWriter, r *http.Request) {
-	items, next, err := h.svc.ListClients(r.Context(), r.URL.Query().Get("cursor"))
+	q := r.URL.Query()
+	var (
+		items []client.Summary
+		next  string
+		err   error
+	)
+	if q.Has("owner") {
+		items, next, err = h.svc.ListOwnerClients(r.Context(), q.Get("owner"), q.Get("cursor"))
+		if errors.Is(err, id.ErrInvalid) {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_owner", nil)
+			return
+		}
+	} else {
+		items, next, err = h.svc.ListClients(r.Context(), q.Get("cursor"))
+	}
 	if err != nil {
 		writeServiceError(w, err)
 		return
