@@ -19,6 +19,9 @@ other stages, with AWS access. They live in `scripts/setup-and-deploy/` and read
    attached to the user and to the CI role, and together they are the deployer's rights. The deployer cannot create the stacks: a stage's first deploy runs under the
    admin profile ([First deploy of a stage](#first-deploy-of-a-stage)).
 1. `00-cert.sh DOMAIN [--wait]` (optional): request the ACM certificate for `DOMAIN` and `*.DOMAIN` in `us-east-1`, record `domain` and `certificate-arn` in SSM, and print the DNS validation record. `03-deploy.sh` then deploys AuthGate on `api.DOMAIN` once the certificate is issued. The rollout is in [the custom-domain runbook](../runbooks/rollout-custom-domain.md).
+   When a change adds a right for a Console role (the avatar bucket), the owner reruns this under the
+   admin profile before merging: the boundary's avatar rule must cover `auth-gate-console-*` as well
+   as `auth-gate-portal-*`.
 2. `01-ssm.sh`: write the random `admin-key` and `portal-key` (SecureStrings) and
    `origin-verify` (plain String; CloudFront cannot resolve a SecureString). A parameter that
    exists is kept, and no value ever goes on an argv.
@@ -162,6 +165,13 @@ AWS_PROFILE=default scripts/setup-and-deploy/03-deploy.sh
 AWS_PROFILE=default scripts/console/deploy.sh
 ```
 
+The Console reads the Portal's outputs and the operator key, so the order on a new stage is the
+Portal (both passes, [Rollout of P2](../runbooks/rollout-p2.md)), then `AWS_PROFILE=default scripts/portal/operator-key.sh`
+(under the admin profile; it creates `/credo/auth-gate-portal/<stage>/operator-key` if absent, never
+overwrites it, and prints `created` or `exists`), then the Console as above. The Portal's Lambda
+reads the key at cold start and refuses to start without it, so create it before the Portal's smoke,
+which calls the function.
+
 Every later deploy, including the Console's second pass, runs as the deployer.
 
 ## Continuous deploy
@@ -169,10 +179,13 @@ Every later deploy, including the Console's second pass, runs as the deployer.
 Every push to `main` runs the `deploy` job in `.github/workflows/ci.yml` after `check` passes,
 for stg only. It assumes the role `ci-auth-gate-deploy` through GitHub OIDC (no stored key),
 runs `scripts/ci/preflight.sh`, then `02-build.sh`, `03-deploy.sh`, `04-smoke.sh`,
-`scripts/console/deploy.sh`, `scripts/console/smoke.sh`, `scripts/portal/deploy.sh` and
-`scripts/portal/smoke.sh`. The preflight stops the job unless all three stacks exist in
-`CREATE_COMPLETE`, `UPDATE_COMPLETE` or `UPDATE_ROLLBACK_COMPLETE` and the Console's and the
-Portal's `AuthGateClientId` output is set: CI never creates a stack, so the Portal's first deploy
+`scripts/portal/deploy.sh`, `scripts/portal/smoke.sh`, `scripts/console/deploy.sh` and
+`scripts/console/smoke.sh`. The Portal goes before the Console because the Console reads its URL and
+client id. The preflight stops the job unless all three stacks exist in
+`CREATE_COMPLETE`, `UPDATE_COMPLETE` or `UPDATE_ROLLBACK_COMPLETE`, the Console's and the
+Portal's `AuthGateClientId` output is set, and the SSM parameter
+`/credo/auth-gate-portal/<stage>/operator-key` exists (only its existence is checked; CI never
+creates or reads it): CI never creates a stack, so the Portal's first deploy
 is by hand ([Rollout of P2](../runbooks/rollout-p2.md#rollout-of-p2-the-portal)). The Portal deploy reads the repository
 variables `PORTAL_EMAIL_FROM` and `PORTAL_TURNSTILE_SITE_KEY` (Settings, Secrets and variables,
 Actions, Variables). Deploys queue (group
@@ -237,7 +250,7 @@ running a fresh deploy.
 
 ### What stays manual
 
-`00-deployer.sh`, `00-cert.sh`, `scripts/domain/ses-identity.sh`, a stage's first deploy (and the Console's and the Portal's second pass), purges,
+`00-deployer.sh`, `scripts/portal/operator-key.sh`, `00-cert.sh`, `scripts/domain/ses-identity.sh`, a stage's first deploy (and the Console's and the Portal's second pass), purges,
 `register-client.sh` (the Console's and the Portal's, with `--replace` for a new rpId), `05-backfill-clients.sh`, `06-prune-clients.sh`, `07-prune-factors.sh` and `08-reset-data.sh`.
 
 ### Reset stg's user data
@@ -285,6 +298,18 @@ Afterwards:
 2. Sign in to the Console again. The apply deleted the admins' sessions (their accounts and
    factors stay), so every operator must sign in once more.
 3. Sign up again on the Portal and in the auth-app demo: their users are gone.
+
+### Before the operator's side merges
+
+Two things, once, under the admin profile, before the merge that carries the operator's side (the
+CI deploy fails without them):
+
+```bash
+AWS_PROFILE=default scripts/portal/operator-key.sh               # prints created or exists
+ADMIN_PROFILE=default scripts/setup-and-deploy/00-deployer.sh    # the boundary gains the Console's avatars
+```
+
+Wait a minute after the second. Further reading: [the memo](../memo/operator-side.md).
 
 ### When a PR changes rights
 

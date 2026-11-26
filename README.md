@@ -65,7 +65,9 @@ flowchart LR
   enroll a mandatory second factor and manage their own clients, alone or in an organisation they
   invite others to ([organisations](docs/memo/portal-organisations.md)).
 - The [Console](docs/reference/console.md) is the operator's app: every client, its keys, disable
-  and enable, purging one user's factors, and the audit log. Its admins sign in with a password
+  and enable, purging one user's factors, and the audit log. It also looks after the Portal's
+  tenants and users: quota, suspension and factor reset, each with step-up
+  ([the operator's side](docs/memo/operator-side.md)). Its admins sign in with a password
   plus a factor that AuthGate itself verifies.
 
 The Console and the Portal are separate stacks with their own tables. Each reaches AuthGate over
@@ -77,6 +79,10 @@ are React, Vite and Mantine, in English and Vietnamese.
 - Every merge to `main` deploys from GitHub Actions through an OIDC role, so CI holds no
   long-lived AWS key, and a permissions boundary caps every role the deployer can create
   ([deploy and CI](docs/reference/deploy.md)).
+- Rollout of the operator's side, before its merge, under the admin profile: run
+  `AWS_PROFILE=default scripts/portal/operator-key.sh`, then rerun `scripts/setup-and-deploy/00-deployer.sh`
+  ([deploy and CI](docs/reference/deploy.md#before-the-operators-side-merges)). CI deploys the Portal
+  before the Console.
 - Secrets move between scripts and SSM through 0600 files, never on a command line or in a log.
 - A client that spends its rate-limit bucket gets `429` with `Retry-After`. The Console and the
   Portal limit each IP and lock an account after failed sign-ins. The Portal also limits each
@@ -108,6 +114,8 @@ Each is a one-page memo with the reasons and the alternatives that lost:
 - [Console sessions](docs/memo/console-sessions.md) and
   [Portal accounts](docs/memo/portal-accounts.md): no account enumeration, a mandatory second
   factor, and a step-up before each sensitive action.
+- [The operator's side](docs/memo/operator-side.md): the Console calls the Portal over HTTP with its
+  own key, AuthGate goes first, and the reason for a suspension stays internal.
 - [The custom domain](docs/memo/custom-domain.md): one certificate, DNS only, one rpId per app.
 - [No health endpoint](docs/memo/no-health-endpoint.md): no role answers `/health` or `/version`,
   and an unknown path is a 404.

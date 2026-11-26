@@ -20,6 +20,7 @@ portal  ──► DynamoDB auth-gate-portal-<stage>  (users, workspaces, session
 portal  ──► AuthGate /api/challenges, /factors…   (its own client key: the second factor of its users)
 portal  ──► AuthGate /api/portal/*                (the portal key and x-tenant-id: a workspace's clients)
 portal  ──► SES (mail), Cloudflare Turnstile, Have I Been Pwned (range API)
+console ──► portal /api/operator/*                (the operator key; see below)
 ```
 
 `cmd/portal` imports neither `internal/auth/service` nor `internal/console`, and it never holds the
@@ -88,7 +89,7 @@ All under `/api`, JSON, errors `{"error": "<snake_case>"}`.
 
 | Route | Session | Notes |
 | --- | --- | --- |
-| `GET /config` | none | The Turnstile site key. |
+| `GET /config` | none | The Turnstile site key and `supportEmail` (empty when unset), which the suspended banner shows. |
 | `POST /auth/signup`, `/auth/resend-verification`, `/auth/forgot`, `/auth/factor-reset/request` | none | Turnstile; always `202 check_email`. |
 | `POST /auth/verify-email`, `/auth/reset-password`, `/auth/factor-reset/confirm`, `/auth/confirm-email` | none | A single-use token from an email link. `verify-email` also takes the account's `password`. |
 | `POST /auth/login`, `/auth/second-factor/start`, `/auth/second-factor/verify`, `/auth/recovery`, `/auth/logout` | by stage | |
@@ -115,6 +116,40 @@ All under `/api`, JSON, errors `{"error": "<snake_case>"}`.
 | `POST .../clients/{id}/enable` | full | |
 | `GET /t/{tenantId}/audit` | full | Owner and admin; newest first. |
 
+### A suspended workspace
+
+An operator can suspend a workspace ([memo](../memo/operator-side.md)). Reads keep working. Every
+write answers `409 tenant_suspended`: clients, invites, role changes, member removal, renaming,
+deleting the organisation, and accepting an invite to it. A member may still leave. `DELETE /me`
+answers `409 tenant_suspended` when it would delete a suspended workspace. The web app shows a
+banner with the support address and disables the write controls. A suspended user cannot sign in
+(the answer is the same `401 invalid_credentials`), and their sessions end at once.
+
+### Operator API
+
+Called by the Console only. Each route needs the header `x-operator-key` (SSM SecureString
+`/credo/auth-gate-portal/<stage>/operator-key`, compared in constant time); a missing or wrong key
+answers `401 {"error":"unauthorized"}`. One bucket for the key allows 60 requests, then one per
+second (`429 rate_limited`). Writes are idempotent: repeating one answers `200` and sends no second
+email. No route returns a password hash, a recovery code, a token or a session.
+
+| Route | What it does |
+| --- | --- |
+| `GET /api/operator/tenants?cursor=` | 50 tenants per page, newest first. Each has `tenantId`, `name`, `kind`, `createdAt`, `memberCount`, `creatorEmail`, `suspendedAt` and `deletingAt`. |
+| `GET /api/operator/tenants/{tid}` | `{tenant, members, pendingInvites}`; a member has `userId`, `displayName`, `email`, `role` and `joinedAt`. `404 not_found`. |
+| `GET /api/operator/tenants/{tid}/audit?cursor=` | The tenant's audit, in the shape of `GET /t/{tenantId}/audit`. |
+| `POST /api/operator/tenants/{tid}/suspend`, `/unsuspend` | Sets or clears `suspendedAt`, writes the tenant audit and emails the owners, only when the state changed. Answers the tenant. `409 tenant_deleting` for a tenant being deleted. |
+| `POST /api/operator/tenants/{tid}/audit` | Body `{action: "tenant-quota", from, to}`. Writes the tenant audit only; `204`. |
+| `GET /api/operator/users?email=` | Exact match, or `404 not_found`. `userId`, `email`, `displayName`, `emailVerifiedAt`, `suspendedAt`, `factorCount`, `lastSignInAt` and `tenants` (id, name, kind, role). |
+| `POST /api/operator/users/{uid}/suspend`, `/unsuspend` | Suspend sets `suspendedAt` and bumps `sessionEpoch`. Both email the user when the state changed and the address is verified. Answer the user as above. |
+| `POST /api/operator/users/{uid}/resend-verification` | `200 {"status":"sent"}`; `409 already_verified` for a verified user. |
+| `POST /api/operator/users/{uid}/factor-reset` | Starts the 24-hour wait and sends `factor-reset-started`, with no confirm link. `200 {dueAt}`. A reset already pending is kept and not mailed again. `409 not_mailable` when the user has no verified address. |
+
+The tenant audit names the actor "AuthGate administrator" with the fixed actor id `operator`,
+never the operator. Four mail kinds carry fixed text and the support address, in English and
+Vietnamese, and no reason: `tenant-suspended` and `tenant-unsuspended` (the owners),
+`account-suspended` and `account-unsuspended` (the user).
+
 ### Organisation errors
 
 All `{"error": "<code>"}`. A personal workspace answers `400 personal_workspace` on every organisation-only route.
@@ -138,6 +173,7 @@ All `{"error": "<code>"}`. A personal workspace answers `400 personal_workspace`
 | 409 | `last_owner` | The change would leave no owner. |
 | 409 | `sole_owner` | `DELETE /me` while the only owner of an organisation with other members; carries `organisations: [names]`. |
 | 409 | `conflict` | A role or membership moved while the request ran; retry. |
+| 409 | `tenant_suspended` | An operator suspended the workspace; every write except leaving is refused. |
 | 429 | `rate_limited` | 20 invites per day per organisation, or the per-IP lookup limit. |
 | 502 | `authgate_unavailable` | AuthGate failed during a deletion; it resumes on the next try. |
 
@@ -191,7 +227,11 @@ policies must carry the Portal's rights first ([Rollout of P2](../runbooks/rollo
    audit trail and has deletion protection, so `purge.sh` turns it off just before the delete. It
    never touches `/credo/auth-gate/<stage>/portal-key`, which belongs to AuthGate.
 
-CI runs `deploy.sh` and `smoke.sh` after the Console's ([Continuous deploy](deploy.md#continuous-deploy)),
+The operator key (`/credo/auth-gate-portal/<stage>/operator-key`) is created once per stage by
+`scripts/portal/operator-key.sh`, under the admin profile (`AWS_PROFILE=default`). The Portal and the Console both read it, so
+the Portal's stack needs it before its deploy; CI's preflight fails without it.
+
+CI runs `deploy.sh` and `smoke.sh` before the Console's ([Continuous deploy](deploy.md#continuous-deploy)),
 with `EMAIL_FROM` and `TURNSTILE_SITE_KEY` from the repository variables `PORTAL_EMAIL_FROM` and
 `PORTAL_TURNSTILE_SITE_KEY`. They are variables, not secrets: the sender address and the site key
 are both public. `SUPPORT_EMAIL` (optional) is the Reply-To address and the support line of every

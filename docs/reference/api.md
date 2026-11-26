@@ -51,7 +51,7 @@ All under `/api/clients`, with `x-internal-access-key: <admin key>`.
 | Route | What it does |
 | --- | --- |
 | `POST /api/clients` | Create a client; the key is returned once. |
-| `GET /api/clients` | List clients, paged with `?cursor=`. Summaries only, no key material. |
+| `GET /api/clients` | List clients, paged with `?cursor=`. Summaries only, no key material. With `?owner=<tenantId>` it lists only that tenant's clients, from the owner index, with the same summaries and cursor; a malformed id answers `400 invalid_owner`. |
 | `GET /api/clients/{id}` | One client. |
 | `PATCH /api/clients/{id}` | Change `name`, `origins`, `pinPolicy`, `tokenTtlSec` or `rateLimit`. `rpId` cannot change: existing passkeys are bound to it. |
 | `POST /api/clients/{id}/disable` | Disable the client. |

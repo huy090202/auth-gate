@@ -156,9 +156,9 @@ Each route takes the header `x-operator-key`.
   delete and purge answer `409 own_client_protected`. Its id reaches the Console as a stack
   parameter.
 - Console audit actions:
-  - `tenant-suspend` and `tenant-unsuspend`, which record a `reason` detail;
+  - `tenant-suspend`, which records a `reason` detail, and `tenant-unsuspend`, which records none;
   - `tenant-quota`, which records `from` and `to`;
-  - `user-suspend` and `user-unsuspend`, which record a `reason` detail;
+  - `user-suspend`, which records a `reason` detail, and `user-unsuspend`, which records none;
   - `user-resend-verification` and `user-factor-reset`.
   - When the Portal step fails after AuthGate succeeded, the entry records `result: partial`.
 
