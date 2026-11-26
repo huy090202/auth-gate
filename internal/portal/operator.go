@@ -2,6 +2,7 @@ package portal
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -240,8 +241,10 @@ func (a *App) operatorSetTenantSuspended(suspend bool) func(http.ResponseWriter,
 		}
 		if changed {
 			a.auditOperator(r, t.ID, action, nil)
+			// Best effort, like every other notice: the state change is done, and a retry
+			// (changed=false) would never send it.
 			if err := a.mailTenantOwners(r, t, kind); err != nil {
-				return err
+				slog.Warn("portal: tenant owner notice not sent", "kind", kind, "err", err)
 			}
 		}
 		v, err := a.operatorTenantView(r, t)

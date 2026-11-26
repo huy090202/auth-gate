@@ -123,7 +123,7 @@ func TestRenderEveryKindInBothLanguages(t *testing.T) {
 						t.Errorf("%s: text lacks %q", id, want)
 					}
 				}
-			case strings.HasPrefix(kind, "tenant-") || strings.HasSuffix(kind, "suspended"):
+			case operatorKinds[kind]:
 				// Why: an operator notice must not offer sign-in or tell a customer to change a
 				// password they never lost, and it must end with the support line.
 				for name, part := range map[string]string{"html": r.HTML, "text": r.Text} {

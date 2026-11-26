@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,7 +53,7 @@ func TestOperatorEveryRouteNeedsTheKey(t *testing.T) {
 	}
 	for _, route := range routes {
 		for _, key := range []string{"", "wrong"} {
-			method, path, _ := cutSpace(route)
+			method, path, _ := strings.Cut(route, " ")
 			req := httptest.NewRequest(method, path, bytes.NewReader([]byte("{}")))
 			req.Header.Set("content-type", "application/json")
 			if key != "" {
@@ -64,15 +65,6 @@ func TestOperatorEveryRouteNeedsTheKey(t *testing.T) {
 		}
 	}
 	want(t, e.op("/api/operator/tenants?cursor=garbage", opKey), 400, "invalid_cursor")
-}
-
-func cutSpace(s string) (string, string, bool) {
-	for i := range s {
-		if s[i] == ' ' {
-			return s[:i], s[i+1:], true
-		}
-	}
-	return s, "", false
 }
 
 // Why: the key is the only thing between the internet and every customer's data.
