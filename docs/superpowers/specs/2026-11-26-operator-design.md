@@ -26,7 +26,7 @@ Decided by the owner on 2026-11-26:
 Done means all of this works on stg:
 
 1. An admin suspends a tenant.
-   - Every client key of that tenant stops working.
+   - Every client key of that tenant stops working, within AuthGate's 30-second owner cache.
    - The Portal shows the workspace read-only.
    - The tenant's owners get an email.
 2. Unsuspending restores all three.
@@ -63,7 +63,8 @@ console ──► Portal   /api/operator/*                        (portal operat
 ### 4.1 Operator routes
 
 Each route takes the header `x-operator-key`.
-- A missing or wrong key gets `401`, with the same body as an unknown route.
+- A missing or wrong key gets `401 {"error":"unauthorized"}`, the answer every key check in
+  the system gives.
 - Write routes are idempotent. Repeating a write answers `200` and sends no second email.
 
 | Route | Result |
@@ -76,9 +77,11 @@ Each route takes the header `x-operator-key`.
 | `GET /api/operator/users?email=` | Exact match through `EMAIL#`, or `404`. Returns id, email, display name, `emailVerifiedAt`, `suspendedAt`, factor count, `lastSignInAt`, and the user's tenants with role. |
 | `POST /api/operator/users/{uid}/suspend` and `/unsuspend` | Suspend sets `suspendedAt` and bumps `sessionEpoch`, which signs the user out everywhere. Unsuspend clears it. Both email the user. |
 | `POST /api/operator/users/{uid}/resend-verification` | Only for an unverified user; otherwise `409 already_verified`. |
-| `POST /api/operator/users/{uid}/factor-reset` | Starts the self-service lost-factor flow for the user: the 24-hour wait and the same emails. |
+| `POST /api/operator/users/{uid}/factor-reset` | Starts the lost-factor wait directly: the 24-hour wait and the `factor-reset-started` email, with no confirm link. The operator has already confirmed the person by other means. |
 
-- The tenant audit names the actor "AuthGate administrator", never the operator.
+- The tenant audit names the actor "AuthGate administrator", never the operator. The entry
+  carries the fixed actor id `operator`, and the Portal's audit screen shows that id in the
+  reader's language.
 - An operator route never returns a password hash, a recovery code, a token or a session.
 
 ### 4.2 A suspended tenant
@@ -88,12 +91,13 @@ Each route takes the header `x-operator-key`.
   - invites;
   - role changes and member removal;
   - renaming;
-  - deleting the organisation.
+  - deleting the organisation;
+  - accepting an invite to it.
 - A member may still leave it.
 - Account deletion that would delete a suspended tenant answers `409 tenant_suspended`. The
   tenant and its audit stay for the operator to inspect.
-- The workspace shows a banner that points to `support@authgatehq.com`, and write controls are
-  disabled. Reads keep working.
+- The workspace shows a banner that points to the support address, and write controls are
+  disabled. Reads keep working. `GET /api/config` gains `supportEmail` for the banner.
 
 ### 4.3 Data and email
 
@@ -177,11 +181,15 @@ Each route takes the header `x-operator-key`.
   - Reads the operator key.
   - Takes two new parameters, `PortalUrl` and `PortalClientId`. `scripts/console/deploy.sh` fills
     them from the Portal stack's outputs.
-  - Gains the avatar bucket. The deployer already holds `s3:*` on `auth-gate-console-*` and SSM
-    rights on `/credo/auth-gate-portal/*`, so no deployer change is needed. The plan confirms this
-    against `infra/deployer-policy*.json`.
-- **Deploy order:** CI deploys the Portal before the Console, so the routes exist when the Console
-  calls them.
+  - Gains the avatar bucket. The deployer policy already holds `s3:*` on `auth-gate-console-*`
+    and SSM rights on `/credo/auth-gate-portal/*`. The **permissions boundary** does not: its
+    avatar rule covers only `auth-gate-portal-*`. `infra/role-boundary.json` gains the Console's
+    `avatars/*` and `pending/*`, and **before merge** the owner reruns
+    `scripts/setup-and-deploy/00-deployer.sh` under the admin profile to apply it.
+- **Deploy order:** today CI deploys the Console before the Portal. This branch swaps them, so the
+  routes exist when the Console calls them.
+- The avatar code moves from `internal/portal/avatar` to `internal/platform/avatar`, because the
+  Portal and the Console share code only through `internal/platform`.
 - **Fixed monthly cost:** none.
 
 ## 8. Tests and checks
@@ -209,8 +217,8 @@ Bruno and smoke:
 - `scripts/portal/smoke.sh`: checks the operator boundary.
 
 The owner's round on stg uses one Portal account with a client, and the Console:
-1. Suspend the tenant. The client's key now answers `401`, the Portal is read-only, and the email
-   arrives.
+1. Suspend the tenant. Within 30 seconds the client's key answers `401`, the Portal is
+   read-only, and the email arrives.
 2. Unsuspend it.
 3. Change the quota.
 4. Suspend the user and confirm that their session ends, then unsuspend.
