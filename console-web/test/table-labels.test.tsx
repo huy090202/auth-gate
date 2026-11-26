@@ -3,11 +3,13 @@ import { MantineProvider } from '@mantine/core';
 import { theme } from '@authgate/web-kit/theme';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { Admins } from '../src/screens/Admins';
 import { Audit } from '../src/screens/Audit';
 import { Clients } from '../src/screens/Clients';
+import { TenantDetail } from '../src/screens/TenantDetail';
+import { Tenants } from '../src/screens/Tenants';
 import { SessionProvider } from '../src/session';
 import { ToastProvider } from '../src/toast';
 
@@ -37,7 +39,9 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function mount(ui: React.ReactNode, data: Record<string, unknown>) {
+const TID = '01JD0000000000000000000T01';
+
+async function mount(ui: React.ReactNode, data: Record<string, unknown>, path = '/') {
   vi.stubGlobal('fetch', async (url: string) => {
     if (url === '/api/me') return json(me);
     const key = Object.keys(data).find((k) => url.startsWith(k));
@@ -49,7 +53,7 @@ async function mount(ui: React.ReactNode, data: Record<string, unknown>) {
   await act(async () => {
     root!.render(
       <MantineProvider withCssVariables={false} withGlobalClasses={false} defaultColorScheme="light" theme={theme}>
-        <MemoryRouter><ToastProvider><SessionProvider>{ui}</SessionProvider></ToastProvider></MemoryRouter>
+        <MemoryRouter initialEntries={[path]}><ToastProvider><SessionProvider>{ui}</SessionProvider></ToastProvider></MemoryRouter>
       </MantineProvider>,
     );
   });
@@ -96,4 +100,34 @@ test('every table cell carries the label of its column, and each row has one tit
     { adminId: '', username: '', action: 'login', target: '', result: 'failed:http_502', ip: '', source: '', at: '2026-11-02T10:00:00Z' },
   ] } });
   expectCellLabels(host!.querySelector('table')!);
+  await act(async () => root!.unmount());
+  host!.remove();
+
+  await mount(<Tenants />, { '/api/tenants': { tenants: [
+    { tenantId: TID, name: 'Acme', kind: 'org', createdAt: '2026-11-01T10:00:00Z', memberCount: 3, creatorEmail: 'o@acme.test', clientCount: 1, clientQuota: 5 },
+    { tenantId: '01JD0000000000000000000T02', name: '', kind: 'personal', createdAt: '2026-11-02T10:00:00Z', memberCount: 1, creatorEmail: 'p@x.test', suspendedAt: '2026-11-03T10:00:00Z' },
+  ] } });
+  expectCellLabels(host!.querySelector('table')!);
+  await act(async () => root!.unmount());
+  host!.remove();
+
+  // The tenant page has three tables: members, clients and its history.
+  await mount(
+    <Routes><Route path="/tenants/:id" element={<TenantDetail />} /></Routes>,
+    {
+      [`/api/tenants/${TID}/audit`]: { entries: [
+        { actorId: 'operator', actorName: 'AuthGate administrator', action: 'tenant-quota', target: TID, result: 'success', ip: '', detail: { from: '3', to: '5' }, at: '2026-11-04T10:00:00Z' },
+      ] },
+      [`/api/tenants/${TID}`]: {
+        tenant: { tenantId: TID, name: 'Acme', kind: 'org', createdAt: '2026-11-01T10:00:00Z', memberCount: 1, creatorEmail: 'o@acme.test' },
+        members: [{ userId: 'u1', displayName: 'Olga', email: 'o@acme.test', role: 'owner', joinedAt: '2026-11-01T10:00:00Z' }],
+        pendingInvites: 0, owner: { tenantId: TID, clientCount: 1, clientQuota: 5 },
+        clients: { clients: [{ clientId: 'c1', name: 'Billing app', rpId: 'example.com', createdAt: '2026-11-01T10:00:00Z', owner: TID }] },
+      },
+    },
+    `/tenants/${TID}`,
+  );
+  const tables = [...host!.querySelectorAll('table')];
+  expect(tables.length).toBe(3);
+  tables.forEach(expectCellLabels);
 });

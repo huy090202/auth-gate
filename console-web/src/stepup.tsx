@@ -9,7 +9,9 @@ import { passkeyCount, type Me } from './session';
 export type StepUpAction =
   | 'rotate-key' | 'revoke-previous-keys' | 'disable-client' | 'delete-client' | 'purge-subject' | 'update-client'
   | 'change-password' | 'add-factor' | 'remove-factor'
-  | 'admin-create' | 'admin-reset-password' | 'admin-clear-factors' | 'admin-disable' | 'admin-enable' | 'admin-role';
+  | 'admin-create' | 'admin-reset-password' | 'admin-clear-factors' | 'admin-disable' | 'admin-enable' | 'admin-role'
+  | 'tenant-suspend' | 'tenant-unsuspend' | 'tenant-quota'
+  | 'user-suspend' | 'user-unsuspend' | 'user-resend-verification' | 'user-factor-reset';
 
 /**
  * Runs `run(token)` behind a fresh step-up (the modal, the single retry on step_up_required and

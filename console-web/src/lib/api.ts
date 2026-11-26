@@ -9,6 +9,9 @@ export const errorCodes = [
   'authgate_unavailable', 'internal', 'verification_failed', 'locked', 'challenge_gone', 'wrong_factor',
   'pin_rejected', 'registration_failed', 'invalid_client', 'invalid_cursor', 'invalid_id', 'client_not_found',
   'rotate_conflict', 'invalid_token', 'invalid_factor', 'enrollment_in_progress', 'invalid_role', 'invalid_target', 'busy',
+  // The operator pages: tenants, users and the avatar.
+  'invalid_reason', 'invalid_owner', 'not_mailable', 'tenant_deleting', 'tenant_suspended', 'invalid_quota', 'invalid_email',
+  'invalid_avatar', 'portal_unavailable',
 ] as const;
 export type ErrorCode = (typeof errorCodes)[number];
 

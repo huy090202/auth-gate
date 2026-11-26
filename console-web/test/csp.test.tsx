@@ -147,7 +147,7 @@ for (const collapsed of [false, true]) test(`the signed-in Shell renders no <sty
     );
   });
   expect(host.querySelector('nav a[aria-current="page"], nav a')).not.toBeNull();
-  expect(host.querySelectorAll('nav a').length).toBe(4);
+  expect(host.querySelectorAll('nav a').length).toBe(6);
   for (const a of host.querySelectorAll('nav a')) expect(a.getAttribute('title')).toBeTruthy();
   expect(host.querySelector('.sidebar-collapse')?.getAttribute('aria-expanded')).toBe(String(!collapsed));
   // The avatar menu opens with My account and Sign out, and still renders no <style>.

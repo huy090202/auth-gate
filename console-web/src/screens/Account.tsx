@@ -1,11 +1,12 @@
 import { Badge, Button, Group, SegmentedControl, Text, useMantineColorScheme } from '@mantine/core';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { consoleTitle, useTitle } from '../brand';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
+import { checkAvatar, uploadAvatar } from '../lib/avatar';
 import { formatDate } from '../lib/format';
 import { fmt, useLang, useStrings, type Lang } from '../lib/i18n';
 import { monoFont } from '@authgate/web-kit/theme';
-import { Shell } from '../shell';
+import { Avatar, Shell } from '../shell';
 import { SessionGuard, passkeyCount, type Me, type Passkey } from '../session';
 import { useStepUp } from '../stepup';
 import { Feedback, PasswordForm, PinForm, registerPasskey, useAction, withRestart } from './factors';
@@ -20,6 +21,63 @@ function KeyIcon() {
 }
 
 type Props = { me: Me; reload: () => Promise<void>; stepUp: ReturnType<typeof useStepUp>['stepUp'] };
+
+function ProfileSection({ me, reload }: Pick<Props, 'me' | 'reload'>) {
+  const t = useStrings();
+  const pic = useAction();
+  const file = useRef<HTMLInputElement>(null);
+  const choose = (f: File | undefined) => {
+    if (file.current) file.current.value = ''; // the same file may be chosen again after a refusal
+    if (!f) return;
+    // Checked here, before a presign is asked for: a refused file never leaves the browser.
+    const problem = checkAvatar(f);
+    if (problem) return pic.setError(problem === 'size' ? t.account.avatarTooBig : t.account.avatarWrongType);
+    void pic.run(async () => {
+      try {
+        await uploadAvatar(f);
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'upload_failed') {
+          pic.setError(t.account.avatarUploadFailed);
+          return false;
+        }
+        throw e;
+      }
+      await reload();
+    }, t.account.avatarSaved, 'upload');
+  };
+  const removePic = () =>
+    pic.run(async () => {
+      await api('/api/me/avatar', { method: 'DELETE' });
+      await reload();
+    }, t.account.avatarRemoved, 'remove');
+  return (
+    <section className="panel glass">
+      <h2>{t.account.profileTitle}</h2>
+      <div className="avatar-row">
+        <Avatar me={me} large />
+        <div>
+          <Text fz="sm" fw={600}>{t.account.avatarTitle}</Text>
+          <Text fz="xs" c="dimmed">{t.account.avatarHint}</Text>
+          <div className="avatar-actions">
+            <input ref={file} type="file" className="sr-only" tabIndex={-1} accept="image/png,image/jpeg,image/webp" aria-label={t.account.avatarChoose}
+              onChange={(e) => choose(e.currentTarget.files?.[0])} />
+            <Button size="compact-sm" variant="light" loading={pic.loading('upload')} disabled={pic.busy && !pic.loading('upload')}
+              onClick={() => file.current?.click()}>
+              {t.account.avatarChoose}
+            </Button>
+            {me.avatarUrl && (
+              <Button size="compact-sm" variant="subtle" color="red" loading={pic.loading('remove')} disabled={pic.busy && !pic.loading('remove')}
+                onClick={() => void removePic()}>
+                {t.account.avatarRemove}
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+      <Feedback error={pic.error} />
+    </section>
+  );
+}
 
 function PreferencesSection() {
   const t = useStrings();
@@ -186,6 +244,7 @@ function AccountBody({ me, reload }: { me: Me; reload: () => Promise<void> }) {
         <Text c="dimmed" fz="sm">{fmt(t.account.intro, { username: me.username })}</Text>
       </div>
       <div className="panel-stack">
+        <ProfileSection me={me} reload={reload} />
         <PreferencesSection />
         <PasswordSection {...props} />
         <PinSection {...props} />

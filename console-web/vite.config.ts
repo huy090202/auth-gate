@@ -2,7 +2,8 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
-const proxy = { '/api': 'http://localhost:8788' };
+// /avatars and the dev upload route are served by the Console in development (CloudFront from S3 in production).
+const proxy = { '/api': 'http://localhost:8788', '/avatars': 'http://localhost:8788', '/dev/avatars-upload': 'http://localhost:8788' };
 
 // The production policy from infra/console.yaml (Task 15): no inline style, no inline script.
 const csp = [

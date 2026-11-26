@@ -13,6 +13,8 @@ export type Me = {
   role: 'master' | 'admin';
   stage: 'half' | 'enroll' | 'full';
   mustChangePassword: boolean;
+  /** Site-relative URL of the admin's picture; absent when there is none. */
+  avatarUrl?: string;
   // A boolean for a half session or an enrolling one that has proved nothing yet: passkey
   // metadata stays hidden from a session that has only proved the password.
   factors: { pin: boolean; webauthn: Passkey[] | boolean };
