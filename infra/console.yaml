@@ -16,6 +16,20 @@ Parameters:
     Type: String
     Default: ""
     Description: Empty on the first deploy; set after register-client.sh stg.
+  PortalUrl:
+    Type: String
+    AllowedPattern: ^https://[^/]+$
+    Description: The Portal's one URL (its BaseUrl output), which the operator actions call.
+  PortalClientId:
+    Type: String
+    Description: The Portal's client id at AuthGate (its AuthGateClientId output).
+  PublicBaseUrl:
+    Type: String
+    Default: ""
+    AllowedPattern: ^(https://[^/]+)?$
+    Description: >-
+      This Console's own origin, the avatar bucket's CORS origin. Empty on the first pass, when
+      the CloudFront domain does not exist yet; the deploy script then sets it from the stack's own BaseUrl.
   DomainName:
     Type: String
     Default: ""
@@ -36,6 +50,7 @@ Parameters:
 
 Conditions:
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
+  HasPublicBaseUrl: !Not [!Equals [!Ref PublicBaseUrl, ""]]
   HasClientId: !Not [!Equals [!Ref AuthGateClientId, ""]]
   HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
 
@@ -102,6 +117,10 @@ Resources:
           ADMIN_KEY_PARAM: !Sub /credo/auth-gate/${Stage}/admin-key
           CLIENT_KEY_PARAM: !Sub /credo/auth-gate-console/${Stage}/authgate-client-key
           ORIGIN_VERIFY_PARAM: !Sub /credo/auth-gate-console/${Stage}/origin-verify
+          PORTAL_URL: !Ref PortalUrl
+          PORTAL_CLIENT_ID: !Ref PortalClientId
+          PORTAL_OPERATOR_KEY_PARAM: !Sub /credo/auth-gate-portal/${Stage}/operator-key
+          AVATAR_BUCKET: !Ref AvatarBucket
       # No KMS statement, as in infra/template.yaml: SecureStrings use the account's
       # default aws/ssm key. No access to the AuthGate table or its signing key.
       Policies:
@@ -121,6 +140,16 @@ Resources:
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate/${Stage}/admin-key"
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-console/${Stage}/origin-verify"
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-console/${Stage}/authgate-client-key"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-portal/${Stage}/operator-key"
+            # pending/ takes the uploads; a confirm copies one to avatars/ and deletes it.
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource:
+                - !Sub "${AvatarBucket.Arn}/avatars/*"
+                - !Sub "${AvatarBucket.Arn}/pending/*"
 
   SiteBucket:
     Type: AWS::S3::Bucket
@@ -137,6 +166,47 @@ Resources:
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
+
+  # Admin profile pictures, as the Portal's (infra/portal.yaml). The browser POSTs to pending/ with
+  # a presigned form (CORS below); the API confirms an upload by copying it to avatars/, which is all
+  # CloudFront serves (at /avatars/*, through OAC). An upload never confirmed is never served and
+  # expires after a day.
+  AvatarBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # The regional domain of this name is the connect-src host of SiteHeaders below.
+      BucketName: !Sub auth-gate-console-${Stage}-avatars-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      # The Console's own origin only, and POST only: reads go through CloudFront. Absent on
+      # the first pass, when PublicBaseUrl is not known yet.
+      CorsConfiguration: !If
+        - HasPublicBaseUrl
+        - CorsRules:
+            - AllowedOrigins: [!Ref PublicBaseUrl]
+              AllowedMethods: [POST]
+              AllowedHeaders: [content-type, "x-amz-*"]
+              MaxAge: 3600
+        - !Ref AWS::NoValue
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-multipart-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+          - Id: expire-unconfirmed-uploads
+            Status: Enabled
+            Prefix: pending/
+            ExpirationInDays: 1
 
   SiteOac:
     Type: AWS::CloudFront::OriginAccessControl
@@ -163,8 +233,24 @@ Resources:
               StringEquals:
                 AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
 
+  AvatarBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AvatarBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFrontReadsAvatars
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${AvatarBucket.Arn}/avatars/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
   # SPA routes have no file in S3: any path whose last segment has no dot is served
-  # /index.html. Only on the site behaviour, never on /api/*.
+  # /index.html. Only on the site behaviour, never on /api/* or /avatars/*.
   SpaRewrite:
     Type: AWS::CloudFront::Function
     Properties:
@@ -207,8 +293,9 @@ Resources:
           }
         - Hostname: !If [HasDomain, !Ref DomainName, ""]
 
-  # Must equal the policy in console-web/vite.config.ts (no inline script or style).
-  # data: in img-src is the glass grain SVG.
+  # Must equal cspFor('<the avatar bucket regional domain>') in console-web/src/csp.ts (no inline
+  # script or style; pinned by console-web/test/csp-header.test.ts). data: in img-src is the glass
+  # grain SVG. The bucket host in connect-src is the presigned avatar upload.
   SiteHeaders:
     Type: AWS::CloudFront::ResponseHeadersPolicy
     Properties:
@@ -217,7 +304,7 @@ Resources:
         SecurityHeadersConfig:
           ContentSecurityPolicy:
             Override: true
-            ContentSecurityPolicy: "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+            ContentSecurityPolicy: !Sub "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://auth-gate-console-${Stage}-avatars-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
           StrictTransportSecurity:
             Override: true
             AccessControlMaxAgeSec: 31536000
@@ -248,6 +335,28 @@ Resources:
       ResponseHeadersPolicyConfig:
         Name: !Sub auth-gate-console-${Stage}-api-headers
         SecurityHeadersConfig:
+          StrictTransportSecurity:
+            Override: true
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: false
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: no-referrer
+
+  # The /avatars answers: an uploaded object is user content, so a mistyped one must not run
+  # script or load anything even if opened directly.
+  AvatarHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub auth-gate-console-${Stage}-avatar-headers
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: "default-src 'none'; sandbox"
           StrictTransportSecurity:
             Override: true
             AccessControlMaxAgeSec: 31536000
@@ -297,6 +406,10 @@ Resources:
             DomainName: !GetAtt SiteBucket.RegionalDomainName
             OriginAccessControlId: !GetAtt SiteOac.Id
             S3OriginConfig: { OriginAccessIdentity: "" }
+          - Id: avatars
+            DomainName: !GetAtt AvatarBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOac.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }
         DefaultCacheBehavior:
           TargetOriginId: site
           ViewerProtocolPolicy: redirect-to-https
@@ -318,12 +431,21 @@ Resources:
             # AllViewerExceptHostHeader forwards CloudFront-Viewer-Address, which the limiter reads.
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
             ResponseHeadersPolicyId: !Ref ApiHeaders
+          # Object names are fresh ULIDs and never overwritten, so the long default cache is safe.
+          - PathPattern: /avatars/*
+            TargetOriginId: avatars
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+            ResponseHeadersPolicyId: !Ref AvatarHeaders
         # No CustomErrorResponses: they are distribution-wide and would turn the
         # Console's own 403/404 JSON on /api/* into index.html 200.
 
 Outputs:
   BaseUrl:
-    Description: The one URL of the Console (site and /api).
+    Description: The one URL of the Console (site, /api and /avatars).
     Value: !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${Distribution.DomainName}"]
   DistributionDomain:
     Description: Read by scripts/domain/dns-records.sh (the CNAME target).
@@ -333,6 +455,8 @@ Outputs:
     Value: !GetAtt ConsoleUrl.FunctionUrl
   SiteBucket:
     Value: !Ref SiteBucket
+  AvatarBucket:
+    Value: !Ref AvatarBucket
   DistributionId:
     Value: !Ref Distribution
   AuthGateClientId:

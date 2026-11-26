@@ -6,9 +6,10 @@ STAGE="${STAGE:-stg}"
 REGION="${AWS_REGION:-ap-southeast-1}"
 STACK="auth-gate-console-$STAGE"
 AUTHGATE_STACK="auth-gate-$STAGE"
+PORTAL_STACK="auth-gate-portal-$STAGE"
 PARAM_PREFIX="/credo/auth-gate-console/$STAGE"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-export STAGE REGION STACK AUTHGATE_STACK PARAM_PREFIX ROOT
+export STAGE REGION STACK AUTHGATE_STACK PORTAL_STACK PARAM_PREFIX ROOT
 
 die() { echo "error: $*" >&2; exit 1; }
 

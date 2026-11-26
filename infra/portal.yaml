@@ -120,6 +120,7 @@ Resources:
           PORTAL_KEY_PARAM: !Sub /credo/auth-gate/${Stage}/portal-key
           TURNSTILE_SECRET_PARAM: !Sub /credo/auth-gate-portal/${Stage}/turnstile-secret
           ORIGIN_VERIFY_PARAM: !Sub /credo/auth-gate-portal/${Stage}/origin-verify
+          OPERATOR_KEY_PARAM: !Sub /credo/auth-gate-portal/${Stage}/operator-key
       # No KMS statement, as in infra/template.yaml: SecureStrings use the account's
       # default aws/ssm key. No access to the AuthGate table, its signing key or its admin key.
       Policies:
@@ -140,6 +141,7 @@ Resources:
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-portal/${Stage}/origin-verify"
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-portal/${Stage}/authgate-client-key"
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-portal/${Stage}/turnstile-secret"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/credo/auth-gate-portal/${Stage}/operator-key"
             # Only from the one address; any identity in the account may be named in the ARN.
             - Effect: Allow
               Action: ses:SendEmail

@@ -80,10 +80,11 @@ jobs:
       - run: scripts/setup-and-deploy/02-build.sh
       - run: scripts/setup-and-deploy/03-deploy.sh
       - run: scripts/setup-and-deploy/04-smoke.sh
-      - run: scripts/console/deploy.sh
-      - run: scripts/console/smoke.sh
+      # The Portal first: the Console reads its URL, client id and operator key.
       - run: scripts/portal/deploy.sh
         env:
           EMAIL_FROM: ${{ vars.PORTAL_EMAIL_FROM }}
           TURNSTILE_SITE_KEY: ${{ vars.PORTAL_TURNSTILE_SITE_KEY }}
       - run: scripts/portal/smoke.sh
+      - run: scripts/console/deploy.sh
+      - run: scripts/console/smoke.sh
