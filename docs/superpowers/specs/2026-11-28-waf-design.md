@@ -25,8 +25,8 @@ Decided by the owner on 2026-11-27 and 2026-11-28:
 
 Done means four things, all verified without switching the WAF on:
 
-1. With the WAF off, there is no WAF stack, no web ACL and no cost. Every CI deploy passes an
-   empty web ACL to all three stacks.
+1. With the WAF off, there is no WAF stack, no web ACL and no cost. Every CI deploy passes the
+   sentinel `WebAclArn=none` to all three stacks.
 2. `scripts/waf/enable.sh` turns it on and `scripts/waf/disable.sh` turns it off. They run in the
    order §3 gives. Their tests use a stubbed `aws`.
 3. A CI deploy while the WAF is on keeps the web ACL attached.
@@ -62,12 +62,16 @@ web ACLs there. The template is `infra/waf.yaml`, with `Scope: CLOUDFRONT` and n
 
 - **The switch itself:** the SSM String parameter `/credo/auth-gate/<stage>/waf-acl-arn`, in the
   app region. When it is present, the WAF is on, and its value is the web ACL's ARN.
+- **Off is the sentinel `none`, never an empty value.** `sam` rejects an empty parameter override,
+  and a parameter left out of an update keeps its previous value, so the scripts always pass
+  `WebAclArn=none` or `WebAclArn=<arn>`.
 - **The app stacks:** `infra/template.yaml`, `infra/portal.yaml` and `infra/console.yaml` each gain
-  an optional parameter `WebAclArn`, defaulting to `""`. Each distribution sets
+  an optional parameter `WebAclArn`, defaulting to `none`, with an `AllowedPattern` that accepts
+  `none` or a us-east-1 web ACL ARN. The condition `HasWaf` is `WebAclArn != none`. Each distribution sets
   `WebACLId: !If [HasWaf, !Ref WebAclArn, !Ref AWS::NoValue]`.
 - **The deploy scripts:** `03-deploy.sh`, `scripts/portal/deploy.sh` and
   `scripts/console/deploy.sh` read the parameter on every deploy, including CI's, and pass
-  `WebAclArn` with the value or empty.
+  `WebAclArn=<arn>` or `WebAclArn=none`.
   - Only `ParameterNotFound` means off. Any other error stops the deploy. This way, a read
     failure never quietly detaches a WAF that is on.
 
@@ -79,25 +83,32 @@ Run under the admin profile.
    exits with no change.
 2. Deploy `auth-gate-waf-<stage>` in `us-east-1`, then read its `WebAclArn` output.
 3. Write the SSM parameter.
-4. Run the three app deploy scripts, so each distribution attaches the web ACL.
-5. Print the state of each distribution's web ACL.
+4. Print the next step: run the `ci` workflow by hand from the Actions tab, on `main`.
 
-It is safe to run again, because every step is idempotent.
+`enable.sh` does not deploy the apps itself. The owner's admin profile would otherwise change the
+distributions out of band, and CI would be the second deployer. The `deploy` job runs on `workflow_dispatch`
+on `main` only, reads the switch, and attaches the web ACL. It is safe to run `enable.sh` again,
+because every step is idempotent.
 
 ### `scripts/waf/disable.sh`
 
-Run under the admin profile. AWS refuses to delete a web ACL that is still attached, so the
-steps run in this order:
+Run under the admin profile, twice. AWS refuses to delete a web ACL that is still attached, and CI
+is the only deployer of the distributions, so the script has two phases and picks one from the
+state it finds:
 
-1. Ask the owner to type `disable <stage>`.
-2. Delete the SSM parameter.
-3. Run the three app deploy scripts, so each distribution detaches the web ACL.
-4. Delete the stack and wait for the deletion to finish.
-5. Print that the WAF is off and its cost has stopped.
+1. **The switch is present.** Ask the owner to type `disable <stage>`, delete the SSM parameter,
+   and print the next step. The owner then runs the `ci` workflow by hand on `main`; that deploy
+   passes `WebAclArn=none` and detaches the web ACL.
+2. **The switch is absent and the stack exists.** Ask for `disable <stage>` again. Refuse while
+   any distribution still uses the web ACL (it lists them and tells the owner to run the
+   workflow). Otherwise delete the stack and wait for the deletion to finish.
+
+It refuses a broken stack (one that exists but has no `WebAclArn` output) and a failed switch
+read, and never treats either as off.
 
 ### Shared rules for both scripts
 
-- **The app deploys need a build:** the scripts run `02-build.sh` first, the same build CI runs.
+- **No local app deploys.** Neither script builds or deploys the apps. The Actions run does.
 - **A failure partway** stops the script with a message that names the next manual step. Running
   the script again finishes the job.
 
@@ -118,10 +129,15 @@ steps run in this order:
 - **The CI deployer:**
   - Reads the new SSM parameter, which it already can: `/credo/auth-gate/*`.
   - Passes the ARN to CloudFront. Attaching a web ACL through `UpdateDistribution` also needs
-    read access to that web ACL. `infra/deployer-policy-edge.json` gains the WAF read actions
-    AWS requires for this, scoped to
-    `arn:aws:wafv2:us-east-1:<account>:global/webacl/auth-gate-*/*`. The plan confirms the exact
-    actions against AWS's documentation.
+    read access to that web ACL. AWS documents `UpdateDistribution` with the ARN in the
+    distribution config as the path, and does not state further checks, so
+    `infra/deployer-policy-edge.json` gains, defensively, the statements `ReadTheWebAcl`
+    (`wafv2:GetWebACL` on `arn:aws:wafv2:us-east-1:<account>:global/webacl/auth-gate-*/*`) and
+    `AttachTheWebAcl` (`cloudfront:AssociateDistributionWebACL` and
+    `cloudfront:DisassociateDistributionWebACL` on the account's distributions, with the same
+    `aws:ResourceTag/app` condition as the rest of the file).
+  - `infra/role-boundary.json` and `infra/deployer-policy.json` need nothing: the admin creates the
+    WAF stack, and the deployer makes no role for it.
   - When that policy changes, the owner reruns `00-deployer.sh` before merge, as before.
 - **The admin profile:** creates and deletes the WAF stack, the SSM switch and the budget. The CI
   deployer gains no right to create a web ACL, to create a stack in `us-east-1`, or to touch
@@ -137,22 +153,24 @@ steps run in this order:
 ## 7. Tests and checks
 
 - **Shell tests with a stubbed `aws` and stubbed deploy scripts:**
-  - `enable.sh` does nothing without the typed confirmation. With it, it runs stack, then SSM
-    put, then the three deploys, in that order.
-  - `disable.sh` runs SSM delete, then the three deploys, then stack delete, in that order.
-  - The deploy scripts pass `WebAclArn=` when the parameter is absent and the ARN when it is
+  - `enable.sh` does nothing without the typed confirmation. With it, it deploys the stack, then
+    writes the SSM switch.
+  - `disable.sh` phase 1 deletes the switch and nothing else. Phase 2 deletes the stack only when no
+    distribution uses the web ACL.
+  - The deploy scripts pass `WebAclArn=none` when the parameter is absent and the ARN when it is
     present, and stop on any other SSM error.
   - `budget.sh` never prints the email address, and prints `exists` on a second run.
 - **Template checks:** `sam validate --lint` (or the repository's template check) on
   `infra/waf.yaml` and on the three changed app templates.
 - **The gate:** `pnpm run check`.
-- **The owner's optional round on stg:** `enable.sh`, a `curl` to see the API still answer, then
-  `disable.sh`. It costs a few cents. The branch can merge without it, because it ships off.
+- **The owner's optional round on stg:** `enable.sh`, the Actions run, a `curl` to see the API still
+  answer, then `disable.sh`, the Actions run, and `disable.sh` again. It costs a few cents. The
+  branch can merge without it, because it ships off.
 
 ## 8. Docs
 
-- `docs/reference/deploy.md`: a section "WAF (off by default)" with the two commands, what they
-  cost, and the order of `disable.sh`.
+- `docs/reference/deploy.md`: a section "WAF (off by default)" with the commands, what they
+  cost, and the order of `disable.sh` and the Actions run.
 - `docs/memo/waf-off-by-default.md`: a decision record covering:
   - why it ships off;
   - why there is one web ACL;

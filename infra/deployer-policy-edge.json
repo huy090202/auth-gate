@@ -61,6 +61,26 @@
       "Resource": "*"
     },
     {
+      "Sid": "ReadTheWebAcl",
+      "Effect": "Allow",
+      "Action": "wafv2:GetWebACL",
+      "Resource": "arn:aws:wafv2:us-east-1:826113468815:global/webacl/auth-gate-*/*"
+    },
+    {
+      "Sid": "AttachTheWebAcl",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:AssociateDistributionWebACL",
+        "cloudfront:DisassociateDistributionWebACL"
+      ],
+      "Resource": "arn:aws:cloudfront::826113468815:distribution/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/app": "auth-gate"
+        }
+      }
+    },
+    {
       "Sid": "ManageTheEdgeFunctions",
       "Effect": "Allow",
       "Action": [

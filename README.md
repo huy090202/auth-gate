@@ -120,6 +120,7 @@ Each is a one-page memo with the reasons and the alternatives that lost:
 - [The custom domain](docs/memo/custom-domain.md): one certificate, DNS only, one rpId per app.
 - [No health endpoint](docs/memo/no-health-endpoint.md): no role answers `/health` or `/version`,
   and an unknown path is a 404.
+- [The WAF is built but off](docs/memo/waf-off-by-default.md): one web ACL for all three distributions, switched on by the owner with a script, no cost while off ([how](docs/reference/deploy.md#waf-off-by-default)).
 
 ## Run it locally
 

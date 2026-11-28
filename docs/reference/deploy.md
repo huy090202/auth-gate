@@ -316,3 +316,64 @@ Wait a minute after the second. Further reading: [the memo](../memo/operator-sid
 A template that needs a new right: run `00-deployer.sh` from the branch before merging, or the CI
 deploy fails. A policy that narrows rights: merge first, then apply, as in the infra-hardening
 rollout.
+
+## WAF (off by default)
+
+An AWS WAF web ACL can sit in front of all three distributions (the API, the Portal and the
+Console). It ships off, because auth-gate has no users yet and a web ACL has a fixed monthly cost.
+Off means no WAF stack, no web ACL and no cost. The design is in
+[the WAF spec](../superpowers/specs/2026-11-28-waf-design.md) and
+[the decision record](../memo/waf-off-by-default.md).
+
+**The switch** is the SSM parameter `/credo/auth-gate/<stage>/waf-acl-arn`. When it exists, its
+value is the web ACL's ARN and the WAF is on. Every CI deploy reads it and passes `WebAclArn=<arn>`
+or the sentinel `WebAclArn=none` to the three stacks (not an empty value: `sam` rejects it). An
+error other than `ParameterNotFound` stops the deploy, so a failed read never detaches a WAF that is
+on. The web ACL is `auth-gate-<stage>` in `us-east-1` (stack `auth-gate-waf-<stage>`). Four rules:
+a blocklist of bad IP addresses, the common rule set (body size only counts, so a passkey
+enrollment is not blocked), 300 requests per 5 minutes per IP on `portal.` and `admin.`, and 6000
+per 5 minutes per IP on everything.
+
+**Cost while on:** about 9-10 USD a month (5 USD web ACL + 4 rules x 1 USD + 0.60 USD per million
+requests). `enable.sh` prints this and asks you to type `enable <stage>`.
+
+Turn it on, under the admin profile, then run the deploy from GitHub:
+
+```bash
+ADMIN_PROFILE=default STAGE=stg scripts/waf/enable.sh
+```
+
+Then GitHub, Actions, `ci`, Run workflow, branch `main`. That deploy attaches the web ACL. The
+`deploy` job runs on `workflow_dispatch` on `main` only.
+
+Turn it off in two phases, because AWS refuses to delete a web ACL that is still attached. The
+script picks the phase from what it finds:
+
+```bash
+ADMIN_PROFILE=default STAGE=stg scripts/waf/disable.sh
+```
+
+This deletes the switch. Then run `ci` from the Actions tab on `main`: that deploy passes
+`WebAclArn=none` and detaches the web ACL. Then run it again:
+
+```bash
+ADMIN_PROFILE=default STAGE=stg scripts/waf/disable.sh
+```
+
+This deletes the stack, and stops if a distribution still uses the web ACL. Each run asks you to
+type `disable <stage>`.
+
+**Cost alert.** Once, under the admin profile, create the 10 USD monthly budget `auth-gate-monthly`.
+It emails at forecast above 80% and at actual above 100%. The address is read from the environment
+and never printed. It prints `created` or `exists`:
+
+```bash
+BUDGET_EMAIL=you@example.com ADMIN_PROFILE=default scripts/cost/budget.sh
+```
+
+**Before the merge that carries this**, the CI deployer needs the new rights to attach the web ACL
+(`infra/deployer-policy-edge.json`). Run, under the admin profile:
+
+```bash
+ADMIN_PROFILE=default scripts/setup-and-deploy/00-deployer.sh
+```
