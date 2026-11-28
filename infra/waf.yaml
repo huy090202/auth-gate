@@ -62,27 +62,20 @@ Resources:
               Limit: 300
               EvaluationWindowSec: 300
               AggregateKeyType: IP
-              # Only the browser-facing hosts: the API is called by customers' backends from
-              # few addresses, and rate-all guards it.
+              # Every host except api.: the Portal and Console are also reachable through their
+              # CloudFront default hostnames, so the scope is "not the API host". The API is
+              # called by customers' backends from few addresses, and rate-all guards it.
               ScopeDownStatement:
-                OrStatement:
-                  Statements:
-                    - ByteMatchStatement:
-                        SearchString: "portal."
-                        PositionalConstraint: STARTS_WITH
-                        FieldToMatch:
-                          SingleHeader:
-                            Name: host
-                        TextTransformations:
-                          - { Priority: 0, Type: LOWERCASE }
-                    - ByteMatchStatement:
-                        SearchString: "admin."
-                        PositionalConstraint: STARTS_WITH
-                        FieldToMatch:
-                          SingleHeader:
-                            Name: host
-                        TextTransformations:
-                          - { Priority: 0, Type: LOWERCASE }
+                NotStatement:
+                  Statement:
+                    ByteMatchStatement:
+                      SearchString: "api."
+                      PositionalConstraint: STARTS_WITH
+                      FieldToMatch:
+                        SingleHeader:
+                          Name: host
+                      TextTransformations:
+                        - { Priority: 0, Type: LOWERCASE }
           VisibilityConfig:
             CloudWatchMetricsEnabled: true
             MetricName: rate-browser
@@ -93,7 +86,7 @@ Resources:
             Block: {}
           Statement:
             RateBasedStatement:
-              Limit: 6000
+              Limit: 60000
               EvaluationWindowSec: 300
               AggregateKeyType: IP
           VisibilityConfig:
