@@ -22,9 +22,11 @@ case " $* " in
     case "$SCENARIO" in
       exists) echo '{"Budget":{}}' ;;
       absent) echo "An error occurred (NotFoundException) when calling the DescribeBudget operation" >&2; exit 254 ;;
+      createfail) echo "An error occurred (NotFoundException) when calling the DescribeBudget operation" >&2; exit 254 ;;
       denied) echo "An error occurred (AccessDeniedException) when calling the DescribeBudget operation" >&2; exit 254 ;;
     esac ;;
   *" budgets create-budget "*)
+    if [ "$SCENARIO" = createfail ]; then echo "An error occurred (AccessDenied): cannot notify $BUDGET_EMAIL" >&2; exit 254; fi
     for a in "$@"; do [[ "$a" == file://* ]] && cp "${a#file://}" "$CREATE_COPY"; done ;;
   *) echo "stub: unexpected call: $*" >&2; exit 255 ;;
 esac
@@ -64,5 +66,10 @@ if grep -qF "$addr" "$AWS_CALLS" "$tmp/out" "$tmp/err"; then nok "exists: the ad
 
 if run denied; then nok "denied: exits non-zero"; else ok "denied: exits non-zero"; fi
 if grep -q create-budget "$AWS_CALLS"; then nok "denied: no create"; else ok "denied: no create"; fi
+
+# Why: AWS may echo the subscriber address in a create error; it must not reach the terminal or logs.
+if run createfail; then nok "createfail: exits non-zero"; else ok "createfail: exits non-zero"; fi
+if grep -qF "$addr" "$tmp/out" "$tmp/err"; then nok "createfail: the address is printed"; else ok "createfail: the address is redacted"; fi
+if grep -q "<redacted>" "$tmp/err"; then ok "createfail: error is shown"; else nok "createfail: error is shown"; fi
 
 exit "$fail"

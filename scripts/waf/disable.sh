@@ -56,7 +56,7 @@ stack_arn() {
 switch="$(waf_acl_arn)" || exit 1
 if [ -n "$switch" ]; then
   confirm
-  aws ssm delete-parameter --region "$REGION" --name "$SWITCH"
+  aws ssm delete-parameter --region "$WAF_SWITCH_REGION" --name "$SWITCH"
   echo "Switch deleted: $SWITCH"
   echo "$RUN_LINE"
   exit 0

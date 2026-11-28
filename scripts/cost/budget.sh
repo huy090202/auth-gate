@@ -33,7 +33,9 @@ elif [[ "$err" == *NotFoundException* ]]; then
       Budget: {BudgetName: $n, BudgetLimit: {Amount: "10", Unit: "USD"}, TimeUnit: "MONTHLY", BudgetType: "COST"},
       NotificationsWithSubscribers: [alert("FORECASTED"; 80), alert("ACTUAL"; 100)]
     }' >"$tmp/budget.json")
-  aws budgets create-budget --region us-east-1 --cli-input-json "file://$tmp/budget.json" >/dev/null
+  if ! cerr="$(aws budgets create-budget --region us-east-1 --cli-input-json "file://$tmp/budget.json" 2>&1 >/dev/null)"; then
+    die "cannot create budget $name: ${cerr//"$BUDGET_EMAIL"/<redacted>}"
+  fi
   echo created
 else
   die "cannot read budget $name: ${err//"$BUDGET_EMAIL"/<redacted>}"

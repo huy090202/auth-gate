@@ -8,10 +8,13 @@
 #                 parameter does not exist (the WAF is off). Any other failure prints the error
 #                 on stderr and returns non-zero. Call it as `arn="$(waf_acl_arn)" || exit 1`.
 
+# The switch lives in the app region, whatever AWS_REGION the caller exported: CI reads it there.
+WAF_SWITCH_REGION=ap-southeast-1
+
 waf_acl_arn() {
   local name="/credo/auth-gate/$STAGE/waf-acl-arn" out err rc=0
   err="$(mktemp)"
-  out="$(aws ssm get-parameter --region "$REGION" --name "$name" \
+  out="$(aws ssm get-parameter --region "$WAF_SWITCH_REGION" --name "$name" \
     --query Parameter.Value --output text 2>"$err")" || rc=$?
   if [ "$rc" -ne 0 ]; then
     if grep -q ParameterNotFound "$err"; then

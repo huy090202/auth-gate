@@ -15,6 +15,9 @@ cat >"$tmp/bin/aws" <<'STUB'
 echo " $*" >>"$CALLS"
 args=" $* "
 case "$args" in
+  *" cloudformation describe-stacks --stack-name auth-gate-t "*)
+    if [ "${APP_STATE:-present}" = present ]; then echo CREATE_COMPLETE; exit 0
+    else echo "An error occurred (ValidationError): Stack with id auth-gate-t does not exist" >&2; exit 254; fi ;;
   *" cloudformation "*)
     case "$args" in
       *" --region us-east-1 "*) ;;
@@ -69,13 +72,23 @@ done
 
 run enable.sh "enable t" absent absent ""
 d="$({ grep -n ' cloudformation deploy ' "$CALLS" || true; } | head -1 | cut -d: -f1)"
-r="$({ grep -n ' describe-stacks ' "$CALLS" || true; } | head -1 | cut -d: -f1)"
+r="$({ grep -n ' describe-stacks --stack-name auth-gate-waf-t ' "$CALLS" || true; } | head -1 | cut -d: -f1)"
 p="$({ grep -n ' ssm put-parameter ' "$CALLS" || true; } | head -1 | cut -d: -f1)"
 if [ "$rc" -eq 0 ] && [ -n "$d" ] && [ -n "$r" ] && [ -n "$p" ] && [ "$d" -lt "$r" ] && [ "$r" -lt "$p" ] \
   && grep -qF "Next: GitHub → Actions → ci → Run workflow (branch main). That deploy attaches the web ACL." <<<"$out"; then
   ok "enable: deploy, read output, put switch, next line"
 else bad "enable order or output: rc=$rc $out"; fi
 if grep -q "waf-acl-arn" "$CALLS" && ! grep -q "arn:aws:wafv2" <<<"$out"; then ok "enable does not print the ARN"; else bad "enable printed the ARN"; fi
+
+# Why: a web ACL nothing will attach to is pure cost; no app stack means no AWS write.
+APP_STATE=absent run enable.sh "enable t" absent absent ""
+if [ "$rc" -ne 0 ] && ! wrote && grep -q "auth-gate-t does not exist" <<<"$out"; then ok "enable refuses without the app stack"; else bad "enable without app stack: rc=$rc $out"; fi
+
+# Why: an owner shell with AWS_REGION=us-east-1 must not write the switch where CI never reads it.
+AWS_REGION=us-east-1 run enable.sh "enable t" absent absent ""
+if grep -q "ssm put-parameter --region ap-southeast-1 " "$CALLS" && ! grep -q "ssm .*--region us-east-1" "$CALLS"; then ok "switch write pinned to ap-southeast-1"; else bad "switch region: $(cat "$CALLS")"; fi
+AWS_REGION=us-east-1 run disable.sh "disable t" present present ""
+if grep -q "ssm get-parameter --region ap-southeast-1 " "$CALLS" && grep -q "ssm delete-parameter --region ap-southeast-1 " "$CALLS"; then ok "switch read/delete pinned to ap-southeast-1"; else bad "switch region (disable): $(cat "$CALLS")"; fi
 
 # Stack already exists, switch missing: an interrupted enable can be finished.
 run enable.sh "enable t" absent present ""
