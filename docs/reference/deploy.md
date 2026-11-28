@@ -316,3 +316,78 @@ Wait a minute after the second. Further reading: [the memo](../memo/operator-sid
 A template that needs a new right: run `00-deployer.sh` from the branch before merging, or the CI
 deploy fails. A policy that narrows rights: merge first, then apply, as in the infra-hardening
 rollout.
+
+## WAF (off by default)
+
+An AWS WAF web ACL can sit in front of all three distributions (the API, the Portal and the
+Console). It ships off, because auth-gate has no users yet and a web ACL has a fixed monthly cost.
+Off means no WAF stack, no web ACL and no cost. The design is in
+[the WAF spec](../superpowers/specs/2026-11-28-waf-design.md) and
+[the decision record](../memo/waf-off-by-default.md).
+
+**The switch** is the SSM parameter `/credo/auth-gate/<stage>/waf-acl-arn`. When it exists, its
+value is the web ACL's ARN and the WAF is on. Every CI deploy reads it and passes `WebAclArn=<arn>`
+or the sentinel `WebAclArn=none` to the three stacks (not an empty value: `sam` rejects it). An
+error other than `ParameterNotFound` stops the deploy, so a failed read never detaches a WAF that is
+on. The web ACL is `auth-gate-<stage>` in `us-east-1` (stack `auth-gate-waf-<stage>`). Four rules:
+a blocklist of bad IP addresses, the common rule set (body size only counts, so a passkey
+enrollment is not blocked), 300 requests per 5 minutes per IP on every host except `api.` (the Portal and Console are also
+reachable through their CloudFront default hostnames, so the scope is "not the API host"), and
+60000 per 5 minutes per IP on everything.
+
+The 60000 limit is a ceiling of about 200 requests a second per IP. It is high on purpose:
+auth-gate's own Lambda-to-AuthGate calls and a customer's backend share egress IPs, and a lower
+limit would throttle them. Per-client limits live in AuthGate's token bucket. IPv6 is aggregated
+per /128 address, which is a weak flood guard on the API distribution (it keeps IPv6). Aggregating
+by the client-key header was rejected, because a flood could vary the header to bypass the limit.
+
+**Cost while on:** about 9-10 USD a month (5 USD web ACL + 4 rules x 1 USD + 0.60 USD per million
+requests). `enable.sh` prints this and asks you to type `enable <stage>`.
+
+Turn it on, under the admin profile, then run the deploy from GitHub:
+
+```bash
+ADMIN_PROFILE=default STAGE=stg scripts/waf/enable.sh
+```
+
+Then GitHub, Actions, `ci`, Run workflow, branch `main`. That deploy attaches the web ACL. In an
+optional round on stg, check the `rate-browser` CloudWatch metric or its sampled requests to confirm
+the WAF sees the Host header on HTTP/2 and HTTP/3 requests. The
+`deploy` job runs on `workflow_dispatch` on `main` only.
+
+Turn it off in two phases, because AWS refuses to delete a web ACL that is still attached. The
+script picks the phase from what it finds:
+
+```bash
+ADMIN_PROFILE=default STAGE=stg scripts/waf/disable.sh
+```
+
+This deletes the switch. Then run `ci` from the Actions tab on `main`: that deploy passes
+`WebAclArn=none` and detaches the web ACL. Then run it again:
+
+```bash
+ADMIN_PROFILE=default STAGE=stg scripts/waf/disable.sh
+```
+
+This deletes the stack, and stops if a distribution still uses the web ACL. Only a run that changes
+something asks you to type `disable <stage>`; when everything is already off it prints `already off`
+and asks nothing.
+
+**Cost alert.** Once, under the admin profile, create the 10 USD monthly budget `auth-gate-monthly`.
+It emails at forecast above 80% and at actual above 100%. The address is read from the environment
+and never printed. It prints `created` or `exists`:
+
+```bash
+read -r BUDGET_EMAIL && export BUDGET_EMAIL   # type the address at the prompt, not on the command line
+ADMIN_PROFILE=default scripts/cost/budget.sh
+unset BUDGET_EMAIL
+```
+
+Typing the address at the prompt keeps it out of your shell history.
+
+The CI deployer needs the new rights to attach the web ACL (`infra/deployer-policy-edge.json`)
+before the first `enable.sh`. It is harmless to run before the merge. Run, under the admin profile:
+
+```bash
+ADMIN_PROFILE=default scripts/setup-and-deploy/00-deployer.sh
+```

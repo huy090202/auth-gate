@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  auth-gate: the CloudFront web ACL, built but off. Deployed only by scripts/waf/enable.sh
+  under the admin profile, in us-east-1 (CloudFront requires web ACLs there).
+
+Parameters:
+  Stage:
+    Type: String
+    Default: stg
+    AllowedPattern: "[a-z0-9-]+"
+
+Resources:
+  WebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub auth-gate-${Stage}
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Allow: {}
+      Tags:
+        - { Key: app, Value: auth-gate }
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub auth-gate-${Stage}
+        SampledRequestsEnabled: true
+      Rules:
+        - Name: ip-reputation
+          Priority: 0
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: ip-reputation
+            SampledRequestsEnabled: true
+        - Name: common
+          Priority: 1
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              # WebAuthn attestation bodies can exceed the 8 KB check; count it, never block.
+              RuleActionOverrides:
+                - Name: SizeRestrictions_BODY
+                  ActionToUse:
+                    Count: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: common
+            SampledRequestsEnabled: true
+        - Name: rate-browser
+          Priority: 2
+          Action:
+            Block: {}
+          Statement:
+            RateBasedStatement:
+              Limit: 300
+              EvaluationWindowSec: 300
+              AggregateKeyType: IP
+              # Every host except api.: the Portal and Console are also reachable through their
+              # CloudFront default hostnames, so the scope is "not the API host". The API is
+              # called by customers' backends from few addresses, and rate-all guards it.
+              ScopeDownStatement:
+                NotStatement:
+                  Statement:
+                    ByteMatchStatement:
+                      SearchString: "api."
+                      PositionalConstraint: STARTS_WITH
+                      FieldToMatch:
+                        SingleHeader:
+                          Name: host
+                      TextTransformations:
+                        - { Priority: 0, Type: LOWERCASE }
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: rate-browser
+            SampledRequestsEnabled: true
+        - Name: rate-all
+          Priority: 3
+          Action:
+            Block: {}
+          Statement:
+            RateBasedStatement:
+              Limit: 60000
+              EvaluationWindowSec: 300
+              AggregateKeyType: IP
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: rate-all
+            SampledRequestsEnabled: true
+
+Outputs:
+  WebAclArn:
+    Value: !GetAtt WebAcl.Arn

@@ -10,9 +10,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/bin" "$tmp/home" "$tmp/tree/scripts/portal" "$tmp/tree/scripts/domain"
+mkdir -p "$tmp/bin" "$tmp/home" "$tmp/tree/scripts/portal" "$tmp/tree/scripts/domain" "$tmp/tree/scripts/waf"
 cp "$root/scripts/portal/lib.sh" "$root/scripts/portal/deploy.sh" "$tmp/tree/scripts/portal/"
 cp "$root/scripts/domain/lib.sh" "$tmp/tree/scripts/domain/"
+cp "$root/scripts/waf/lib.sh" "$tmp/tree/scripts/waf/"
 export HOME="$tmp/home" AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null
 export AWS_PROFILE=stub STAGE=t AWS_REGION=ap-southeast-1 TURNSTILE_SITE_KEY=site
 
@@ -56,6 +57,12 @@ case "$args" in
           echo "An error occurred (ParameterNotFound) when calling the GetParameter operation" >&2; exit 254
         fi
         echo authgatehq.com ;;
+      *"/credo/auth-gate/t/waf-acl-arn "*)
+        case "${WAF:-off}" in
+          off) echo "An error occurred (ParameterNotFound) when calling the GetParameter operation" >&2; exit 254 ;;
+          on) echo arn:aws:wafv2:us-east-1:111122223333:global/webacl/auth-gate-t/abc ;;
+          *) echo "An error occurred (AccessDeniedException) when calling the GetParameter operation" >&2; exit 254 ;;
+        esac ;;
       *"/credo/auth-gate/t/certificate-arn "*) echo arn:aws:acm:us-east-1:111122223333:certificate/abc ;;
       *) echo stub ;;
     esac ;;
@@ -76,7 +83,7 @@ mkdir -p "$tmp/tree/portal-web/dist" "$tmp/tree/infra"
 : >"$tmp/tree/infra/portal.yaml"
 
 run_full() {
-  export SCENARIO="$1" SAM_LOG="$tmp/sam.log"
+  export WAF="${WAF:-off}" SCENARIO="$1" SAM_LOG="$tmp/sam.log"
   : >"$SAM_LOG"
   PATH="$tmp/full:$PATH" EMAIL_FROM=no-reply@example.com bash "$tmp/tree/scripts/portal/deploy.sh" >"$tmp/out" 2>&1 || true
 }
@@ -88,5 +95,15 @@ run_full absent
 if [ ! -s "$SAM_LOG" ]; then nok "no domain: sam was not reached"; cat "$tmp/out"
 elif grep -q 'SupportEmail=' "$SAM_LOG"; then nok "no domain: SupportEmail must not be passed"; cat "$SAM_LOG"
 else ok "no domain: no SupportEmail override"; fi
+
+# Why: a read error must never quietly detach a WAF that is on.
+WAF=off run_full absent
+if grep -q -e ' WebAclArn=none\(\s\|$\)' "$SAM_LOG"; then ok "WAF off: sam gets WebAclArn=none"; else nok "WAF off: WebAclArn=none missing"; cat "$SAM_LOG" "$tmp/out"; fi
+
+WAF=on run_full absent
+if grep -q 'WebAclArn=arn:aws:wafv2:us-east-1:111122223333:global/webacl/auth-gate-t/abc' "$SAM_LOG"; then ok "WAF on: sam gets the web ACL arn"; else nok "WAF on: WebAclArn missing"; cat "$SAM_LOG" "$tmp/out"; fi
+
+WAF=broken run_full absent
+if [ ! -s "$SAM_LOG" ]; then ok "WAF switch unreadable: dies before sam deploy"; else nok "WAF switch unreadable did not stop the deploy"; cat "$SAM_LOG"; fi
 
 exit "$fail"

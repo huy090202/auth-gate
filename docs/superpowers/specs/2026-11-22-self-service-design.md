@@ -329,6 +329,9 @@ minutes per IP), `AWSManagedRulesCommonRuleSet` and `AmazonIpReputationList`. Th
 AuthGate stacks take its web ACL ARN as an optional parameter. Cost when on: about 6 to 10 USD a
 month.
 
+Refined by `2026-11-28-waf-design.md`: the switch is an SSM parameter and the owner's scripts, not
+`EnableWaf`, and the API has its own rate rule.
+
 **Responses to abuse:** an operator suspends a tenant (4.3) or a user (section 10).
 
 ## 10. The operator's side

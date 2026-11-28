@@ -19,7 +19,12 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR
 . "$(dirname "${BASH_SOURCE[0]}")/../domain/lib.sh"
 
+# shellcheck source=../waf/lib.sh
+# shellcheck source-path=SCRIPTDIR
+. "$(dirname "${BASH_SOURCE[0]}")/../waf/lib.sh"
+
 domain_config
+web_acl_arn="$(waf_acl_arn)" || exit 1
 [ -f "$ROOT/bin/bootstrap.zip" ] || die "bin/bootstrap.zip missing; run 02-build.sh"
 
 # Prints one stack output. A stack that does not exist yet (first deploy) yields
@@ -42,6 +47,8 @@ deploy() {
   local params=("Stage=$STAGE")
   [ -z "$DOMAIN" ] || params+=("DomainName=$(app_host api)" "CertificateArn=$CERT_ARN")
   [ -z "$1" ] || params+=("DistributionBaseUrl=$1")
+  # Read once per run, passed on both passes. Off is the sentinel none: sam rejects empty overrides and an omitted one keeps the previous value, so neither could detach the web ACL.
+  params+=("WebAclArn=${web_acl_arn:-none}")
   # The SAM bucket is shared by every project in the account; the deployer may write only
   # under auth-gate-* in it (infra/deployer-policy.json).
   sam deploy --template-file "$ROOT/infra/template.yaml" \
