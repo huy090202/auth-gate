@@ -20,7 +20,13 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR
 . "$(dirname "${BASH_SOURCE[0]}")/../domain/lib.sh"
 
+# shellcheck source=../waf/lib.sh
+# shellcheck source-path=SCRIPTDIR
+. "$(dirname "${BASH_SOURCE[0]}")/../waf/lib.sh"
+
 domain_config
+# Read the WAF switch once, before any build: a read error stops the deploy here.
+web_acl_arn="$(waf_acl_arn)" || exit 1
 command -v jq >/dev/null || die "jq is required"
 command -v openssl >/dev/null || die "openssl is required"
 client_id="${AUTHGATE_CLIENT_ID:-}"
@@ -74,6 +80,8 @@ params=("Stage=$STAGE" "AuthGateBaseUrl=${authgate_url%/}" "PortalUrl=${portal_u
 [[ -z "$public_url" ]] || params+=("PublicBaseUrl=${public_url%/}")
 [[ -z "$client_id" ]] || params+=("AuthGateClientId=$client_id")
 [[ -z "$DOMAIN" ]] || params+=("DomainName=$(app_host admin)" "CertificateArn=$CERT_ARN")
+# The WAF switch (read above): always passed, empty when off, so a deploy never leaves a stale web ACL attached.
+params+=("WebAclArn=$web_acl_arn")
 # The same for CONSOLE_RESERVED_CONCURRENCY (0 reserves none): unset, a create gets the
 # template default 0 and an update keeps the previous value.
 if [[ -n "${CONSOLE_RESERVED_CONCURRENCY:-}" ]]; then
