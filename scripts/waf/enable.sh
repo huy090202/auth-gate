@@ -16,7 +16,7 @@ cat <<TXT
 Plan for stage $STAGE:
   1. deploy stack $WAF_STACK (us-east-1) with the web ACL;
   2. write the switch $SWITCH in $REGION.
-Cost: a web ACL and its rules bill monthly, plus a per-request fee, from the moment CI attaches it.
+Cost: about 9-10 USD a month while on (5 USD web ACL + 4 rules x 1 USD + 0.60 USD per million requests).
 Run disable.sh to stop the cost.
 TXT
 echo "Type 'enable $STAGE' to continue:"

@@ -26,9 +26,15 @@ case "$args" in
     if [ "$SWITCH_STATE" = present ]; then echo arn:aws:wafv2:us-east-1:111122223333:global/webacl/x/1
     else echo "An error occurred (ParameterNotFound) when calling the GetParameter operation" >&2; exit 254; fi ;;
   *" cloudformation describe-stacks "*)
-    if [ "$STACK_STATE" = present ] || grep -q " cloudformation deploy " "$CALLS"; then echo arn:aws:wafv2:us-east-1:111122223333:global/webacl/x/1
+    case "$STACK_STATE" in
+      broken) printf 'ROLLBACK_COMPLETE\tNone\n'; exit 0 ;;
+      throttled) echo "An error occurred (Throttling) when calling the DescribeStacks operation" >&2; exit 254 ;;
+    esac
+    if [ "$STACK_STATE" = present ] || grep -q " cloudformation deploy " "$CALLS"; then case "$args" in *StackStatus*) printf 'CREATE_COMPLETE\t' ;; esac; echo arn:aws:wafv2:us-east-1:111122223333:global/webacl/x/1
     else echo "An error occurred (ValidationError): Stack with id auth-gate-waf-t does not exist" >&2; exit 254; fi ;;
-  *" cloudfront list-distributions-by-web-acl-id "*) printf '%s' "$DISTS" ;;
+  *" cloudfront list-distributions-by-web-acl-id "*)
+    [ "${DISTS_FAIL:-}" = 1 ] && { echo "An error occurred (AccessDenied)" >&2; exit 254; }
+    printf '%s' "$DISTS" ;;
   *" cloudformation deploy "* | *" ssm put-parameter "* | *" ssm delete-parameter "* \
     | *" cloudformation delete-stack "* | *" cloudformation wait "*) ;;
   *) echo "stub: unexpected call: $args" >&2; exit 255 ;;
@@ -95,5 +101,21 @@ else bad "disable phase 2 detached: rc=$rc $out"; fi
 
 run disable.sh "" absent absent ""
 if [ "$rc" -eq 0 ] && grep -q "already off" <<<"$out" && ! wrote; then ok "disable with nothing is already off"; else bad "already off: rc=$rc $out"; fi
+
+# Why: the owner must see the monthly cost before typing the confirmation.
+run enable.sh "" absent absent ""
+if grep -qF "about 9-10 USD a month while on (5 USD web ACL + 4 rules x 1 USD + 0.60 USD per million requests)" <<<"$out"; then ok "enable prompt shows the cost"; else bad "enable cost text missing"; fi
+
+# Why: a broken stack or a failed check must never read as "off" or as "nothing attached".
+run disable.sh "disable t" absent broken ""
+if [ "$rc" -ne 0 ] && grep -q "ROLLBACK_COMPLETE" <<<"$out" && ! grep -q "already off" <<<"$out" && ! called "delete-stack"; then
+  ok "disable fails on a stack without the output"
+else bad "disable broken stack: rc=$rc $out"; fi
+
+run disable.sh "disable t" absent throttled ""
+if [ "$rc" -ne 0 ] && ! grep -q "already off" <<<"$out" && ! called "delete-stack"; then ok "disable fails when describe-stacks errors"; else bad "disable throttled: rc=$rc $out"; fi
+
+DISTS_FAIL=1 run disable.sh "disable t" absent present ""
+if [ "$rc" -ne 0 ] && ! called "delete-stack"; then ok "disable does not delete when the attach check fails"; else bad "disable dist check failed: rc=$rc $out"; fi
 
 exit "$fail"

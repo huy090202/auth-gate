@@ -26,12 +26,14 @@ confirm() {
   fi
 }
 
-# Prints the stack's WebAclArn, or nothing when the stack does not exist.
+# Prints the stack's WebAclArn, or nothing when the stack does not exist. A stack that exists
+# without the output (DELETE_FAILED, ROLLBACK_COMPLETE) is an error, never "off".
 stack_arn() {
-  local err out rc=0
+  local err out rc=0 status value
   err="$(mktemp)"
   out="$(aws cloudformation describe-stacks --stack-name "$WAF_STACK" --region us-east-1 \
-    --query "Stacks[0].Outputs[?OutputKey=='WebAclArn'].OutputValue" --output text 2>"$err")" || rc=$?
+    --query "Stacks[0].[StackStatus, Outputs[?OutputKey=='WebAclArn'].OutputValue | [0]]" \
+    --output text 2>"$err")" || rc=$?
   if [ "$rc" -ne 0 ]; then
     if grep -q "does not exist" "$err"; then
       rm -f "$err"
@@ -42,7 +44,13 @@ stack_arn() {
     return 1
   fi
   rm -f "$err"
-  [ "$out" = "None" ] || printf '%s' "$out"
+  status="$(printf '%s' "$out" | cut -f1)"
+  value="$(printf '%s' "$out" | cut -f2)"
+  if [ -z "$value" ] || [ "$value" = "None" ]; then
+    echo "error: stack $WAF_STACK exists (status $status) but has no WebAclArn output; fix or delete it by hand" >&2
+    return 1
+  fi
+  printf '%s' "$value"
 }
 
 switch="$(waf_acl_arn)" || exit 1
