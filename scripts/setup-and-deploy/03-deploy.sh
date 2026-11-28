@@ -47,8 +47,8 @@ deploy() {
   local params=("Stage=$STAGE")
   [ -z "$DOMAIN" ] || params+=("DomainName=$(app_host api)" "CertificateArn=$CERT_ARN")
   [ -z "$1" ] || params+=("DistributionBaseUrl=$1")
-  # Read once per run, passed on both passes. Empty detaches the web ACL: the switch is the truth.
-  params+=("WebAclArn=$web_acl_arn")
+  # Read once per run, passed on both passes. Off is the sentinel none: sam rejects empty overrides and an omitted one keeps the previous value, so neither could detach the web ACL.
+  params+=("WebAclArn=${web_acl_arn:-none}")
   # The SAM bucket is shared by every project in the account; the deployer may write only
   # under auth-gate-* in it (infra/deployer-policy.json).
   sam deploy --template-file "$ROOT/infra/template.yaml" \

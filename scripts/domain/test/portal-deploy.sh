@@ -98,7 +98,7 @@ else ok "no domain: no SupportEmail override"; fi
 
 # Why: a read error must never quietly detach a WAF that is on.
 WAF=off run_full absent
-if grep -q -e ' WebAclArn=\(\s\|$\)' "$SAM_LOG"; then ok "WAF off: sam gets an empty WebAclArn"; else nok "WAF off: WebAclArn= missing"; cat "$SAM_LOG" "$tmp/out"; fi
+if grep -q -e ' WebAclArn=none\(\s\|$\)' "$SAM_LOG"; then ok "WAF off: sam gets WebAclArn=none"; else nok "WAF off: WebAclArn=none missing"; cat "$SAM_LOG" "$tmp/out"; fi
 
 WAF=on run_full absent
 if grep -q 'WebAclArn=arn:aws:wafv2:us-east-1:111122223333:global/webacl/auth-gate-t/abc' "$SAM_LOG"; then ok "WAF on: sam gets the web ACL arn"; else nok "WAF on: WebAclArn missing"; cat "$SAM_LOG" "$tmp/out"; fi

@@ -80,8 +80,8 @@ params=("Stage=$STAGE" "AuthGateBaseUrl=${authgate_url%/}" "PortalUrl=${portal_u
 [[ -z "$public_url" ]] || params+=("PublicBaseUrl=${public_url%/}")
 [[ -z "$client_id" ]] || params+=("AuthGateClientId=$client_id")
 [[ -z "$DOMAIN" ]] || params+=("DomainName=$(app_host admin)" "CertificateArn=$CERT_ARN")
-# The WAF switch (read above): always passed, empty when off, so a deploy never leaves a stale web ACL attached.
-params+=("WebAclArn=$web_acl_arn")
+# The WAF switch (read above): always passed, none when off. sam rejects empty overrides and an omitted one keeps the previous value, so only the sentinel detaches a web ACL.
+params+=("WebAclArn=${web_acl_arn:-none}")
 # The same for CONSOLE_RESERVED_CONCURRENCY (0 reserves none): unset, a create gets the
 # template default 0 and an update keeps the previous value.
 if [[ -n "${CONSOLE_RESERVED_CONCURRENCY:-}" ]]; then

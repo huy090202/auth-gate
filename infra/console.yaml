@@ -49,15 +49,15 @@ Parameters:
       concurrency below its minimum, which would roll back the deploy.
   WebAclArn:
     Type: String
-    Default: ""
-    AllowedPattern: "^$|^arn:aws[a-zA-Z-]*:wafv2:us-east-1:\\d{12}:global/webacl/.+$"
+    Default: none
+    AllowedPattern: "^none$|^arn:aws[a-zA-Z-]*:wafv2:us-east-1:\\d{12}:global/webacl/.+$"
     Description: >-
-      Optional CloudFront web ACL (the auth-gate-waf stack's WebAclArn output). Empty means none.
+      Optional CloudFront web ACL (the auth-gate-waf stack's WebAclArn output). The value none means no web ACL (CloudFormation overrides cannot be empty).
       Set by the deploy script from SSM; the WAF is off unless the owner turns it on.
 
 Conditions:
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
-  HasWaf: !Not [!Equals [!Ref WebAclArn, ""]]
+  HasWaf: !Not [!Equals [!Ref WebAclArn, none]]
   HasPublicBaseUrl: !Not [!Equals [!Ref PublicBaseUrl, ""]]
   HasClientId: !Not [!Equals [!Ref AuthGateClientId, ""]]
   HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]

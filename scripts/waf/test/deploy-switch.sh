@@ -75,7 +75,7 @@ run() {
   bash "$tmp/tree/scripts/console/deploy.sh" >"$tmp/out" 2>&1 || rc=$?
 }
 run off
-if [ -s "$SAM_LOG" ] && grep -q -e ' WebAclArn=\(\s\|$\)' "$SAM_LOG"; then ok "console, WAF off: sam gets an empty WebAclArn"; else nok "console, WAF off"; cat "$SAM_LOG" "$tmp/out"; fi
+if [ -s "$SAM_LOG" ] && grep -q -e ' WebAclArn=none\(\s\|$\)' "$SAM_LOG"; then ok "console, WAF off: sam gets WebAclArn=none"; else nok "console, WAF off"; cat "$SAM_LOG" "$tmp/out"; fi
 run on
 if grep -q "WebAclArn=$arn" "$SAM_LOG"; then ok "console, WAF on: sam gets the web ACL arn"; else nok "console, WAF on"; cat "$SAM_LOG" "$tmp/out"; fi
 run broken

@@ -105,8 +105,8 @@ params=("Stage=$STAGE" "AuthGateBaseUrl=${authgate_url%/}" "EmailFrom=$email_fro
 [[ -z "$client_id" ]] || params+=("AuthGateClientId=$client_id")
 [[ -z "$public_url" ]] || params+=("PublicBaseUrl=${public_url%/}")
 [[ -z "$DOMAIN" ]] || params+=("DomainName=$(app_host portal)" "CertificateArn=$CERT_ARN" "SupportEmail=support@$DOMAIN")
-# The WAF switch (read above): always passed, empty when off, so a deploy never leaves a stale web ACL attached.
-params+=("WebAclArn=$web_acl_arn")
+# The WAF switch (read above): always passed, none when off. sam rejects empty overrides and an omitted one keeps the previous value, so only the sentinel detaches a web ACL.
+params+=("WebAclArn=${web_acl_arn:-none}")
 # The SAM bucket is shared by every project in the account; the deployer may write only
 # under auth-gate-* in it (infra/deployer-policy.json).
 sam deploy --template-file "$ROOT/infra/portal.yaml" \

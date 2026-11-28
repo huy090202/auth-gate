@@ -90,9 +90,9 @@ else nok "pending certificate did not stop the deploy (rc=$rc)"; cat "$SAM_LOG" 
 export TWOPASS="$tmp/twopass"
 rm -f "$TWOPASS"
 WAF=off run absent
-if [ "$rc" -eq 0 ] && [ "$(wc -l <"$SAM_LOG")" -eq 2 ] && [ "$(grep -c -e ' WebAclArn=\(\s\|$\)' "$SAM_LOG")" -eq 2 ]; then
-  ok "WAF off: both passes pass an empty WebAclArn"
-else nok "WAF off: WebAclArn= missing (rc=$rc)"; cat "$SAM_LOG" "$tmp/out"; fi
+if [ "$rc" -eq 0 ] && [ "$(wc -l <"$SAM_LOG")" -eq 2 ] && [ "$(grep -c -e ' WebAclArn=none\(\s\|$\)' "$SAM_LOG")" -eq 2 ]; then
+  ok "WAF off: both passes pass WebAclArn=none"
+else nok "WAF off: WebAclArn=none missing (rc=$rc)"; cat "$SAM_LOG" "$tmp/out"; fi
 
 rm -f "$TWOPASS"
 WAF=on run absent
