@@ -14,7 +14,7 @@ CloudFront web ACLs live in `us-east-1`, and one ACL can protect any number of d
 
 ## Why the API's limit differs from the parent spec
 
-The parent spec has one rule: 300 requests per 5 minutes per IP. The API is called by customers' backends from a few IP addresses, so one request a second would block a normal customer. The 300 limit applies only to `portal.` and `admin.`, which browsers call. The API gets a flood guard of 6000 per 5 minutes per IP, and each client already has a token bucket inside AuthGate ([rate limit](rate-limit-bucket.md)). The common rule set's body size check only counts, because a WebAuthn attestation can exceed 8 KB.
+The parent spec has one rule: 300 requests per 5 minutes per IP. The API is called by customers' backends from a few IP addresses, so one request a second would block a normal customer. The 300 limit applies to every host except `api.`, because the Portal and Console are also reachable through their CloudFront default hostnames, where the host redirect does not run. The API gets a flood guard of 60000 per 5 minutes per IP (about 200 requests a second). It is high because auth-gate's own Lambda-to-AuthGate calls and a customer's backend share egress IPs. Per-client limits live in AuthGate's token bucket ([rate limit](rate-limit-bucket.md)). IPv6 is aggregated per /128, a weak flood guard on the API distribution, which keeps IPv6. Aggregating by the client-key header was rejected, because a flood could vary the header to bypass the limit. The common rule set's body size check only counts, because a WebAuthn attestation can exceed 8 KB.
 
 ## Why the switch is a manual script and not a CI flag
 

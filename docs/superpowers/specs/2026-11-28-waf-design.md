@@ -1,6 +1,6 @@
 # Self-service P4b: the WAF, built but off — design
 
-Date: 2026-11-28. Status: draft for the owner's review. Branch `feat/waf`.
+Date: 2026-11-28. Status: approved; amended during implementation. Branch `feat/waf`.
 
 This is the last piece of P4 in `2026-11-22-self-service-design.md`. It refines the parent
 spec's §9 "WAF, built but off".
@@ -42,16 +42,20 @@ web ACLs there. The template is `infra/waf.yaml`, with `Scope: CLOUDFRONT` and n
 |---|---|---|---|
 | 0 | `AmazonIpReputationList` (managed) | all | block |
 | 1 | `AWSManagedRulesCommonRuleSet` (managed) | all | block, but `SizeRestrictions_BODY` is overridden to count |
-| 2 | rate, 300 requests per 5 minutes per IP | Host starts with `portal.` or `admin.` | block |
-| 3 | rate, 6000 requests per 5 minutes per IP | all | block |
+| 2 | rate, 300 requests per 5 minutes per IP | Host does not start with `api.` | block |
+| 3 | rate, 60000 requests per 5 minutes per IP (about 200 rps) | all | block |
 
 - **Rule 1's override:** WebAuthn attestation bodies can exceed the 8 KB size check, so that check
   only counts. It does not block a passkey enrollment.
 - **Rules 2 and 3 differ from the parent spec.** The parent spec has one 300-per-5-minutes rule.
   AuthGate's API is called by customers' backends from a few IP addresses, so 300 per 5 minutes
-  (one request a second) would block a normal customer. The strict limit therefore applies only
-  to the browser-facing hosts. The API gets a flood guard, and each client already has its own
-  token bucket inside AuthGate.
+  (one request a second) would block a normal customer. The strict limit therefore applies to
+  every host except `api.`, because the Portal and Console are also reachable through their
+  CloudFront default hostnames. The API gets a flood guard of 60000 per 5 minutes per IP (about
+  200 rps, high so that auth-gate's own Lambda-to-AuthGate calls and customers' backends behind
+  shared egress IPs are not throttled), and each client already has its own token bucket inside
+  AuthGate. IPv6 is aggregated per /128, a weak guard on the API distribution. Aggregating by the
+  client-key header was rejected: a flood could vary the header to bypass it.
 - **Monitoring:** CloudWatch metrics and sampled requests are on, at no charge. Full WAF logging
   is off because it costs money.
 - **Cost when on:** 5 USD for the web ACL, plus 1 USD per rule (4 USD), plus 0.60 USD per million
@@ -119,6 +123,8 @@ read, and never treats either as off.
 - **Notifications:** one email when forecasted spend passes 80%, and one when actual spend
   passes 100%.
 - **Email address:** it comes from `BUDGET_EMAIL`, an environment variable read only at run time.
+  The owner sets it with `read -r BUDGET_EMAIL && export BUDGET_EMAIL`, so it stays out of the
+  shell history.
   The address is never written to the repo or printed back.
 - **Idempotent:** it prints `exists` when the budget is already there, and `created` otherwise.
 - **Profile:** it runs under the admin profile.
