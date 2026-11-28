@@ -48,9 +48,17 @@ Parameters:
     Type: String
     MinLength: 1
     Description: The Cloudflare Turnstile site key (public).
+  WebAclArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:aws[a-zA-Z-]*:wafv2:us-east-1:\\d{12}:global/webacl/.+$"
+    Description: >-
+      Optional CloudFront web ACL (the auth-gate-waf stack's WebAclArn output). Empty means none.
+      Set by the deploy script from SSM; the WAF is off unless the owner turns it on.
 
 Conditions:
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
+  HasWaf: !Not [!Equals [!Ref WebAclArn, ""]]
   HasClientId: !Not [!Equals [!Ref AuthGateClientId, ""]]
   HasPublicBaseUrl: !Not [!Equals [!Ref PublicBaseUrl, ""]]
 
@@ -393,6 +401,7 @@ Resources:
         HttpVersion: http2and3
         PriceClass: PriceClass_200
         Aliases: !If [HasDomain, [!Ref DomainName], !Ref AWS::NoValue]
+        WebACLId: !If [HasWaf, !Ref WebAclArn, !Ref AWS::NoValue]
         ViewerCertificate: !If
           - HasDomain
           - AcmCertificateArn: !Ref CertificateArn

@@ -47,9 +47,17 @@ Parameters:
       Concurrent executions reserved for the Console; 0 reserves none. Set it once the
       account quota leaves room: Lambda refuses a reservation that would take unreserved
       concurrency below its minimum, which would roll back the deploy.
+  WebAclArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:aws[a-zA-Z-]*:wafv2:us-east-1:\\d{12}:global/webacl/.+$"
+    Description: >-
+      Optional CloudFront web ACL (the auth-gate-waf stack's WebAclArn output). Empty means none.
+      Set by the deploy script from SSM; the WAF is off unless the owner turns it on.
 
 Conditions:
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
+  HasWaf: !Not [!Equals [!Ref WebAclArn, ""]]
   HasPublicBaseUrl: !Not [!Equals [!Ref PublicBaseUrl, ""]]
   HasClientId: !Not [!Equals [!Ref AuthGateClientId, ""]]
   HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
@@ -386,6 +394,7 @@ Resources:
         HttpVersion: http2and3
         PriceClass: PriceClass_200
         Aliases: !If [HasDomain, [!Ref DomainName], !Ref AWS::NoValue]
+        WebACLId: !If [HasWaf, !Ref WebAclArn, !Ref AWS::NoValue]
         ViewerCertificate: !If
           - HasDomain
           - AcmCertificateArn: !Ref CertificateArn
